@@ -67,6 +67,28 @@ Asegúrate de tener Python 3.12 y los headers de compilación instalados (Ubuntu
    uv pip install -e .
    ```
 
+### 🐳 Instalación con Docker
+
+Puedes desplegar OpenACM al completo usando Docker (recomendado para servidores o para aislar el entorno). Todo el setup y las dependencias ya están listas en la imagen.
+
+1. **Clonar el repositorio**:
+   ```bash
+   git clone https://github.com/Json55Hdz/OpenACM.git
+   cd OpenACM
+   ```
+2. **Levantar el contenedor**:
+   ```bash
+   docker-compose up -d --build
+   ```
+3. **Ver tu Token de acceso**:
+   Como el generador corre dentro de Docker, tienes que ver los logs para obtener tu Token incial:
+   ```bash
+   docker logs openacm
+   ```
+   *(Copia el `🔑 Dashboard Token`)*
+4. **Acceder**:
+   Ve a `http://localhost:8080`, ingresa el token y listo. Las bases de datos y la config están vinculadas en las carpetas `./data` y `./config` de tu anfitrión, por lo que **no perderás nada** si apagas o reseteas el contenedor.
+
 ---
 
 ## 🚀 Cómo Arrancar OpenACM
