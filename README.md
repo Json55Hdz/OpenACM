@@ -22,50 +22,30 @@ Todo servido desde un Dashboard Web robusto con encriptación local y protegido 
 
 ## 🛠️ Requisitos Previos
 
-Para correr OpenACM necesitas **Python 3.12 o superior** y es muy recomendable usar **`uv`** (el gestor de paquetes de Rust) por la brutal velocidad de instalación.
+Solo asegúrate de tener descargado el código. Puedes clonarlo usando git o descargar el ZIP desde GitHub.
+```bash
+git clone https://github.com/Json55Hdz/OpenACM.git
+cd OpenACM
+```
 
-### 💻 Instalación en Windows
+---
 
-1. **Instalar `uv`**:
-   Abre PowerShell (no como admin) y ejecuta:
-   ```powershell
-   irm https://astral.sh/uv/install.ps1 | iex
-   ```
-2. **Clonar el repositorio**:
-   ```powershell
-   git clone https://github.com/Json55Hdz/OpenACM.git
-   cd OpenACM
-   ```
-3. **Inicializar e Instalar**:
-   ```powershell
-   uv venv
-   .\.venv\Scripts\activate
-   uv pip install -e .
-   ```
+## ⚡ Instalación Automática (Recomendado)
 
-### 🐧 Instalación en Ubuntu / WSL (Windows Subsystem for Linux)
+Hemos incluido scripts que hacen TODO por ti: Instalar gestores, crear el entorno, instalar dependencias, Python y los navegadores web del bot.
 
-Asegúrate de tener Python 3.12 y los headers de compilación instalados (Ubuntu 24.04 ya trae `python3.12` por defecto).
+### 💻 En Windows
+Simplemente entra a la carpeta y haz doble clic en el archivo:
+- `setup.bat`
 
-1. **Dependencias del Sistema**:
-   Para Linux (especialmente para que las librerías gráficas de Playwright y Pillow funcionen), necesitas:
-   ```bash
-   sudo apt update
-   sudo apt install -y build-essential python3-dev libssl-dev libffi-dev xdotool python3.12-venv
-   ```
-2. **Instalar `uv`**:
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   source $HOME/.cargo/env
-   ```
-3. **Clonar e Inicializar**:
-   ```bash
-   git clone https://github.com/Json55Hdz/OpenACM.git
-   cd OpenACM
-   uv venv
-   source .venv/bin/activate
-   uv pip install -e .
-   ```
+O ejecútalo desde tu PowerShell.
+
+### 🐧 En Ubuntu / WSL / Linux
+Abre tu terminal en la carpeta del proyecto y ejecuta:
+```bash
+chmod +x setup.sh run.sh
+./setup.sh
+```
 
 ### 🐳 Instalación con Docker
 
@@ -93,15 +73,20 @@ Puedes desplegar OpenACM al completo usando Docker (recomendado para servidores 
 
 ## 🚀 Cómo Arrancar OpenACM
 
-Ya sea en Windows, Ubuntu o WSL, el comando para iniciar el agente es (asegúrate de tener el entorno virtual activo):
+Ya sea en Windows, Ubuntu o WSL, hemos creado scripts cortos para arrancar el sistema con un solo clic:
 
+### 💻 En Windows
+Solo haz doble clic en `run.bat` o ejecútalo en la terminal:
 ```bash
-# En Windows (PowerShell):
-.\.venv\Scripts\python.exe -m openacm
-
-# En Ubuntu/WSL:
-python3 -m openacm
+.\run.bat
 ```
+
+### 🐧 En Linux / WSL
+```bash
+./run.sh
+```
+
+---
 
 ### 🔑 El primer arranque
 
