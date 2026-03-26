@@ -18,10 +18,10 @@ uv python install 3.12 --quiet
 uv venv
 
 Write-Host "[*] Instalando todas las dependencias del proyecto (puede tardar un minuto)..." -ForegroundColor Yellow
-& ".\.venv\Scripts\uv.exe" pip install -e .
+uv pip install -e .
 
 Write-Host "[*] Descargando navegadores para el Agente Web (Playwright)..." -ForegroundColor Yellow
-& ".\.venv\Scripts\python.exe" -m playwright install chromium
+uv run playwright install chromium
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green

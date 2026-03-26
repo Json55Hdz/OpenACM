@@ -25,10 +25,10 @@ uv python install 3.12 2>/dev/null || true
 uv venv
 
 echo -e "\033[1;33m[*] Instalando todas las dependencias del proyecto...\033[0m"
-./.venv/bin/uv pip install -e .
+uv pip install -e .
 
 echo -e "\033[1;33m[*] Instalando navegadores para el Agente Web (Playwright)...\033[0m"
-./.venv/bin/python -m playwright install --with-deps chromium
+uv run playwright install --with-deps chromium
 
 echo -e "\n\033[1;32m==========================================\033[0m"
 echo -e "\033[1;32m  ✅ ¡Instalación Completada con Éxito!\033[0m"
