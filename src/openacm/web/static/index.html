@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenACM — Dashboard</title>
+    <meta name="description" content="OpenACM AI Assistant Dashboard - Monitor, configure, and chat with your AI assistant">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/main.css">
+    <link rel="stylesheet" href="/static/css/onboarding.css">
+</head>
+<body>
+    <!-- Auth Gate Modal -->
+    <div class="onboarding-overlay active" id="auth-overlay" style="z-index: 10000;">
+        <div class="onboarding-card" style="max-width: 420px;">
+            <div class="onboarding-header">
+                <span class="onboarding-icon">🔑</span>
+                <h1 class="onboarding-title">Dashboard Protegido</h1>
+                <p class="onboarding-subtitle">Ingresa el token que aparece en tu consola al iniciar OpenACM.</p>
+            </div>
+            <form id="auth-form" class="onboarding-form">
+                <div class="onboarding-group">
+                    <label class="onboarding-label">Token de Acceso</label>
+                    <input type="password" id="auth-token-input" class="onboarding-input" placeholder="Pega tu token aquí..." autocomplete="off" required>
+                    <p id="auth-error" style="color: #ef4444; font-size: 0.8rem; margin-top: 0.5rem; display: none;">Token inválido. Revisa la consola de OpenACM.</p>
+                </div>
+                <button type="submit" class="onboarding-btn">Acceder</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Onboarding Overlay -->
+    <div class="onboarding-overlay" id="onboarding-overlay">
+        <div class="onboarding-card">
+            <div class="onboarding-header">
+                <span class="onboarding-icon">🚀</span>
+                <h1 class="onboarding-title">Bienvenido a OpenACM</h1>
+                <p class="onboarding-subtitle">Tu asistente IA multi-canal necesita conectar algunos cables antes de despegar.</p>
+            </div>
+            <form id="onboarding-form" class="onboarding-form">
+                <input type="hidden" id="onboarding-provider" value="">
+                
+                <div class="onboarding-group" id="ob-group-llm">
+                    <label class="onboarding-label"><span id="ob-llm-icon">🧠</span> API Key del Motor LLM <span class="optional-tag" style="background:#ef444433;color:#ef4444">Requerido</span></label>
+                    <input type="password" id="ob-llm-key" class="onboarding-input" placeholder="sk-..." required>
+                </div>
+
+                <div class="onboarding-group">
+                    <label class="onboarding-label">📱 Telegram Bot Token <span class="optional-tag">Opcional</span></label>
+                    <input type="password" id="ob-telegram-key" class="onboarding-input" placeholder="123456:ABC-DEF...">
+                </div>
+
+                <button type="submit" class="onboarding-btn">Guardar y Conectar</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <span class="logo-icon">🧠</span>
+                <span class="logo-text">OpenACM</span>
+            </div>
+            <span class="version">v0.1.0</span>
+        </div>
+
+        <ul class="nav-links">
+            <li>
+                <a href="#" class="nav-link active" data-page="dashboard" id="nav-dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Dashboard</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="chat" id="nav-chat">
+                    <span class="nav-icon">💬</span>
+                    <span class="nav-label">Chat</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="tools" id="nav-tools">
+                    <span class="nav-icon">🔧</span>
+                    <span class="nav-label">Herramientas</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="config" id="nav-config">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">Configuración</span>
+                </a>
+            </li>
+        </ul>
+
+        <div class="sidebar-footer">
+            <div class="status-indicator">
+                <span class="status-dot" id="status-dot"></span>
+                <span class="status-text" id="status-text">Conectando...</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Header Bar -->
+        <header class="header">
+            <div class="header-left">
+                <button class="menu-toggle" id="menu-toggle">☰</button>
+                <h1 id="page-title" class="page-title">Dashboard</h1>
+            </div>
+            <div class="header-right">
+                <div class="model-badge" id="model-badge">
+                    <span class="model-icon">🤖</span>
+                    <span id="current-model">Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Page: Dashboard -->
+        <section class="page active" id="page-dashboard">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">💬</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-messages-today">0</span>
+                        <span class="stat-label">Mensajes Hoy</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔤</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-tokens-today">0</span>
+                        <span class="stat-label">Tokens Hoy</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔧</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-tool-calls">0</span>
+                        <span class="stat-label">Tool Calls</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📡</div>
+                    <div class="stat-info">
+                        <span class="stat-value" id="stat-active-convos">0</span>
+                        <span class="stat-label">Conversaciones</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="card" id="card-activity">
+                    <div class="card-header">
+                        <h3>📈 Actividad Reciente</h3>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="activity-chart" height="200"></canvas>
+                    </div>
+                </div>
+                <div class="card" id="card-channels">
+                    <div class="card-header">
+                        <h3>📱 Canales</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="channel-list" id="channel-list">
+                            <div class="channel-item">
+                                <span class="channel-icon">🖥️</span>
+                                <span class="channel-name">Console</span>
+                                <span class="channel-status online">Online</span>
+                            </div>
+                            <div class="channel-item">
+                                <span class="channel-icon">🌐</span>
+                                <span class="channel-name">Web</span>
+                                <span class="channel-status online">Online</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card" id="card-events">
+                    <div class="card-header">
+                        <h3>⚡ Eventos en Vivo</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="event-log" id="event-log">
+                            <div class="event-item">
+                                <span class="event-time">--:--</span>
+                                <span class="event-text">Esperando eventos...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page: Chat -->
+        <section class="page" id="page-chat" style="padding: 0;">
+            <div class="chat-layout" style="display: flex; height: 100%;">
+                
+                <!-- Sidebar Context List -->
+                <div class="chat-context-sidebar" id="chat-sidebar" style="width: 280px; background: var(--bg-secondary); border-right: 1px solid var(--glass-border); display: flex; flex-direction: column;">
+                    <div class="sidebar-header" style="padding: 1rem; border-bottom: 1px solid var(--glass-border);">
+                        <h3 style="font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between;">
+                            Conversaciones
+                            <button id="refresh-chat-list" class="btn" style="padding: 0.2rem 0.5rem; font-size: 0.8rem; background: var(--bg-tertiary);">↻</button>
+                        </h3>
+                    </div>
+                    <div id="chat-list" style="flex: 1; overflow-y: auto;">
+                        <div class="chat-item active" data-channel="web" data-user="web" style="padding: 0.75rem 1rem; cursor: pointer; border-bottom: 1px solid rgba(255,255,255,0.02); display: flex; gap: 0.75rem; align-items: center;">
+                            <span class="chat-icon">🌐</span>
+                            <div class="chat-info" style="flex: 1; overflow: hidden;">
+                                <div style="font-size: 0.9rem; font-weight: 500;">Web Local</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Area -->
+                <div class="chat-container" style="flex: 1; display: flex; flex-direction: column;">
+                    
+                    <!-- Chat Header with Toggles -->
+                    <div class="chat-header-bar" style="padding: 0.75rem 1rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--glass-border); display: flex; justify-content: space-between; align-items: center;">
+                        <span id="current-chat-title" style="font-weight: 600; color: var(--accent-blue);">🌐 Hablando en: Web Local</span>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.85rem; color: var(--text-muted);">
+                            <input type="checkbox" id="toggle-tool-logs" checked>
+                            <span>Mostrar Logs de Herramientas</span>
+                        </label>
+                    </div>
+
+                    <div class="chat-messages" id="chat-messages" style="flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                        <div class="chat-welcome">
+                            <div class="welcome-icon">🧠</div>
+                            <h2>Hola! Soy ACM</h2>
+                            <p>Tu asistente AI personal. Pregúntame lo que quieras.</p>
+                        </div>
+                    </div>
+                    <!-- Attachment preview zone -->
+                    <div class="preview-zone" id="chat-preview-zone"></div>
+                    
+                    <div class="chat-input-area">
+                        <input type="file" id="chat-file-input" style="display: none;" multiple>
+                        <button class="chat-attachment-btn" id="attach-btn" title="Adjuntar archivo">
+                            📎
+                        </button>
+                        <textarea 
+                            id="chat-input" 
+                            placeholder="Escribe tu mensaje... Sube imágenes, Pdfs, etc (Enter para enviar)"
+                            rows="1"
+                        ></textarea>
+                        <button class="send-btn" id="send-btn">
+                            <span>➤</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page: Tools -->
+        <section class="page" id="page-tools">
+            <div class="tools-grid" id="tools-list">
+                <!-- Populated via JS -->
+            </div>
+            
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-header">
+                    <h3>📜 Ejecuciones Recientes</h3>
+                </div>
+                <div class="card-body">
+                    <div class="executions-table" id="executions-table">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Hora</th>
+                                    <th>Tool</th>
+                                    <th>Args</th>
+                                    <th>Status</th>
+                                    <th>Tiempo</th>
+                                </tr>
+                            </thead>
+                            <tbody id="executions-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page: Config -->
+        <section class="page" id="page-config">
+            <div class="config-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🤖 Modelo LLM</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="config-field">
+                            <label>Proveedor Actual</label>
+                            <span id="config-provider" class="config-value">-</span>
+                        </div>
+                        <div class="config-field">
+                            <label>Modelo Actual</label>
+                            <span id="config-model" class="config-value">-</span>
+                        </div>
+                        <div class="config-field">
+                            <label>Cambiar Modelo</label>
+                            <div class="input-group">
+                                <input type="text" id="model-input" list="model-dataset" placeholder="Selecciona o escribe..." style="flex: 1; background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: var(--border-radius-sm); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.85rem; padding: 0.5rem 0.75rem; outline: none;">
+                                <datalist id="model-dataset"></datalist>
+                                <button class="btn btn-primary" id="model-change-btn">Cambiar</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🔒 Seguridad</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="config-field">
+                            <label>Modo de Ejecución</label>
+                            <span id="config-security-mode" class="config-value badge">-</span>
+                        </div>
+                        <div class="config-field">
+                            <label>Comandos en Whitelist</label>
+                            <span id="config-whitelist-count" class="config-value">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📱 Canales</h3>
+                    </div>
+                    <div class="card-body" id="config-channels">
+                        <!-- Populated via JS -->
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>⚙️ Preferencias Avanzadas</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="config-field">
+                            <label>Handoff a Canales (Telegram)</label>
+                            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem; margin-top: 0.5rem;">
+                                <input type="checkbox" id="config-verbose-channels" checked>
+                                <span>Canales muestran: "⚙️ Ejecutando herramienta..."</span>
+                            </label>
+                        </div>
+                        <div class="config-field" style="margin-top: 1rem;">
+                            <label>Configuración Rápida</label>
+                            <button class="btn btn-primary" id="btn-quick-setup" style="margin-top: 0.5rem;">
+                                🚀 Reconfigurar API Keys (Onboarding)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card full-width">
+                    <div class="card-header">
+                        <h3>📋 Configuración Completa</h3>
+                    </div>
+                    <div class="card-body">
+                        <pre class="config-json" id="config-full"></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

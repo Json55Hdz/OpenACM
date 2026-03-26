@@ -1,0 +1,114 @@
+###############################################
+# OpenACM - Default Configuration
+###############################################
+
+assistant:
+  name: "ACM"
+  system_prompt: |
+    Eres ACM, un agente autónomo de IA avanzado integrado en el sistema operativo local.
+    Tienes acceso a herramientas de nivel 'Tier-1' que te permiten ejecutar tareas complejas:
+    
+    1. **Ejecución y Visión**: Puedes ejecutar comandos, leer/escribir archivos y tomar pantallazos (screenshots) para ver la pantalla del usuario.
+    2. **Agente de Navegación (Browser Agent)**: Puedes controlar un navegador Chromium invisible. Usa `browser_agent` para ir a URLs, hacer clicks, llenar formularios y extraer datos. El navegador persiste entre tus comandos, permitiendo navegación multi-paso.
+    3. **Kernel Python (Jupyter)**: Tienes un entorno Python en vivo. Usa `run_python` para ejecutar código complejo. Las variables se mantienen en memoria. ¡Puedes generar gráficos (con matplotlib) y las imágenes se enviarán automáticamente al chat!
+    4. **Memoria a Largo Plazo (RAG)**: Posees memoria vectorial persistente. Si te piden recordar algo a futuro, usa `remember_note`. Si necesitas contexto antiguo, usa `search_memory`.
+    
+    Responde de forma clara y directa. Eres un sistema autónomo: en lugar de decirle al usuario CÓMO hacer algo, usa tus herramientas y HAZLO tú mismo.
+    Siempre devuelve los enlaces `/api/media/...` que te den tus herramientas para que el usuario pueda ver las imágenes o gráficos.
+  max_context_messages: 50
+  max_tool_iterations: 25
+  response_timeout: 120
+
+llm:
+  default_provider: "opencode_go"
+  providers:
+    ollama:
+      base_url: "http://localhost:11434"
+      default_model: "llama3.2"
+    openai:
+      default_model: "gpt-4o"
+    anthropic:
+      default_model: "claude-sonnet-4-20250514"
+    gemini:
+      default_model: "gemini/gemini-2.0-flash"
+    opencode_go:
+      default_model: "kimi-k2.5"
+      base_url: "https://opencode.ai/zen/go/v1"
+      # Modelos de OpenCode Go (OpenAI-compatible):
+      #   GLM-4-Flash
+      #   Kimi-K2.5
+      #   MiniMax-M2.5
+      # Para usar con tu API key (OPENCODE_GO_API_KEY en el .env)
+
+security:
+  execution_mode: "confirmation"  # confirmation | auto | yolo
+  whitelisted_commands:
+    - "ls"
+    - "dir"
+    - "cat"
+    - "type"
+    - "echo"
+    - "ping"
+    - "systeminfo"
+    - "whoami"
+    - "hostname"
+    - "ipconfig"
+    - "ifconfig"
+    - "uname"
+    - "pwd"
+    - "date"
+    - "uptime"
+    - "df"
+    - "free"
+    - "top"
+    - "ps"
+    - "netstat"
+    - "curl"
+    - "wget"
+    - "python"
+    - "pip"
+    - "git"
+    - "npm"
+    - "node"
+  blocked_patterns:
+    - "rm -rf /"
+    - "del /f /s /q C:\\"
+    - "format"
+    - ":(){:|:&};:"
+    - "mkfs"
+    - "dd if=/dev"
+    - "shutdown"
+    - "reboot"
+    - "halt"
+    - "init 0"
+    - "init 6"
+  blocked_paths:
+    - "C:\\Windows\\System32"
+    - "/etc/shadow"
+    - "/etc/passwd"
+  max_command_timeout: 60
+  max_output_length: 50000
+
+web:
+  host: "127.0.0.1"
+  port: 8080
+  auth_enabled: true
+
+channels:
+  discord:
+    enabled: false
+    command_prefix: "!"
+    respond_to_mentions: true
+    respond_to_dms: true
+  telegram:
+    enabled: true
+    allowed_users: []  # empty = all users
+  whatsapp:
+    enabled: false
+    bridge_url: "http://localhost:3001"
+    rate_limit_per_minute: 20
+
+storage:
+  database_path: "data/openacm.db"
+  log_conversations: true
+  log_tool_executions: true

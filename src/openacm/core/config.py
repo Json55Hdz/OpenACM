@@ -1,0 +1,182 @@
+"""
+Configuration system for OpenACM.
+
+Loads config from YAML + environment variables + .env file,
+validated with Pydantic models.
+"""
+
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+
+# ─── Config Models ───────────────────────────────────────────
+
+class AssistantConfig(BaseModel):
+    """Assistant personality and behavior."""
+    name: str = "ACM"
+    system_prompt: str = "You are ACM, a helpful AI assistant."
+    max_context_messages: int = 50
+    max_tool_iterations: int = 10
+    response_timeout: int = 120
+
+
+class LLMConfig(BaseModel):
+    """LLM provider configuration."""
+    default_provider: str = "ollama"
+    providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class SecurityConfig(BaseModel):
+    """Security policies."""
+    execution_mode: str = "confirmation"  # confirmation | auto | yolo
+    whitelisted_commands: list[str] = Field(default_factory=list)
+    blocked_patterns: list[str] = Field(default_factory=list)
+    blocked_paths: list[str] = Field(default_factory=list)
+    max_command_timeout: int = 60
+    max_output_length: int = 50000
+
+
+class WebConfig(BaseModel):
+    """Web dashboard configuration."""
+    host: str = "127.0.0.1"
+    port: int = 8080
+    auth_enabled: bool = True
+
+
+class DiscordConfig(BaseModel):
+    """Discord channel configuration."""
+    enabled: bool = False
+    token: str = ""
+    command_prefix: str = "!"
+    respond_to_mentions: bool = True
+    respond_to_dms: bool = True
+    allowed_guilds: list[str] = Field(default_factory=list)
+
+
+class TelegramConfig(BaseModel):
+    """Telegram channel configuration."""
+    enabled: bool = False
+    token: str = ""
+    allowed_users: list[str] = Field(default_factory=list)
+
+
+class WhatsAppConfig(BaseModel):
+    """WhatsApp channel configuration."""
+    enabled: bool = False
+    bridge_url: str = "http://localhost:3001"
+    rate_limit_per_minute: int = 20
+
+
+class ChannelsConfig(BaseModel):
+    """All channels configuration."""
+    discord: DiscordConfig = Field(default_factory=DiscordConfig)
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
+
+
+class StorageConfig(BaseModel):
+    """Storage configuration."""
+    database_path: str = "data/openacm.db"
+    log_conversations: bool = True
+    log_tool_executions: bool = True
+
+
+class AppConfig(BaseModel):
+    """Root application configuration."""
+    assistant: AssistantConfig = Field(default_factory=AssistantConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
+    channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+
+
+# ─── Config Loading ──────────────────────────────────────────
+
+def _find_project_root() -> Path:
+    """Find the project root by looking for pyproject.toml."""
+    current = Path.cwd()
+    while current != current.parent:
+        if (current / "pyproject.toml").exists():
+            return current
+        current = current.parent
+    return Path.cwd()
+
+
+def _resolve_env_vars(data: Any) -> Any:
+    """Recursively resolve ${ENV_VAR} references in config values."""
+    if isinstance(data, str):
+        if data.startswith("${") and data.endswith("}"):
+            env_key = data[2:-1]
+            return os.environ.get(env_key, "")
+        return data
+    elif isinstance(data, dict):
+        return {k: _resolve_env_vars(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_resolve_env_vars(item) for item in data]
+    return data
+
+
+def load_config(config_path: str | Path | None = None) -> AppConfig:
+    """
+    Load configuration from YAML file + environment variables.
+    
+    Priority: env vars > .env file > YAML config > defaults
+    """
+    root = _find_project_root()
+    
+    # Load .env file
+    env_file = root / "config" / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+    
+    # Load YAML config
+    if config_path is None:
+        config_path = root / "config" / "default.yaml"
+    else:
+        config_path = Path(config_path)
+    
+    data = {}
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    
+    # Resolve environment variables in values
+    data = _resolve_env_vars(data)
+    
+    # Map YAML structure to config models
+    # The YAML uses "A" for assistant config
+    config_data = {}
+    
+    if "A" in data:
+        config_data["assistant"] = data["A"]
+    if "llm" in data:
+        config_data["llm"] = data["llm"]
+    if "security" in data:
+        config_data["security"] = data["security"]
+    if "web" in data:
+        config_data["web"] = data["web"]
+    if "channels" in data:
+        channels_data = data["channels"]
+        # Inject tokens from env
+        if "discord" in channels_data:
+            if not channels_data["discord"].get("token"):
+                channels_data["discord"]["token"] = os.environ.get("DISCORD_TOKEN", "")
+        if "telegram" in channels_data:
+            if not channels_data["telegram"].get("token"):
+                channels_data["telegram"]["token"] = os.environ.get("TELEGRAM_TOKEN", "")
+        config_data["channels"] = channels_data
+    if "storage" in data:
+        config_data["storage"] = data["storage"]
+    
+    # Make database path absolute relative to project root
+    config = AppConfig(**config_data)
+    if not Path(config.storage.database_path).is_absolute():
+        config.storage.database_path = str(root / config.storage.database_path)
+    
+    return config
