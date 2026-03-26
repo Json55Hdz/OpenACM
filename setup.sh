@@ -24,6 +24,12 @@ echo -e "\033[1;33m[*] Preparando el entorno virtual y Python 3.12...\033[0m"
 uv python install 3.12 2>/dev/null || true
 uv venv
 
+echo -e "\033[1;33m[*] Revisando configuraciones (.env)...\033[0m"
+if [ ! -f "config/.env" ]; then
+    cp config/.env.example config/.env
+    echo -e "\033[1;32m[OK] Archivo 'config/.env' creado automáticamente.\033[0m"
+fi
+
 echo -e "\033[1;33m[*] Instalando todas las dependencias del proyecto...\033[0m"
 uv pip install -e .
 

@@ -17,6 +17,12 @@ Write-Host "[*] Preparando el entorno de Python..." -ForegroundColor Yellow
 uv python install 3.12 --quiet
 uv venv
 
+Write-Host "[*] Revisando configuraciones (.env)..." -ForegroundColor Yellow
+if (!(Test-Path "config\.env")) {
+    Copy-Item "config\.env.example" "config\.env"
+    Write-Host "[OK] Archivo 'config\.env' creado automáticamente." -ForegroundColor Green
+}
+
 Write-Host "[*] Instalando todas las dependencias del proyecto (puede tardar un minuto)..." -ForegroundColor Yellow
 uv pip install -e .
 
