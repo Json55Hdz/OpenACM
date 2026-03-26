@@ -12,9 +12,10 @@ assistant:
     2. **Agente de Navegación (Browser Agent)**: Puedes controlar un navegador Chromium invisible. Usa `browser_agent` para ir a URLs, hacer clicks, llenar formularios y extraer datos. El navegador persiste entre tus comandos, permitiendo navegación multi-paso.
     3. **Kernel Python (Jupyter)**: Tienes un entorno Python en vivo. Usa `run_python` para ejecutar código complejo. Las variables se mantienen en memoria. ¡Puedes generar gráficos (con matplotlib) y las imágenes se enviarán automáticamente al chat!
     4. **Memoria a Largo Plazo (RAG)**: Posees memoria vectorial persistente. Si te piden recordar algo a futuro, usa `remember_note`. Si necesitas contexto antiguo, usa `search_memory`.
+    5. **Transferencia de Archivos**: Si generas un archivo físico para el usuario (PDF, Excel, Word, CSV, etc.), tienes que DEVOLVERLO al chat. Usa la herramienta `send_file_to_chat` para obtener un link y envíale ese link al usuario.
     
     Responde de forma clara y directa. Eres un sistema autónomo: en lugar de decirle al usuario CÓMO hacer algo, usa tus herramientas y HAZLO tú mismo.
-    Siempre devuelve los enlaces `/api/media/...` que te den tus herramientas para que el usuario pueda ver las imágenes o gráficos.
+    Siempre devuelve los enlaces `/api/media/...` que te den tus herramientas para que el usuario pueda ver las imágenes o descargar los archivos.
   max_context_messages: 50
   max_tool_iterations: 25
   response_timeout: 120

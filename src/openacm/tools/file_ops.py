@@ -218,6 +218,58 @@ async def search_files(
         return f"Error searching files: {str(e)}"
 
 
+@tool(
+    name="send_file_to_chat",
+    description=(
+        "Upload a local file so the user can download it from the chat. "
+        "Use this whenever you generate a file for the user (like an Excel, PDF, Word doc, CSV, ZIP, etc.) "
+        "and need to give it to them. It will encrypt the file and return a secure link."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Absolute or relative path to the file you want to send",
+            },
+        },
+        "required": ["path"],
+    },
+    risk_level="low",
+)
+async def send_file_to_chat(path: str, **kwargs) -> str:
+    """Send a local file to the secure media storage and get a link."""
+    try:
+        file_path = Path(path).resolve()
+        if not file_path.exists():
+            return f"Error: File not found: {path}"
+        if not file_path.is_file():
+            return f"Error: Not a file: {path}"
+            
+        import secrets
+        from openacm.security.crypto import save_encrypted
+        
+        file_bytes = file_path.read_bytes()
+        ext = "".join(file_path.suffixes)
+        if not ext:
+            ext = ".bin"
+            
+        file_id = secrets.token_hex(16)
+        file_name = f"upload_{file_id}{ext}"
+        dest_path = Path("data/media") / file_name
+        
+        save_encrypted(file_bytes, dest_path)
+        
+        return (
+            f"✅ File successfully prepared for download! You MUST include this exact URL "
+            f"in your message so the user can download it: /api/media/{file_name}"
+        )
+    except PermissionError:
+        return f"Error: Permission denied reading {path}"
+    except Exception as e:
+        return f"Error sending file: {str(e)}"
+
+
 def _format_size(size: int) -> str:
     """Format a file size in human-readable form."""
     for unit in ("B", "KB", "MB", "GB"):

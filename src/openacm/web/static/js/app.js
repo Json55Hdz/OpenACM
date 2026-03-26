@@ -526,13 +526,28 @@ function addChatBubble(content, type = 'assistant', badge = null, attachments = 
     if (content) {
         const textEl = document.createElement('div');
         
-        // Auto-render internal media links as images
-        const mediaRegex = /\[?(?:http:\/\/localhost:\d+)?\/api\/media\/([a-zA-Z0-9_-]+\.(?:png|jpg|jpeg|gif|webp))\]?/g;
-        let formattedContent = content;
+        // Auto-render internal media links
+        const mediaRegex = /\[?(?:http:\/\/localhost:\d+)?\/api\/media\/([a-zA-Z0-9_-]+\.([a-zA-Z0-9]+))\]?/g;
         
         if (mediaRegex.test(content)) {
-             formattedContent = content.replace(mediaRegex, '<br><a href="/api/media/$1" target="_blank"><img src="/api/media/$1" style="max-width:100%; border-radius:8px; margin-top:0.5rem;" alt="Media"></a><br>');
-             textEl.innerHTML = formattedContent.replace(/\n/g, '<br>');
+             // We need to carefully replace the matched links while preserving the rest of the text
+             // We'll replace the full regex match, checking if the extension is an image or a generic file
+             const formattedContent = content.replace(mediaRegex, (match, filename, ext) => {
+                 const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
+                 if (imageExts.includes(ext.toLowerCase())) {
+                     return `<br><a href="/api/media/${filename}" target="_blank"><img src="/api/media/${filename}" style="max-width:100%; border-radius:8px; margin-top:0.5rem;" alt="Media"></a><br>`;
+                 } else {
+                     return `<br>
+                     <a href="/api/media/${filename}" download target="_blank" class="file-card" style="display:flex; align-items:center; background:rgba(255,255,255,0.05); padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); margin-top:0.5rem; text-decoration:none; color:inherit;">
+                         <span style="font-size:1.5rem; margin-right:10px;">📄</span>
+                         <div style="flex:1">
+                             <div style="font-size:0.85rem;font-weight:bold">${filename}</div>
+                             <div style="font-size:0.7rem;color:#94a3b8">Haz clic para descargar</div>
+                         </div>
+                     </a><br>`;
+                 }
+             });
+             textEl.innerHTML = formattedContent.replace(/\n(?![^<]*>)/g, '<br>');
         } else {
              textEl.textContent = content; // Fallback to safe text
         }
