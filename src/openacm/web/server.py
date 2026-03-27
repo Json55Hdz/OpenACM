@@ -58,6 +58,10 @@ def create_app() -> FastAPI:
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+        # Mount Next.js assets from static/_next to /_next
+        next_dir = static_dir / "_next"
+        if next_dir.exists():
+            app.mount("/_next", StaticFiles(directory=str(next_dir)), name="_next")
 
     # ─── Auth Middleware ──────────────────────────────────────
 
@@ -68,22 +72,27 @@ def create_app() -> FastAPI:
     _dashboard_token: str = os.environ.get("DASHBOARD_TOKEN", "")
 
     # Paths that don't need authentication
+    # Everything except API and WebSocket is public (React SPA handles auth)
     PUBLIC_PATHS = {"/", "/api/auth/check"}
-    PUBLIC_PREFIXES = ("/static/",)
+    PUBLIC_PREFIXES = ("/static/", "/_next/", "/favicon.ico")
 
     class TokenAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             path = request.url.path
 
-            # Allow public paths
-            if path in PUBLIC_PATHS or any(path.startswith(p) for p in PUBLIC_PREFIXES):
-                return await call_next(request)
-
-            # WebSocket paths are handled in their own endpoints
+            # WebSocket paths are handled in their own endpoints with their own auth
             if path.startswith("/ws/"):
                 return await call_next(request)
 
-            # Check token
+            # Everything that's not API is public (SPA routes, assets)
+            if not path.startswith("/api/"):
+                return await call_next(request)
+
+            # API routes below here require auth (except /api/auth/check)
+            if path == "/api/auth/check":
+                return await call_next(request)
+
+            # Check token for other API routes
             token = None
             auth_header = request.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
@@ -132,7 +141,7 @@ def create_app() -> FastAPI:
         index_file = static_dir / "index.html"
         if index_file.exists():
             return FileResponse(str(index_file))
-        return HTMLResponse("<h1>OpenACM</h1><p>Static files not found.</p>")
+        return HTMLResponse("<h1>OpenACM</h1><p>Static files not found. Run build first.</p>")
 
     # ─── API: Stats ───────────────────────────────────────────
 
@@ -563,6 +572,26 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.error("Failed to generate skill", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
+
+    # ─── Catch-all SPA route (MUST be last) ─────────────────
+
+    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    async def serve_spa(full_path: str):
+        """Serve the correct per-page index.html for Next.js static export."""
+        # Strip trailing slashes for path lookup
+        clean_path = full_path.strip("/")
+
+        # Try the exact per-page index.html (e.g. dashboard/index.html)
+        if clean_path:
+            page_index = static_dir / clean_path / "index.html"
+            if page_index.exists():
+                return FileResponse(str(page_index))
+
+        # Fallback to root index.html
+        root_index = static_dir / "index.html"
+        if root_index.exists():
+            return FileResponse(str(root_index))
+        return HTMLResponse("<h1>OpenACM</h1><p>Static files not found. Run build first.</p>")
 
     return app
 

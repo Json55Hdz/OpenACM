@@ -24,6 +24,15 @@ if not exist "%VENV_PYTHON%" (
     exit /b 1
 )
 
+:: Build frontend (ensures latest code is always served)
+echo [*] Building frontend...
+call "%~dp0build-frontend.bat"
+if errorlevel 1 (
+    echo [ERROR] Frontend build failed.
+    pause
+    exit /b 1
+)
+
 :: Deactivate any previously active virtual environment
 if defined VIRTUAL_ENV (
     call "%~dp0.venv\Scripts\deactivate.bat" 2>nul

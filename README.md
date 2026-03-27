@@ -1,104 +1,195 @@
-# 🚀 OpenACM — El Agente Autónomo Tier-1
+# OpenACM — Open AI Computer Manager
 
-![OpenACM](https://img.shields.io/badge/OpenACM-Tier--1-blueviolet) 
+![OpenACM](https://img.shields.io/badge/OpenACM-Tier--1-blueviolet)
 ![Python 3.12](https://img.shields.io/badge/Python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Modern-green)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)
+![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)
 
-**OpenACM** no es un simple chatbot. Es un agente avanzado (Tier-1) integrado nativamente con tu PC. Puede controlar tu entorno local, escribir y ejecutar código Python en vivo, abrir navegadores Headless para extraer datos de internet, y posee memoria vectorial a largo plazo.
+**OpenACM** is not a simple chatbot. It is an advanced Tier-1 autonomous agent natively integrated with your PC. It can control your local environment, write and execute Python code in real time, open headless browsers to extract data from the web, and has long-term vector memory.
 
-Todo servido desde un Dashboard Web robusto con encriptación local y protegido por token.
-
----
-
-## 🌟 SuperPoderes (Tier-1 Features)
-
-1. **Memoria RAG ("Hipocampo")**: Gracias a `ChromaDB`, OpenACM recuerda conversaciones antiguas. 
-2. **Navegación Autónoma (Browser Agent)**: Usando `Playwright`, el bot puede entrar a webs, hacer login, tomar screenshots y exportar contenido dinámico.
-3. **Jupyter Kernel (Python Interactivo)**: OpenACM ejecuta código con estado. Las variables persisten. ¡Si grafica algo en `matplotlib`, te devolverá la foto en el chat!
-4. **Multimodalidad y Archivos**: Puede generar PDFs, Excels, zips, tomar fotos de tu propia pantalla y enviártelo de vuelta para que lo descargues usando `/api/media/...`.
-5. **Dashboard Protegido**: No requiere internet para el UI. Todo corre en local, cifrado, y protegido por un `DASHBOARD_TOKEN`.
+All served from a modern Web Dashboard built with **React + TypeScript + Next.js + Tailwind CSS**.
 
 ---
 
-## 🛠️ Requisitos Previos
+## Features (Tier-1)
 
-Solo asegúrate de tener descargado el código. Puedes clonarlo usando git o descargar el ZIP desde GitHub.
+1. **RAG Memory**: Thanks to `ChromaDB`, OpenACM remembers past conversations.
+2. **Autonomous Navigation (Browser Agent)**: Using `Playwright`, the bot can visit websites, log in, take screenshots, and export dynamic content.
+3. **Jupyter Kernel (Interactive Python)**: OpenACM executes stateful code. Variables persist. If it plots something with `matplotlib`, the image is sent right to the chat!
+4. **Multimodality & Files**: It can generate PDFs, Excel files, zips, take screenshots of your own screen, and send them back for download via `/api/media/...`.
+5. **Modern React Dashboard**: Built with React 19, TypeScript, Next.js 16, Tailwind CSS, Zustand, TanStack Query, and Sonner.
+
+---
+
+## Prerequisites
+
+Before starting, you need:
+
+- **Git** (to clone the repository)
+- **Node.js 20+** (for the React frontend)
+- **Python 3.12+** (for the backend)
+
 ```bash
+# Clone the repository
 git clone https://github.com/Json55Hdz/OpenACM.git
 cd OpenACM
 ```
 
 ---
 
-## ⚡ Instalación Automática (Recomendado)
+## Automatic Setup (Recommended)
 
-Hemos incluido scripts que hacen TODO por ti: Instalar gestores, crear el entorno, instalar dependencias, Python y los navegadores web del bot.
+We've included scripts that do EVERYTHING for you: install package managers, create the environment, install dependencies, Python, Node.js, and the bot's web browsers.
 
-### 💻 En Windows
-Simplemente entra a la carpeta y haz doble clic en el archivo:
+### Windows
+Simply enter the folder and double-click:
 - `setup.bat`
 
-O ejecútalo desde tu PowerShell.
+Or run it from PowerShell:
+```powershell
+.\setup.bat
+```
 
-### 🐧 En Ubuntu / WSL / Linux
-Abre tu terminal en la carpeta del proyecto y ejecuta:
+**setup.bat will automatically:**
+1. Install Python 3.12 and uv
+2. Create the virtual environment
+3. Install backend dependencies
+4. Install Node.js (if not already installed)
+5. Install frontend dependencies
+6. **Build the React frontend** (`npm run build`)
+7. Copy the build to `src/openacm/web/static/`
+
+### Ubuntu / WSL / Linux
+Open your terminal in the project folder and run:
 ```bash
-chmod +x setup.sh run.sh
+chmod +x setup.sh run.sh build-frontend.sh
 ./setup.sh
 ```
 
-### 🐳 Instalación con Docker
+### Docker
 
-Puedes desplegar OpenACM al completo usando Docker (recomendado para servidores o para aislar el entorno). Todo el setup y las dependencias ya están listas en la imagen.
+You can deploy OpenACM entirely using Docker (recommended for servers or to isolate the environment).
 
-1. **Clonar el repositorio**:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/Json55Hdz/OpenACM.git
    cd OpenACM
    ```
-2. **Levantar el contenedor**:
+2. **Start the container**:
    ```bash
    docker-compose up -d --build
    ```
-3. **Ver tu Token de acceso**:
-   Como el generador corre dentro de Docker, tienes que ver los logs para obtener tu Token incial:
+3. **View your access token**:
+   Since the token generator runs inside Docker, check the logs to get your initial token:
    ```bash
    docker logs openacm
    ```
-   *(Copia el `🔑 Dashboard Token`)*
-4. **Acceder**:
-   Ve a `http://localhost:8080`, ingresa el token y listo. Las bases de datos y la config están vinculadas en las carpetas `./data` y `./config` de tu anfitrión, por lo que **no perderás nada** si apagas o reseteas el contenedor.
+   *(Copy the `Dashboard Token`)*
+4. **Access**:
+   Go to `http://localhost:8080`, enter the token, and you're in. Databases and config are bound to the `./data` and `./config` folders on your host, so **nothing is lost** if you stop or reset the container.
 
 ---
 
-## 🚀 Cómo Arrancar OpenACM
+## Running OpenACM
 
-Ya sea en Windows, Ubuntu o WSL, hemos creado scripts cortos para arrancar el sistema con un solo clic:
-
-### 💻 En Windows
-Solo haz doble clic en `run.bat` o ejecútalo en la terminal:
+### Windows
+Double-click `run.bat` or run it in the terminal:
 ```bash
 .\run.bat
 ```
 
-### 🐧 En Linux / WSL
+**Note:** `run.bat` will automatically check if the frontend is built. If not, it will run `build-frontend.bat` first.
+
+### Linux / WSL
 ```bash
 ./run.sh
 ```
 
 ---
 
-### 🔑 El primer arranque
+## Frontend Development (Optional)
 
-La primera vez que corras OpenACM, la consola hará tres cosas mágicas:
-1. **Generar tu Token**: Verás un texto que dice `🔑 Dashboard Token: O4KzV-...`. **Cópialo**.
-2. **Levantar el Dashboard**: Arrancará en `http://localhost:8080`.
-3. **Bloquear la Web**: Abres el enlace, pegas tu Token y estás dentro.
+If you want to modify the React frontend:
+
+```bash
+# Enter the frontend directory
+cd frontend
+
+# Install dependencies (first time only)
+npm install
+
+# Development mode with hot-reload
+npm run dev
+
+# Build for production (automatically copies to static/)
+npm run build
+```
+
+**Frontend technologies:**
+- React 19 + TypeScript
+- Next.js 16 (App Router)
+- Tailwind CSS
+- Chart.js for charts
+- TanStack Query (React Query) for APIs
+- Zustand for global state
+- Sonner for notifications
+- Lucide React for icons
 
 ---
 
-## 🧩 Notas Importantes
+### First Launch
 
-- **Playwright (Browser)**: La primera vez que el bot intente usar internet, puede haber una pausa de un par de minutos mientras se auto-instala Chromium en tu sistema en background.
-- **Modelos LLM**: OpenACM soporta OpenAI, Anthropic, Gemini, o modelos locales vía Ollama (ej: `llama3.2`). Entra a `Configuración` en el Dashboard para añadir tus API Keys o URLs.
-- **Telegram / Redes**: Si completas la configuración desde la Web, el bot podrá interactuar también por Telegram (¡Con las fotos reales y PDFs subidos como archivos nativos!).
+The first time you run OpenACM, the console will do three things:
+1. **Generate your Token**: You'll see `Dashboard Token: O4KzV-...`. **Copy it**.
+2. **Start the Dashboard**: It will launch at `http://localhost:8080`.
+3. **Protect the Web**: Open the link, paste your Token, and you're in.
+
+---
+
+## Important Notes
+
+- **Frontend Build**: The first time you run `run.bat`, the React frontend will be built automatically. This may take 1-2 minutes.
+- **Playwright (Browser)**: The first time the bot tries to use the browser, there may be a brief pause while Chromium is auto-installed in the background.
+- **LLM Models**: OpenACM supports OpenAI, Anthropic, Gemini, or local models via Ollama (e.g., `llama3.2`). Go to `Configuration` in the Dashboard to add your API Keys or URLs.
+- **Telegram / Channels**: If you complete the configuration from the Web, the bot can also interact through Telegram (with real photos and PDFs uploaded as native files!).
+
+---
+
+## Project Structure
+
+```
+OpenACM/
+├── frontend/                    # React + Next.js Frontend
+│   ├── app/                    # Next.js App Router
+│   ├── components/             # React Components
+│   ├── hooks/                  # Custom hooks (useAPI, useWebSocket)
+│   ├── stores/                 # Zustand stores
+│   ├── package.json            # npm dependencies
+│   └── next.config.ts          # Next.js config
+├── src/openacm/
+│   └── web/
+│       └── static/             # Frontend build (copied from frontend/dist)
+├── config/                     # Configuration (.env)
+├── data/                       # Database and files
+├── build-frontend.bat          # Script to build frontend
+├── setup.bat                   # Automatic setup
+└── run.bat                     # Start OpenACM
+```
+
+---
+
+## Dashboard Features
+
+- **Dashboard**: Real-time statistics, activity charts
+- **Chat**: Multi-channel conversations, real-time WebSocket, attachment support
+- **Tools**: Available tools management
+- **Skills**: Create, edit, enable/disable custom skills
+- **Configuration**: Change LLM model, manage API keys, preferences
+
+---
+
+## License
+
+BSL 1.1 License - See LICENSE for details.

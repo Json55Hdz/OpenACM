@@ -1,0 +1,251 @@
+'use client';
+
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { authStore, useAuthStore } from '@/stores/auth-store';
+import { toast } from 'sonner';
+
+interface FetchOptions extends RequestInit {
+  requiresAuth?: boolean;
+}
+
+export function useAPI() {
+  const fetchAPI = async (url: string, options: FetchOptions = {}) => {
+    const { requiresAuth = true, ...fetchOptions } = options;
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...((fetchOptions.headers as Record<string, string>) || {}),
+    };
+    
+    // Get fresh token from store on each call
+    if (requiresAuth) {
+      const token = authStore.getState().token;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+    
+    try {
+      const response = await fetch(url, {
+        ...fetchOptions,
+        headers,
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          // Don't clear auth here to avoid loops - let the component handle it
+          console.error('401 Unauthorized - token invalid');
+        }
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      return await response.json();
+    } catch (error) {
+      console.error(`API error (${url}):`, error);
+      throw error;
+    }
+  };
+  
+  return { fetchAPI };
+}
+
+// Hook to check if user is authenticated
+export function useIsAuthenticated() {
+  return useAuthStore((state) => state.isAuthenticated);
+}
+
+export function useStats() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+  
+  return useQuery({
+    queryKey: ['stats'],
+    queryFn: async () => {
+      const data = await fetchAPI('/api/stats');
+      return data;
+    },
+    enabled: isAuthenticated,
+    refetchInterval: 15000,
+  });
+}
+
+export function useActivityHistory() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['activity-history'],
+    queryFn: async () => {
+      const data = await fetchAPI('/api/stats/history?days=14');
+      return data || [];
+    },
+    enabled: isAuthenticated,
+  });
+}
+
+export function useConfig() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  const isAuthenticated = useIsAuthenticated();
+
+  const configQuery = useQuery({
+    queryKey: ['config'],
+    queryFn: async () => fetchAPI('/api/config'),
+    enabled: isAuthenticated,
+  });
+
+  const modelQuery = useQuery({
+    queryKey: ['config-model'],
+    queryFn: async () => fetchAPI('/api/config/model'),
+    enabled: isAuthenticated,
+  });
+  
+  const updateModelMutation = useMutation({
+    mutationFn: async (model: string) => {
+      return fetchAPI('/api/config/model', {
+        method: 'POST',
+        body: JSON.stringify({ model }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['config-model'] });
+      queryClient.invalidateQueries({ queryKey: ['stats'] });
+      toast.success('Model updated successfully');
+    },
+    onError: () => {
+      toast.error('Failed to update model');
+    },
+  });
+  
+  return {
+    config: configQuery.data,
+    model: modelQuery.data,
+    isLoading: configQuery.isLoading || modelQuery.isLoading,
+    updateModel: updateModelMutation.mutate,
+  };
+}
+
+export function useTools() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['tools'],
+    queryFn: async () => fetchAPI('/api/tools'),
+    enabled: isAuthenticated,
+  });
+}
+
+export function useToolExecutions() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['tool-executions'],
+    queryFn: async () => fetchAPI('/api/tools/executions?limit=20'),
+    enabled: isAuthenticated,
+  });
+}
+
+export function useSkills() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  const isAuthenticated = useIsAuthenticated();
+
+  const skillsQuery = useQuery({
+    queryKey: ['skills'],
+    queryFn: async () => fetchAPI('/api/skills'),
+    enabled: isAuthenticated,
+  });
+  
+  const toggleMutation = useMutation({
+    mutationFn: async ({ id, activate }: { id: number; activate: boolean }) => {
+      return fetchAPI(`/api/skills/${id}/toggle`, { method: 'POST' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+    },
+  });
+  
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      return fetchAPI(`/api/skills/${id}`, { method: 'DELETE' });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+      toast.success('Skill deleted successfully');
+    },
+  });
+  
+  const createMutation = useMutation({
+    mutationFn: async (data: unknown) => {
+      return fetchAPI('/api/skills', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+      toast.success('Skill created successfully');
+    },
+  });
+  
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: unknown }) => {
+      return fetchAPI(`/api/skills/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+      toast.success('Skill updated successfully');
+    },
+  });
+  
+  const generateMutation = useMutation({
+    mutationFn: async (data: unknown) => {
+      return fetchAPI('/api/skills/generate', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['skills'] });
+      toast.success('Skill generated with AI');
+    },
+  });
+  
+  return {
+    skills: skillsQuery.data,
+    isLoading: skillsQuery.isLoading,
+    toggleSkill: toggleMutation.mutate,
+    deleteSkill: deleteMutation.mutate,
+    createSkill: createMutation.mutate,
+    updateSkill: updateMutation.mutate,
+    generateSkill: generateMutation.mutate,
+  };
+}
+
+export function useConversations() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['conversations'],
+    queryFn: async () => fetchAPI('/api/conversations'),
+    enabled: isAuthenticated,
+    refetchInterval: 10000,
+  });
+}
+
+export function useConversationHistory(channelId: string, userId: string) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['conversation-history', channelId, userId],
+    queryFn: async () => fetchAPI(`/api/conversations/${channelId}/${userId}?limit=50`),
+    enabled: isAuthenticated && !!channelId && !!userId,
+  });
+}

@@ -1,134 +1,134 @@
-# 🔧 Guía de Solución de Problemas - OpenACM
+# OpenACM Troubleshooting Guide
 
-## Problema: "Se queda pegado después de un comando"
+## Problem: "Gets stuck after a command"
 
-Si OpenACM ejecuta un comando o tool y luego se congela (no responde), prueba estas soluciones:
+If OpenACM executes a command or tool and then freezes (no response), try these solutions:
 
-### Solución 1: Verificar Python del entorno virtual
+### Solution 1: Verify virtual environment Python
 
-El problema más común es que Windows use Python del sistema en lugar del .venv.
+The most common problem is Windows using the system Python instead of the .venv one.
 
-**Verificar cuál Python está usando:**
+**Check which Python is being used:**
 ```batch
 .venv\Scripts\python.exe --version
 python --version
 ```
 
-Si el segundo comando muestra una versión diferente, tu PATH está mal configurado.
+If the second command shows a different version, your PATH is misconfigured.
 
-**Arreglar (temporal):**
+**Fix (temporary):**
 ```batch
 set PATH=%CD%\.venv\Scripts;%PATH%
 python -m openacm
 ```
 
-**Arreglar (permanente):**
-1. Busca "Variables de entorno" en el menú inicio
-2. Edita la variable "Path" del usuario
-3. Elimina o mueve al final cualquier ruta de Python que NO sea .venv
+**Fix (permanent):**
+1. Search for "Environment variables" in the Start menu
+2. Edit the user "Path" variable
+3. Remove or move to the end any Python paths that are NOT .venv
 
-### Solución 2: Desactivar antivirus temporalmente
+### Solution 2: Temporarily disable antivirus
 
-Algunos antivirus (Windows Defender, McAfee, etc.) bloquean:
-- La ejecución de subprocessos
+Some antivirus programs (Windows Defender, McAfee, etc.) block:
+- Subprocess execution
 - Playwright/Chromium
-- Conexiones WebSocket
+- WebSocket connections
 
-**Prueba:** Desactiva el antivirus temporalmente y ejecuta OpenACM.
+**Try:** Temporarily disable your antivirus and run OpenACM.
 
-### Solución 3: Ejecutar como Administrador
+### Solution 3: Run as Administrator
 
-1. Click derecho en `run.bat`
-2. "Ejecutar como administrador"
-3. Verifica si funciona mejor
+1. Right-click on `run.bat`
+2. "Run as administrator"
+3. Check if it works better
 
-### Solución 4: Limpiar instalación corrupta
+### Solution 4: Clean corrupted installation
 
 ```batch
-:: 1. Detener OpenACM si está corriendo
-:: 2. Borrar carpetas temporales
+:: 1. Stop OpenACM if it's running
+:: 2. Delete temporary folders
 rmdir /s /q .venv
 rmdir /s /q data\media
 rmdir /s /q data\vectordb
 
-:: 3. Reinstalar
+:: 3. Reinstall
 call setup.bat
 ```
 
-### Solución 5: Verificar versiones de Python instaladas
+### Solution 5: Verify installed Python versions
 
 ```batch
-:: Ver todas las instalaciones de Python
+:: List all Python installations
 where python
 where python3
 where uv
 
-:: Si hay múltiples versiones, forzar la del proyecto
+:: If there are multiple versions, force the project's one
 .venv\Scripts\python.exe -m openacm
 ```
 
 ---
 
-## Problema: Errores de timeout en Browser
+## Problem: Browser timeout errors
 
 ```
 Page.goto: Timeout 30000ms exceeded
 ```
 
-### Causas:
-1. Conexión a internet lenta
-2. El sitio web está bloqueado por firewall
-3. Playwright no está bien instalado
+### Causes:
+1. Slow internet connection
+2. Website is blocked by firewall
+3. Playwright is not properly installed
 
-### Soluciones:
+### Solutions:
 
-**Reinstalar Playwright:**
+**Reinstall Playwright:**
 ```batch
 .venv\Scripts\uv run playwright install chromium
 ```
 
-**Verificar conexión:**
+**Check connection:**
 ```batch
 ping google.com
 ```
 
-**Desactivar proxy/firewall:**
-Algunas redes corporativas bloquean playwright.
+**Disable proxy/firewall:**
+Some corporate networks block Playwright.
 
 ---
 
-## Problema: Error 500 en LLM (opencode.ai)
+## Problem: LLM 500 Error (opencode.ai)
 
 ```
 Server error '500 Internal Server Error'
 ```
 
-### Esto NO es problema de tu instalación
+### This is NOT a problem with your installation
 
-El error 500 significa que el servidor de OpenCode.ai tuvo un problema interno. Esto puede deberse a:
-- Mantenimiento del servidor
-- Sobrecarga temporal
-- Problemas con el modelo específico
+A 500 error means the OpenCode.ai server had an internal issue. This may be due to:
+- Server maintenance
+- Temporary overload
+- Issues with the specific model
 
-### Soluciones:
+### Solutions:
 
-1. **Esperar unos minutos** e intentar de nuevo
-2. **Cambiar de modelo** en `config/default.yaml`:
+1. **Wait a few minutes** and try again
+2. **Switch models** in `config/default.yaml`:
    ```yaml
    llm:
-     default_model: "openai/gpt-4o"  # Probar otro modelo
+     default_model: "openai/gpt-4o"  # Try another model
    ```
-3. **Verificar API key** en `config/.env`
+3. **Verify your API key** in `config/.env`
 
 ---
 
-## Problema: Warning de duckduckgo_search
+## Problem: duckduckgo_search warning
 
 ```
 RuntimeWarning: This package has been renamed to `ddgs`!
 ```
 
-**Solución:** Ya está corregido en la última versión. Si persiste:
+**Solution:** Already fixed in the latest version. If it persists:
 
 ```batch
 .venv\Scripts\uv pip install ddgs>=7.0
@@ -136,19 +136,19 @@ RuntimeWarning: This package has been renamed to `ddgs`!
 
 ---
 
-## Problema: "ModuleNotFoundError" al ejecutar
+## Problem: "ModuleNotFoundError" when running
 
-### Causa: El entorno virtual no se activó correctamente
+### Cause: The virtual environment was not activated correctly
 
-### Solución rápida:
+### Quick fix:
 ```batch
-:: En lugar de solo run.bat, ejecuta:
+:: Instead of just run.bat, execute:
 call .venv\Scripts\activate.bat
 python -m openacm
 ```
 
-### Solución definitiva:
-Editar `run.bat` y asegurar que use rutas absolutas:
+### Permanent fix:
+Edit `run.bat` and ensure it uses absolute paths:
 ```batch
 set "PYTHON=%~dp0.venv\Scripts\python.exe"
 "%PYTHON%" -m openacm
@@ -156,41 +156,41 @@ set "PYTHON=%~dp0.venv\Scripts\python.exe"
 
 ---
 
-## Checklist de Verificación
+## Verification Checklist
 
-Antes de reportar un problema, verifica:
+Before reporting an issue, verify:
 
-- [ ] Ejecutaste `setup.bat` completo sin errores
-- [ ] Tienes Python 3.12+ instalado (verificar con `python --version`)
-- [ ] El archivo `config/.env` existe y tiene las API keys
-- [ ] Playwright está instalado: `.venv\Scripts\playwright --version`
-- [ ] No hay antivirus bloqueando procesos
-- [ ] Tienes conexión a internet estable
-- [ ] Ejecutaste como administrador (solo para probar)
+- [ ] You ran `setup.bat` fully without errors
+- [ ] You have Python 3.12+ installed (check with `python --version`)
+- [ ] The `config/.env` file exists and has your API keys
+- [ ] Playwright is installed: `.venv\Scripts\playwright --version`
+- [ ] No antivirus is blocking processes
+- [ ] You have a stable internet connection
+- [ ] You tried running as administrator (just to test)
 
 ---
 
-## Cómo Reportar Problemas
+## How to Report Issues
 
-Si nada funciona, ejecuta esto y comparte el output:
+If nothing works, run this and share the output:
 
 ```batch
-echo === INFO DEL SISTEMA === > debug.txt
+echo === SYSTEM INFO === > debug.txt
 echo. >> debug.txt
-echo Python en PATH: >> debug.txt
+echo Python in PATH: >> debug.txt
 where python >> debug.txt 2>&1
 echo. >> debug.txt
-echo Version de Python: >> debug.txt
+echo Python version: >> debug.txt
 python --version >> debug.txt 2>&1
 echo. >> debug.txt
-echo Version en .venv: >> debug.txt
+echo Version in .venv: >> debug.txt
 .venv\Scripts\python.exe --version >> debug.txt 2>&1
 echo. >> debug.txt
-echo Variables de entorno: >> debug.txt
+echo Environment variables: >> debug.txt
 echo PATH=%PATH% >> debug.txt
 echo. >> debug.txt
-echo === CONTENIDO DE .ENV === >> debug.txt
+echo === .ENV CONTENTS === >> debug.txt
 type config\.env >> debug.txt 2>&1
 ```
 
-Comparte el archivo `debug.txt` (¡elimina las API keys primero!).
+Share the `debug.txt` file (remove your API keys first!).

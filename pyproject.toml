@@ -1,7 +1,7 @@
 [project]
 name = "openacm"
 version = "0.1.0"
-description = "OpenACM - Multi-channel AI Assistant with system control"
+description = "OpenACM - Open AI Computer Manager"
 requires-python = ">=3.12"
 
 dependencies = [

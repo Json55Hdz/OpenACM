@@ -95,7 +95,7 @@ class OpenACM:
                 f"  📱 Channels: {self._get_active_channels_str()}\n\n"
                 f"  🔑 Dashboard Token:\n"
                 f"  [bold yellow]{dashboard_token}[/bold yellow]\n"
-                f"  [dim](Cópialo la primera vez que abras el dashboard)[/dim]",
+                f"  [dim](Copy this token the first time you open the dashboard)[/dim]",
                 title="[bold white]OpenACM v0.1.0[/bold white]",
                 border_style="green",
             )
@@ -418,4 +418,4 @@ class OpenACM:
         """Print the startup banner."""
         banner_text = Text(BANNER, style="bold cyan")
         console.print(banner_text)
-        console.print("[dim]Multi-channel AI Assistant with System Control[/dim]\n")
+        console.print("[dim]Open AI Computer Manager - Tier-1 Autonomous Agent[/dim]\n")

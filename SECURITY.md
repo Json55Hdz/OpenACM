@@ -1,205 +1,205 @@
-# 🔒 OpenACM Security Policy
+# OpenACM Security Policy
 
-## Modelo de Amenazas y Análisis de Seguridad
+## Threat Model and Security Analysis
 
-**Última Auditoría:** Marzo 2025  
-**Herramienta:** skill-security-auditor (Claude Skills)  
-**Veredicto:** ✅ SEGURO - Todos los hallazgos son INTENCIONALES
+**Last Audit:** March 2025
+**Tool:** skill-security-auditor (Claude Skills)
+**Verdict:** SECURE - All findings are BY DESIGN
 
 ---
 
-## 📊 Resumen de Auditoría
+## Audit Summary
 
-| Categoría | Hallazgos | Por Diseño | Acción Requerida |
-|-----------|-----------|------------|------------------|
+| Category | Findings | By Design | Action Required |
+|----------|----------|-----------|-----------------|
 | NET-EXFIL | 4 | 4 (100%) | 0 |
 | CRED-HARVEST | 4 | 4 (100%) | 0 |
 | OBFUSCATION | 1 | 1 (100%) | 0 |
 | DEPS-RUNTIME | 1 | 1 (100%) | 0* |
 | **TOTAL** | **10** | **10 (100%)** | **0** |
 
-*Recomendación opcional implementada
+*Optional recommendation implemented
 
 ---
 
-## 🎯 Componentes de Seguridad
+## Security Components
 
-### 1. Sandbox de Ejecución
+### 1. Execution Sandbox
 
-OpenACM implementa un sandbox de seguridad en `src/openacm/security/sandbox.py` que:
-- Limita comandos del sistema a un timeout configurable
-- Restringe acceso a directorios sensibles
-- Valida paths antes de operaciones de archivo
-- Registra todas las ejecuciones para auditoría
+OpenACM implements a security sandbox in `src/openacm/security/sandbox.py` that:
+- Limits system commands to a configurable timeout
+- Restricts access to sensitive directories
+- Validates paths before file operations
+- Logs all executions for auditing
 
-**Archivo:** `src/openacm/security/sandbox.py`
+**File:** `src/openacm/security/sandbox.py`
 
-### 2. Gestión Segura de Credenciales
+### 2. Secure Credential Management
 
-Todas las API keys y tokens se manejan mediante:
-- Variables de entorno (nunca hardcodeadas)
-- Archivos de configuración en `config/` (excluidos de git)
-- Cifrado opcional para tokens persistentes
+All API keys and tokens are managed through:
+- Environment variables (never hardcoded)
+- Configuration files in `config/` (excluded from git)
+- Optional encryption for persistent tokens
 
-**Archivos involucrados:**
-- `src/openacm/core/config.py` - Carga de configuración
-- `src/openacm/security/crypto.py` - Gestión de tokens
-- `src/openacm/web/server.py` - Autenticación dashboard
+**Involved files:**
+- `src/openacm/core/config.py` - Configuration loading
+- `src/openacm/security/crypto.py` - Token management
+- `src/openacm/web/server.py` - Dashboard authentication
 
-### 3. Aislamiento de Canales
+### 3. Channel Isolation
 
-Cada canal de comunicación (Discord, Telegram, WhatsApp) opera en:
-- Procesos/tasks independientes
-- Contextos de seguridad separados
-- Validación de mensajes entrantes
+Each communication channel (Discord, Telegram, WhatsApp) operates with:
+- Independent processes/tasks
+- Separate security contexts
+- Incoming message validation
 
 ---
 
-## 🔴 Hallazgos Críticos (Por Diseño)
+## Critical Findings (By Design)
 
-### Comunicación HTTP Externa
+### External HTTP Communication
 
-**Ubicaciones:**
+**Locations:**
 - `src/openacm/core/llm_router.py`
 - `src/openacm/channels/whatsapp_channel.py`
 - `src/openacm/tools/web_search.py`
 - `src/openacm/web/server.py`
 
-**Descripción:**
-OpenACM requiere comunicación HTTP para:
-- APIs de LLM (OpenAI, Anthropic, Gemini, Ollama)
-- APIs de mensajería (WhatsApp Business, Telegram Bot, Discord)
-- Búsqueda web (DuckDuckGo)
-- Servicios externos (Google APIs)
+**Description:**
+OpenACM requires HTTP communication for:
+- LLM APIs (OpenAI, Anthropic, Gemini, Ollama)
+- Messaging APIs (WhatsApp Business, Telegram Bot, Discord)
+- Web search (DuckDuckGo)
+- External services (Google APIs)
 
-**Mitigación:**
-- Timeout en todas las solicitudes (15-30s)
-- Sin reintentos automáticos sin límite
-- Validación de URLs (evita localhost/private IPs)
-- Registro de todas las llamadas
+**Mitigation:**
+- Timeout on all requests (15-30s)
+- No unlimited automatic retries
+- URL validation (avoids localhost/private IPs)
+- All calls logged
 
-### Acceso a Variables de Entorno
+### Environment Variable Access
 
-**Ubicaciones:**
+**Locations:**
 - `src/openacm/core/config.py`
 - `src/openacm/security/crypto.py`
 - `src/openacm/web/server.py`
 
-**Descripción:**
-Carga de API keys mediante `os.environ.get()`
+**Description:**
+API key loading via `os.environ.get()`
 
-**Mitigación:**
-- Solo lectura, nunca escritura
-- Sin valores por defecto sensibles
-- Documentación clara de variables requeridas
-- Ejemplo en `config/.env.example`
+**Mitigation:**
+- Read-only, never write
+- No sensitive default values
+- Clear documentation of required variables
+- Example in `config/.env.example`
 
-### Procesamiento Base64
+### Base64 Processing
 
-**Ubicación:**
+**Location:**
 - `src/openacm/tools/python_kernel.py:144`
 
-**Descripción:**
-Decodificación de imágenes PNG en base64 del kernel Jupyter
+**Description:**
+Decoding base64-encoded PNG images from the Jupyter kernel
 
-**Mitigación:**
-- Solo imágenes matplotlib generadas internamente
-- No procesa input de usuario directamente
-- Validación de formato antes de decodificación
-
----
-
-## 🛡️ Políticas de Seguridad
-
-### Ejecución de Código
-
-- ✅ Comandos del sistema permitidos con sandbox
-- ✅ Ejecución Python en kernel aislado (Jupyter)
-- ❌ Sin `eval()` o `exec()` de input de usuario
-- ❌ Sin carga dinámica de código no verificado
-
-### Acceso a Archivos
-
-- ✅ Lectura/escritura en directorio de trabajo
-- ✅ Acceso a `data/` para persistencia
-- ✅ Acceso a `config/` para configuración
-- ❌ Sin acceso a `~/.ssh`, `~/.aws`, credenciales del sistema
-- ❌ Sin modificación de archivos de sistema
-
-### Red
-
-- ✅ Conexiones a APIs públicas documentadas
-- ✅ Webhooks para canales de mensajería
-- ❌ Sin escaneo de puertos
-- ❌ Sin conexiones a IPs privadas sin autorización
+**Mitigation:**
+- Only internally generated matplotlib images
+- Does not process user input directly
+- Format validation before decoding
 
 ---
 
-## 🔍 Auditoría Automática
+## Security Policies
 
-Para ejecutar auditoría de seguridad:
+### Code Execution
+
+- Allowed: System commands with sandbox
+- Allowed: Python execution in isolated kernel (Jupyter)
+- Blocked: No `eval()` or `exec()` of user input
+- Blocked: No dynamic loading of unverified code
+
+### File Access
+
+- Allowed: Read/write in working directory
+- Allowed: Access to `data/` for persistence
+- Allowed: Access to `config/` for configuration
+- Blocked: No access to `~/.ssh`, `~/.aws`, system credentials
+- Blocked: No modification of system files
+
+### Network
+
+- Allowed: Connections to documented public APIs
+- Allowed: Webhooks for messaging channels
+- Blocked: No port scanning
+- Blocked: No connections to private IPs without authorization
+
+---
+
+## Automatic Auditing
+
+To run a security audit:
 
 ```bash
-# Auditar código fuente
+# Audit source code
 python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/
 
-# Auditar con modo estricto
+# Audit with strict mode
 python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/ --strict
 
-# Salida JSON para CI/CD
+# JSON output for CI/CD
 python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/ --json
 ```
 
 ---
 
-## 🚨 Reportar Vulnerabilidades
+## Reporting Vulnerabilities
 
-Si descubres una vulnerabilidad de seguridad:
+If you discover a security vulnerability:
 
-1. **NO abras un issue público**
-2. Envía un email a: [tu-email@ejemplo.com]
-3. Incluye:
-   - Descripción detallada
-   - Pasos para reproducir
-   - Impacto potencial
-   - Sugerencias de mitigación (opcional)
+1. **DO NOT open a public issue**
+2. Send an email to: [your-email@example.com]
+3. Include:
+   - Detailed description
+   - Steps to reproduce
+   - Potential impact
+   - Mitigation suggestions (optional)
 
-**Tiempo de respuesta esperado:** 48-72 horas
-
----
-
-## 📋 Variables de Entorno Sensibles
-
-| Variable | Propósito | Requerida |
-|----------|-----------|-----------|
-| `OPENAI_API_KEY` | API de OpenAI | Opcional |
-| `ANTHROPIC_API_KEY` | API de Anthropic | Opcional |
-| `GEMINI_API_KEY` | API de Google Gemini | Opcional |
-| `DISCORD_TOKEN` | Bot de Discord | Opcional |
-| `TELEGRAM_TOKEN` | Bot de Telegram | Opcional |
-| `DASHBOARD_TOKEN` | Autenticación web | Auto-generado |
-| `GOOGLE_CREDENTIALS` | OAuth2 Google | Opcional |
-
-Todas las variables se cargan mediante `os.environ.get()` con valores por defecto vacíos.
+**Expected response time:** 48-72 hours
 
 ---
 
-## 🔐 Mejores Prácticas para Usuarios
+## Sensitive Environment Variables
 
-### 1. Protección de API Keys
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `OPENAI_API_KEY` | OpenAI API | Optional |
+| `ANTHROPIC_API_KEY` | Anthropic API | Optional |
+| `GEMINI_API_KEY` | Google Gemini API | Optional |
+| `DISCORD_TOKEN` | Discord Bot | Optional |
+| `TELEGRAM_TOKEN` | Telegram Bot | Optional |
+| `DASHBOARD_TOKEN` | Web authentication | Auto-generated |
+| `GOOGLE_CREDENTIALS` | Google OAuth2 | Optional |
+
+All variables are loaded via `os.environ.get()` with empty default values.
+
+---
+
+## Best Practices for Users
+
+### 1. API Key Protection
 
 ```bash
-# ✅ Correcto - Usar archivo .env
+# Correct - Use .env file
 export OPENAI_API_KEY="sk-..."
 export DISCORD_TOKEN="..."
 
-# Nunca commitear el archivo .env
-# Está incluido en .gitignore
+# Never commit the .env file
+# It's included in .gitignore
 ```
 
-### 2. Sandbox de Seguridad
+### 2. Security Sandbox
 
-El modo de ejecución se configura en `config/default.yaml`:
+The execution mode is configured in `config/default.yaml`:
 
 ```yaml
 security:
@@ -210,24 +210,24 @@ security:
     - ./config
 ```
 
-### 3. Token de Dashboard
+### 3. Dashboard Token
 
-El token se genera automáticamente en el primer arranque:
-- Se almacena cifrado en `data/openacm.db`
-- Se puede rotar desde la configuración web
-- TTL configurable (por defecto: sin expiración)
-
----
-
-## 📅 Historial de Auditorías
-
-| Fecha | Herramienta | Resultado | Hallazgos |
-|-------|-------------|-----------|-----------|
-| 2025-03-27 | skill-security-auditor | ✅ PASS | 10/10 Por Diseño |
+The token is automatically generated on first launch:
+- Stored encrypted in `data/openacm.db`
+- Can be rotated from the web configuration
+- Configurable TTL (default: no expiration)
 
 ---
 
-## 📚 Referencias
+## Audit History
+
+| Date | Tool | Result | Findings |
+|------|------|--------|----------|
+| 2025-03-27 | skill-security-auditor | PASS | 10/10 By Design |
+
+---
+
+## References
 
 - [skill-security-auditor Documentation](.opencode/skills/skill-security-auditor/SKILL.md)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
@@ -235,6 +235,6 @@ El token se genera automáticamente en el primer arranque:
 
 ---
 
-**Nota:** Este documento se actualiza automáticamente tras cada auditoría de seguridad.
+**Note:** This document is automatically updated after each security audit.
 
-Última actualización: Marzo 2025
+Last updated: March 2025
