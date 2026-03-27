@@ -5,7 +5,7 @@ import { PROVIDERS } from '@/lib/providers';
 import { ProviderCard } from '@/components/setup/provider-card';
 import { useProviderStatus, useSaveSetup } from '@/hooks/use-setup';
 import { translations } from '@/lib/translations';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
 import { toast } from 'sonner';
 
 const t = translations.onboarding.providerSetup;
@@ -26,9 +26,9 @@ export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderS
     setKeys((prev) => ({ ...prev, [envVar]: value }));
   };
 
-  const hasAnyKey = Object.values(keys).some((v) => v.trim().length > 0);
+  const pendingKeys = Object.entries(keys).filter(([, v]) => v.trim().length > 0);
   const hasAnyConfigured = Object.values(configuredProviders).some(Boolean);
-  const canProceed = hasAnyKey || hasAnyConfigured;
+  const canProceed = pendingKeys.length > 0 || hasAnyConfigured;
 
   const handleSave = async () => {
     // Filter out empty keys
@@ -39,19 +39,28 @@ export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderS
       }
     }
 
-    if (Object.keys(toSave).length === 0 && mode === 'config') {
-      toast.info('No new keys to save');
+    if (Object.keys(toSave).length === 0) {
+      if (mode === 'config') {
+        toast.info('No new keys to save');
+        return;
+      }
+      // In onboarding, if already configured, just proceed
+      if (hasAnyConfigured) {
+        onComplete?.();
+        return;
+      }
       return;
     }
 
-    if (Object.keys(toSave).length > 0) {
+    try {
       await saveSetup.mutateAsync(toSave);
       toast.success(t.saved);
       // Clear local key state after save
       setKeys({});
+      onComplete?.();
+    } catch {
+      // Error toast handled by the hook
     }
-
-    onComplete?.();
   };
 
   return (
@@ -80,17 +89,33 @@ export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderS
         {mode === 'onboarding' && !canProceed && (
           <p className="text-sm text-amber-400 mb-3">{t.atLeastOne}</p>
         )}
+
+        {pendingKeys.length > 0 && (
+          <p className="text-sm text-amber-400 mb-3">
+            {pendingKeys.length} key{pendingKeys.length > 1 ? 's' : ''} pending — click below to save
+          </p>
+        )}
+
         <button
           onClick={handleSave}
           disabled={
             (mode === 'onboarding' && !canProceed) || saveSetup.isPending
           }
-          className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+          className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-medium transition-colors ${
+            pendingKeys.length > 0
+              ? 'bg-amber-500 hover:bg-amber-600 text-black'
+              : 'bg-blue-600 hover:bg-blue-700 text-white'
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {saveSetup.isPending ? (
             <>
               <Loader2 size={18} className="animate-spin" />
               {t.saving}
+            </>
+          ) : pendingKeys.length > 0 ? (
+            <>
+              <Save size={18} />
+              Save {pendingKeys.length} key{pendingKeys.length > 1 ? 's' : ''} &amp; Continue
             </>
           ) : (
             t.saveAndContinue

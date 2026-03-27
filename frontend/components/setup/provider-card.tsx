@@ -10,6 +10,7 @@ import {
   Circle,
   ExternalLink,
   Server,
+  KeyRound,
 } from 'lucide-react';
 
 const t = translations.onboarding.providerSetup;
@@ -30,11 +31,17 @@ export function ProviderCard({
   mode = 'onboarding',
 }: ProviderCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const hasPendingKey = keyValue.trim().length > 0;
 
   const statusBadge = !provider.needsKey ? (
     <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full">
       <Server size={12} />
       {t.noKeyNeeded}
+    </span>
+  ) : hasPendingKey ? (
+    <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full">
+      <KeyRound size={12} />
+      Pending save
     </span>
   ) : isConfigured ? (
     <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">
@@ -49,7 +56,9 @@ export function ProviderCard({
   );
 
   return (
-    <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+    <div className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-colors ${
+      hasPendingKey ? 'border-amber-500/40' : 'border-slate-700/50'
+    }`}>
       <button
         type="button"
         onClick={() => provider.needsKey && setExpanded(!expanded)}
@@ -76,15 +85,25 @@ export function ProviderCard({
 
       {expanded && provider.needsKey && (
         <div className="px-4 pb-4 space-y-3">
-          <div>
+          <div className="relative">
             <input
               type="password"
               value={keyValue}
               onChange={(e) => onKeyChange(e.target.value)}
               placeholder={t.enterApiKey}
-              className="w-full px-4 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className={`w-full px-4 py-2.5 bg-slate-900 border rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                hasPendingKey ? 'border-amber-500/50' : 'border-slate-600'
+              }`}
             />
+            {hasPendingKey && (
+              <CheckCircle size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-amber-400" />
+            )}
           </div>
+          {hasPendingKey && (
+            <p className="text-xs text-amber-400">
+              Key entered — click &quot;Save &amp; Continue&quot; below to apply
+            </p>
+          )}
           <a
             href={provider.apiKeyUrl}
             target="_blank"

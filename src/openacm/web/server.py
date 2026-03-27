@@ -229,12 +229,32 @@ def create_app() -> FastAPI:
             "provider": _brain.llm_router._current_provider,
         }
 
+    def _is_real_key(env_var: str) -> bool:
+        """Check if an env var has a real value (not empty or placeholder)."""
+        val = os.environ.get(env_var, "").strip()
+        if not val:
+            return False
+        # Reject common placeholder patterns
+        lower = val.lower()
+        if lower.startswith("your-") or lower.startswith("your_"):
+            return False
+        if "here" in lower and ("-" in lower or "_" in lower):
+            return False  # e.g. "sk-your-openai-key-here"
+        if lower in ("change-me", "change-me-please", "changeme", "placeholder"):
+            return False
+        return True
+
+    def _find_env_path() -> Path:
+        """Find the .env path using project root."""
+        from openacm.core.config import _find_project_root
+        return _find_project_root() / "config" / ".env"
+
     @app.get("/api/config/status")
     async def get_config_status():
         """Check if essential configuration is missing (e.g. LLM API Key)."""
         if not _config or not _brain:
             return {"needs_setup": True}
-        # Check if ANY provider has a key configured (not just the current one)
+        # Check if ANY provider has a real key configured
         known_key_vars = [
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
@@ -242,7 +262,7 @@ def create_app() -> FastAPI:
             "OPENROUTER_API_KEY",
             "OPENCODE_GO_API_KEY",
         ]
-        any_configured = any(os.environ.get(k) for k in known_key_vars)
+        any_configured = any(_is_real_key(k) for k in known_key_vars)
         # Ollama doesn't need a key, check if it's the selected provider
         if not any_configured and _brain.llm_router._current_provider == "ollama":
             any_configured = True
@@ -254,14 +274,14 @@ def create_app() -> FastAPI:
     async def get_provider_status():
         """Return boolean status for each LLM provider (no keys exposed)."""
         providers = {
-            "openai": bool(os.environ.get("OPENAI_API_KEY")),
-            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
-            "gemini": bool(os.environ.get("GEMINI_API_KEY")),
-            "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
-            "opencode_go": bool(os.environ.get("OPENCODE_GO_API_KEY")),
+            "openai": _is_real_key("OPENAI_API_KEY"),
+            "anthropic": _is_real_key("ANTHROPIC_API_KEY"),
+            "gemini": _is_real_key("GEMINI_API_KEY"),
+            "openrouter": _is_real_key("OPENROUTER_API_KEY"),
+            "opencode_go": _is_real_key("OPENCODE_GO_API_KEY"),
             "ollama": True,  # Ollama is local, no key needed
         }
-        telegram_configured = bool(os.environ.get("TELEGRAM_TOKEN"))
+        telegram_configured = _is_real_key("TELEGRAM_TOKEN")
         return {"providers": providers, "telegram_configured": telegram_configured}
 
     @app.post("/api/config/setup")
@@ -270,9 +290,11 @@ def create_app() -> FastAPI:
         data = await request.json()
         from dotenv import set_key
 
-        env_path = Path("config/.env")
-        if not env_path.parent.exists():
-            env_path.parent.mkdir(parents=True, exist_ok=True)
+        env_path = _find_env_path()
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure the file exists (set_key requires it)
+        if not env_path.exists():
+            env_path.touch()
 
         updated = []
         for key, value in data.items():
