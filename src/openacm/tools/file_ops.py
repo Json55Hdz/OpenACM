@@ -39,20 +39,20 @@ async def read_file(path: str, max_lines: int = 200, **kwargs) -> str:
             return f"Error: File not found: {path}"
         if not file_path.is_file():
             return f"Error: Not a file: {path}"
-        
+
         # Check file size (max 1MB)
         size = file_path.stat().st_size
         if size > 1_000_000:
             return f"Error: File too large ({size:,} bytes). Maximum is 1MB."
-        
+
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-        
+
         total_lines = len(lines)
         if total_lines > max_lines:
             content = "".join(lines[:max_lines])
             return f"{content}\n\n[... truncated: showing {max_lines} of {total_lines} lines]"
-        
+
         return "".join(lines)
     except PermissionError:
         return f"Error: Permission denied: {path}"
@@ -91,14 +91,14 @@ async def write_file(path: str, content: str, append: bool = False, **kwargs) ->
     """Write content to a file."""
     try:
         file_path = Path(path).resolve()
-        
+
         # Create parent directories
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         mode = "a" if append else "w"
         with open(file_path, mode, encoding="utf-8") as f:
             f.write(content)
-        
+
         action = "Appended to" if append else "Wrote"
         return f"{action} {file_path} ({len(content)} characters)"
     except PermissionError:
@@ -110,8 +110,7 @@ async def write_file(path: str, content: str, append: bool = False, **kwargs) ->
 @tool(
     name="list_directory",
     description=(
-        "List files and directories in a given directory path. "
-        "Shows file names, sizes, and types."
+        "List files and directories in a given directory path. Shows file names, sizes, and types."
     ),
     parameters={
         "type": "object",
@@ -139,23 +138,23 @@ async def list_directory(path: str = ".", show_hidden: bool = False, **kwargs) -
             return f"Error: Directory not found: {path}"
         if not dir_path.is_dir():
             return f"Error: Not a directory: {path}"
-        
+
         entries = []
         for entry in sorted(dir_path.iterdir()):
             name = entry.name
             if not show_hidden and name.startswith("."):
                 continue
-            
+
             if entry.is_dir():
                 entries.append(f"  📁 {name}/")
             else:
                 size = entry.stat().st_size
                 size_str = _format_size(size)
                 entries.append(f"  📄 {name} ({size_str})")
-        
+
         if not entries:
             return f"Directory is empty: {dir_path}"
-        
+
         header = f"📂 {dir_path}\n"
         return header + "\n".join(entries)
     except PermissionError:
@@ -167,8 +166,7 @@ async def list_directory(path: str = ".", show_hidden: bool = False, **kwargs) -
 @tool(
     name="search_files",
     description=(
-        "Search for files by name pattern in a directory tree. "
-        "Returns matching file paths."
+        "Search for files by name pattern in a directory tree. Returns matching file paths."
     ),
     parameters={
         "type": "object",
@@ -191,24 +189,22 @@ async def list_directory(path: str = ".", show_hidden: bool = False, **kwargs) -
     },
     risk_level="low",
 )
-async def search_files(
-    directory: str, pattern: str, max_results: int = 50, **kwargs
-) -> str:
+async def search_files(directory: str, pattern: str, max_results: int = 50, **kwargs) -> str:
     """Search for files matching a pattern."""
     try:
         dir_path = Path(directory).resolve()
         if not dir_path.exists():
             return f"Error: Directory not found: {directory}"
-        
+
         matches = []
         for match in dir_path.rglob(pattern):
             matches.append(str(match))
             if len(matches) >= max_results:
                 break
-        
+
         if not matches:
             return f"No files matching '{pattern}' found in {directory}"
-        
+
         result = f"Found {len(matches)} files matching '{pattern}':\n"
         result += "\n".join(f"  {m}" for m in matches)
         if len(matches) >= max_results:
@@ -221,16 +217,17 @@ async def search_files(
 @tool(
     name="send_file_to_chat",
     description=(
-        "Upload a local file so the user can download it from the chat. "
-        "Use this whenever you generate a file for the user (like an Excel, PDF, Word doc, CSV, ZIP, etc.) "
-        "and need to give it to them. It will encrypt the file and return a secure link."
+        "[CRITICAL TOOL] Upload a local file so the user can download it from the chat. "
+        "MUST USE THIS when you generate any file for the user (PDF, Excel, Word, images, ZIP, etc.). "
+        "This tool encrypts the file and returns a secure download link that you must include in your response. "
+        "EXAMPLE: After generating a PDF with run_python, call this tool with the PDF path to make it downloadable."
     ),
     parameters={
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Absolute or relative path to the file you want to send",
+                "description": "Absolute or relative path to the file you want to send to the user",
             },
         },
         "required": ["path"],
@@ -240,29 +237,35 @@ async def search_files(
 async def send_file_to_chat(path: str, **kwargs) -> str:
     """Send a local file to the secure media storage and get a link."""
     try:
-        file_path = Path(path).resolve()
+        # Normalize path - remove trailing backslashes and fix double backslashes
+        normalized_path = path.rstrip("\\/").replace("\\\\", "\\")
+        file_path = Path(normalized_path).resolve()
+
         if not file_path.exists():
-            return f"Error: File not found: {path}"
+            return f"Error: File not found: {path} (normalized: {file_path})"
         if not file_path.is_file():
             return f"Error: Not a file: {path}"
-            
+
         import secrets
         from openacm.security.crypto import save_encrypted
-        
+
         file_bytes = file_path.read_bytes()
         ext = "".join(file_path.suffixes)
         if not ext:
             ext = ".bin"
-            
+
         file_id = secrets.token_hex(16)
         file_name = f"upload_{file_id}{ext}"
         dest_path = Path("data/media") / file_name
-        
+
         save_encrypted(file_bytes, dest_path)
-        
+
+        # Return in a format that brain can easily detect
+        # ATTACHMENT: prefix helps brain identify this
         return (
-            f"✅ File successfully prepared for download! You MUST include this exact URL "
-            f"in your message so the user can download it: /api/media/{file_name}"
+            f"ATTACHMENT:{file_name}\n"
+            f"✅ File ready: {file_path.name}\n"
+            f"📎 Download link (write this EXACTLY as shown, no backticks): /api/media/{file_name}"
         )
     except PermissionError:
         return f"Error: Permission denied reading {path}"

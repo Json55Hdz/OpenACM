@@ -26,7 +26,7 @@ dependencies = [
     "aiosqlite>=0.20",
     
     # Tools
-    "duckduckgo-search>=6.0",
+    "ddgs>=7.0",
     "psutil>=6.0",
     
     # Google Services

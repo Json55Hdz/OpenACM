@@ -60,21 +60,23 @@ async def stop_kernel():
 @tool(
     name="run_python",
     description=(
-        "Powerful interactive Python environment. Code executed here runs in a persistent "
-        "Jupyter-like kernel. Variables, functions, and imports are saved in memory between calls. "
-        "If you generate plots (e.g. using matplotlib), they will be automatically captured "
-        "and rendered to the user. You can use this for math, data analysis, or scripting."
+        "[OpenACM Tool - ALWAYS USE THIS FOR CODE] Execute Python code in a persistent "
+        "interactive Jupyter-like kernel. Variables persist between executions. "
+        "If you generate plots (matplotlib), they are automatically captured. "
+        "ALWAYS AVAILABLE. Use for: processing data, generating files, creating PDFs, "
+        "doing calculations, any task requiring code. "
+        "RULE: If user asks to 'generate X', 'calculate Y', 'create Z' → USE THIS TOOL"
     ),
     parameters={
         "type": "object",
         "properties": {
             "code": {
                 "type": "string",
-                "description": "The Python code to execute. Can be multiple lines.",
+                "description": "Python code to execute (can be multiple lines)",
             },
             "reset": {
                 "type": "boolean",
-                "description": "If true, restarts the kernel (clearing all variables) before running.",
+                "description": "If true, restarts kernel (clears variables) before execution",
                 "default": False,
             },
         },

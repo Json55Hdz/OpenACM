@@ -56,11 +56,12 @@ class ToolRegistry:
         arguments: dict[str, Any],
         user_id: str = "",
         channel_id: str = "",
+        _brain=None,
     ) -> str:
         """
         Execute a tool by name with the given arguments.
-        
-        Injects sandbox and other context into the tool handler.
+
+        Injects sandbox, brain, and other context into the tool handler.
         Logs execution to database.
         """
         if tool_name not in self.tools:
@@ -76,6 +77,7 @@ class ToolRegistry:
                 **arguments,
                 _sandbox=self.sandbox,
                 _event_bus=self.event_bus,
+                _brain=_brain,
             )
             result_str = str(result)
         except Exception as e:

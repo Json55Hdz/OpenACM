@@ -5,6 +5,7 @@ Supports Ollama (local), OpenAI, Anthropic, Gemini, and 100+ other providers.
 Handles model switching, streaming, retries, and token tracking.
 """
 
+import asyncio
 import time
 from typing import Any, AsyncIterator
 
@@ -196,9 +197,10 @@ class LLMRouter:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         stream: bool = False,
+        max_retries: int = 3,
     ) -> dict[str, Any]:
         """
-        Send a chat completion request.
+        Send a chat completion request with automatic retries on server errors.
 
         Returns dict with: content, tool_calls, usage (tokens), model, etc.
         """
@@ -217,6 +219,51 @@ class LLMRouter:
             },
         )
 
+        # Retry logic with exponential backoff
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                return await self._chat_attempt(
+                    messages, tools, temperature, max_tokens, model, api_base, start_time
+                )
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+
+                # Only retry on server errors (5xx) or timeouts
+                is_retryable = (
+                    "500" in str(e)
+                    or "502" in str(e)
+                    or "503" in str(e)
+                    or "504" in str(e)
+                    or "timeout" in error_str
+                    or "server error" in error_str
+                )
+
+                if not is_retryable or attempt == max_retries - 1:
+                    raise
+
+                wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                log.warning(
+                    f"LLM request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...",
+                    error=str(e),
+                )
+                await asyncio.sleep(wait_time)
+
+        # Should never reach here
+        raise last_error or Exception("Max retries exceeded")
+
+    async def _chat_attempt(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        temperature: float,
+        max_tokens: int | None,
+        model: str,
+        api_base: str | None,
+        start_time: float,
+    ) -> dict[str, Any]:
+        """Single chat attempt."""
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
             if self._is_custom_provider():

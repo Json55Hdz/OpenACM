@@ -8,25 +8,26 @@ from openacm.tools.base import tool
 @tool(
     name="run_command",
     description=(
-        "Execute a command on the operating system's terminal/shell. "
-        "Use this to run system commands like ls, dir, ping, git, python, etc. "
-        "The command runs in a secure sandbox with timeout protection."
+        "[OpenACM Tool] Execute commands directly in the operating system terminal. "
+        "ALWAYS AVAILABLE. Use for: ls, dir, git, python, pip, etc. "
+        "Command runs in a secure sandbox. "
+        "EXAMPLES: 'dir', 'ls -la', 'git status', 'python script.py'"
     ),
     parameters={
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": "The command to execute (e.g., 'dir', 'ls -la', 'ping google.com')",
+                "description": "Command to execute (e.g.: 'dir', 'ls -la', 'git status')",
             },
             "timeout": {
                 "type": "integer",
-                "description": "Maximum execution time in seconds (default: 30)",
+                "description": "Maximum time in seconds (default: 30)",
                 "default": 30,
             },
             "working_directory": {
                 "type": "string",
-                "description": "Optional working directory for the command",
+                "description": "Optional working directory",
             },
         },
         "required": ["command"],

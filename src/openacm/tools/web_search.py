@@ -33,7 +33,11 @@ from openacm.tools.base import tool
 async def web_search(query: str, max_results: int = 5, **kwargs) -> str:
     """Search the web using DuckDuckGo."""
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            # Fallback to old import for backwards compatibility
+            from duckduckgo_search import DDGS
 
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=max_results))

@@ -23,7 +23,7 @@ class AssistantConfig(BaseModel):
     name: str = "ACM"
     system_prompt: str = "You are ACM, a helpful AI assistant."
     max_context_messages: int = 50
-    max_tool_iterations: int = 10
+    max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
 
 

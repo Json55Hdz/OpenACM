@@ -596,6 +596,46 @@ function hideTyping() {
     document.getElementById('typing-indicator')?.remove();
 }
 
+// Variable para guardar el ID del indicador de thinking actual
+let currentThinkingId = null;
+
+function showThinkingStatus(message, status) {
+    const container = document.getElementById('chat-messages');
+    
+    // Remover indicador anterior si existe
+    if (currentThinkingId) {
+        document.getElementById(currentThinkingId)?.remove();
+    }
+    
+    // Crear nuevo indicador
+    const thinking = document.createElement('div');
+    thinking.className = 'chat-bubble thinking-status';
+    thinking.id = 'thinking-indicator-' + Date.now();
+    currentThinkingId = thinking.id;
+    
+    // Estilos según el estado
+    let style = '';
+    if (status === 'start') {
+        style = 'background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6;';
+    } else if (status === 'tool_execution') {
+        style = 'background: rgba(245, 158, 11, 0.1); border-left: 3px solid #f59e0b;';
+    } else {
+        style = 'background: rgba(139, 92, 246, 0.1); border-left: 3px solid #8b5cf6;';
+    }
+    thinking.style.cssText = style + ' padding: 0.5rem 1rem; margin: 0.25rem 0; font-size: 0.85rem; color: var(--text-secondary);';
+    thinking.innerHTML = `<span style="opacity: 0.7;">${message}</span>`;
+    
+    container.appendChild(thinking);
+    container.scrollTop = container.scrollHeight;
+}
+
+function hideThinkingStatus() {
+    if (currentThinkingId) {
+        document.getElementById(currentThinkingId)?.remove();
+        currentThinkingId = null;
+    }
+}
+
 // ─── WebSockets ─────────────────────────────────────────────
 function initWebSockets() {
     connectChatWs();
@@ -614,6 +654,7 @@ function connectChatWs() {
         isWaitingResponse = false;
 
         if (data.type === 'response') {
+            hideThinkingStatus();
             addChatBubble(data.content, 'assistant');
         } else if (data.type === 'error') {
             addChatBubble(`❌ ${data.content}`, 'error');
@@ -648,6 +689,8 @@ function connectEventsWs() {
             // Update sidebar if we got a message
             loadChatList();
         } else if (data.type === 'message.sent') {
+            // Ocultar thinking status cuando llega la respuesta final
+            hideThinkingStatus();
             if (data.channel_id === currentTarget.targetChannel && currentTarget.targetChannel !== 'web') {
                  // The assistant replied natively on the channel we are looking at!
                  addChatBubble(data.content, 'assistant', `📱 Respuesta a ${data.channel_type}`);
@@ -659,6 +702,11 @@ function connectEventsWs() {
         } else if (data.type === 'tool.result') {
             if (data.channel_id === currentTarget.targetChannel || (currentTarget.targetChannel === 'web' && data.channel_id === 'web')) {
                 addToolTrace(data.tool, data.result, 'done', data.channel_id + '-' + data.tool);
+            }
+        } else if (data.type === 'message.thinking') {
+            // Mostrar estado de thinking/procesamiento
+            if (data.channel_id === currentTarget.targetChannel || (currentTarget.targetChannel === 'web' && data.channel_id === 'web')) {
+                showThinkingStatus(data.message, data.status);
             }
         }
     };

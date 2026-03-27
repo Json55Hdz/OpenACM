@@ -16,6 +16,7 @@ log = structlog.get_logger()
 # Event type constants
 EVENT_MESSAGE_RECEIVED = "message.received"
 EVENT_MESSAGE_SENT = "message.sent"
+EVENT_THINKING = "message.thinking"  # Bot está procesando/pensando
 EVENT_TOOL_CALLED = "tool.called"
 EVENT_TOOL_RESULT = "tool.result"
 EVENT_TOOL_CONFIRMATION = "tool.confirmation_needed"
@@ -50,20 +51,18 @@ class EventBus:
         """
         data = data or {}
         handlers = self._handlers.get(event_type, [])
-        
+
         if not handlers:
             return
 
         tasks = []
         for handler in handlers:
             tasks.append(self._safe_call(handler, event_type, data))
-        
+
         if tasks:
             await asyncio.gather(*tasks)
 
-    async def _safe_call(
-        self, handler: Callable, event_type: str, data: dict[str, Any]
-    ):
+    async def _safe_call(self, handler: Callable, event_type: str, data: dict[str, Any]):
         """Call a handler safely, catching and logging errors."""
         try:
             await handler(event_type, data)

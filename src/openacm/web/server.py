@@ -607,6 +607,7 @@ async def create_web_server(
     from openacm.core.events import (
         EVENT_MESSAGE_RECEIVED,
         EVENT_MESSAGE_SENT,
+        EVENT_THINKING,
         EVENT_TOOL_CALLED,
         EVENT_TOOL_RESULT,
         EVENT_LLM_REQUEST,
@@ -616,6 +617,7 @@ async def create_web_server(
     for evt in [
         EVENT_MESSAGE_RECEIVED,
         EVENT_MESSAGE_SENT,
+        EVENT_THINKING,
         EVENT_TOOL_CALLED,
         EVENT_TOOL_RESULT,
         EVENT_LLM_REQUEST,
