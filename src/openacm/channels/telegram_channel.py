@@ -49,10 +49,21 @@ class TelegramChannel(BaseChannel):
     def is_connected(self) -> bool:
         return self._connected
 
+    @staticmethod
+    def _is_placeholder_token(token: str) -> bool:
+        """Check if a token is a placeholder/example value."""
+        placeholders = {"your-telegram-bot-token-here", "your-token-here", "change-me"}
+        return (
+            not token
+            or token.lower() in placeholders
+            or token.startswith("your-")
+            or ":" not in token  # Real Telegram tokens always contain ':'
+        )
+
     async def start(self):
         """Start the Telegram bot."""
-        if not self.config.token:
-            log.warning("Telegram token not configured")
+        if self._is_placeholder_token(self.config.token):
+            log.warning("Telegram token not configured or is a placeholder, skipping")
             return
 
         self._app = Application.builder().token(self.config.token).build()
@@ -69,9 +80,14 @@ class TelegramChannel(BaseChannel):
         self.event_bus.on(EVENT_TOOL_RESULT, self._on_tool_result)
         self.event_bus.on(EVENT_MESSAGE_SENT, self._on_message_sent)
 
-        await self._app.initialize()
-        await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        try:
+            await self._app.initialize()
+            await self._app.start()
+            await self._app.updater.start_polling(drop_pending_updates=True)
+        except Exception as e:
+            log.error("Telegram bot failed to start", error=str(e))
+            self._app = None
+            return
 
         self._connected = True
         log.info("Telegram bot started")

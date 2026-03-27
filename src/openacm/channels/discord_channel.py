@@ -118,12 +118,22 @@ class DiscordChannel(BaseChannel):
                     log.error("Discord message error", error=str(e))
                     await message.reply(f"❌ Error: {str(e)}")
 
+    @staticmethod
+    def _is_placeholder_token(token: str) -> bool:
+        """Check if a token is a placeholder/example value."""
+        placeholders = {"your-discord-bot-token-here", "your-token-here", "change-me"}
+        return (
+            not token
+            or token.lower() in placeholders
+            or token.startswith("your-")
+        )
+
     async def start(self):
         """Start the Discord bot."""
-        if not self.config.token:
-            log.warning("Discord token not configured")
+        if self._is_placeholder_token(self.config.token):
+            log.warning("Discord token not configured or is a placeholder, skipping")
             return
-        
+
         try:
             await self._client.start(self.config.token)
         except Exception as e:

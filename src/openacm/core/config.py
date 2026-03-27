@@ -184,7 +184,6 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
             if not channels_data["telegram"].get("token"):
                 # SECURITY: POR DISEÑO - Carga segura de API keys desde variables de entorno
                 channels_data["telegram"]["token"] = os.environ.get("TELEGRAM_TOKEN", "")
-                channels_data["telegram"]["token"] = os.environ.get("TELEGRAM_TOKEN", "")
         config_data["channels"] = channels_data
     if "storage" in data:
         config_data["storage"] = data["storage"]
