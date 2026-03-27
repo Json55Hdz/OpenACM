@@ -39,11 +39,12 @@ class LLMRouter:
         self._configure_providers()
 
     def _configure_providers(self):
-        """Configure LiteLLM with provider-specific settings."""
-        for provider, settings in self.config.providers.items():
-            if provider == "ollama" and "base_url" in settings:
-                # Ollama uses api_base
-                litellm.api_base = settings["base_url"]
+        """Configure LiteLLM with provider-specific settings.
+
+        NOTE: Do NOT set litellm.api_base globally here — it would override
+        all providers.  api_base is passed per-request via _get_api_base().
+        """
+        pass
 
     @property
     def current_model(self) -> str:
