@@ -101,6 +101,7 @@ export default function ConfigPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [telegramToken, setTelegramToken] = useState('');
   const [customModel, setCustomModel] = useState('');
+  const [customProvider, setCustomProvider] = useState('');
   const { data: providerStatus } = useProviderStatus();
 
   // Initialize JSON config when data loads
@@ -246,6 +247,16 @@ export default function ConfigPage() {
                 <div className="pt-3 border-t border-slate-800">
                   <label className="block text-xs text-slate-500 mb-1.5">Custom model name</label>
                   <div className="flex gap-2">
+                    <select
+                      value={customProvider}
+                      onChange={(e) => setCustomProvider(e.target.value)}
+                      className="px-2 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Provider</option>
+                      {configuredProviders.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
                     <input
                       type="text"
                       value={customModel}
@@ -255,11 +266,12 @@ export default function ConfigPage() {
                     />
                     <button
                       onClick={() => {
-                        if (customModel.trim()) {
-                          handleSetModel(customModel.trim(), activeProviderId);
+                        if (customModel.trim() && customProvider) {
+                          handleSetModel(customModel.trim(), customProvider);
+                          setCustomModel('');
                         }
                       }}
-                      disabled={!customModel.trim() || setModelMut.isPending}
+                      disabled={!customModel.trim() || !customProvider || setModelMut.isPending}
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                     >
                       {setModelMut.isPending ? (

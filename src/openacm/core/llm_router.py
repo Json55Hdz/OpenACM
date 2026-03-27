@@ -84,14 +84,16 @@ class LLMRouter:
             provider = self._current_provider
             model = self._current_model
             if provider == "ollama":
-                return f"ollama/{model}"
+                return f"ollama/{model}" if not model.startswith("ollama/") else model
             elif provider == "anthropic":
-                return f"anthropic/{model}"
+                return f"anthropic/{model}" if not model.startswith("anthropic/") else model
             elif provider == "gemini":
-                return model  # gemini models already have prefix in config
+                return f"gemini/{model}" if not model.startswith("gemini/") else model
+            elif provider == "openrouter":
+                return f"openrouter/{model}" if not model.startswith("openrouter/") else model
             else:
                 if self._get_api_base() and provider != "openai":
-                    return f"openai/{model}"
+                    return f"openai/{model}" if not model.startswith("openai/") else model
                 return model  # OpenAI models don't need prefix
 
         # Use default from config
@@ -100,11 +102,13 @@ class LLMRouter:
             settings = self.config.providers[provider]
             model = settings.get("default_model", "")
             if provider == "ollama":
-                return f"ollama/{model}"
+                return f"ollama/{model}" if not model.startswith("ollama/") else model
             elif provider == "anthropic":
-                return f"anthropic/{model}"
+                return f"anthropic/{model}" if not model.startswith("anthropic/") else model
             elif provider == "gemini":
-                return model
+                return f"gemini/{model}" if not model.startswith("gemini/") else model
+            elif provider == "openrouter":
+                return f"openrouter/{model}" if not model.startswith("openrouter/") else model
             else:
                 if provider != "openai" and "base_url" in settings:
                     return f"openai/{model}"

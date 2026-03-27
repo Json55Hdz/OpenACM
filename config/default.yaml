@@ -31,7 +31,7 @@ llm:
     anthropic:
       default_model: "claude-sonnet-4-20250514"
     gemini:
-      default_model: "gemini/gemini-2.0-flash"
+      default_model: "gemini-2.5-flash"
     opencode_go:
       default_model: "kimi-k2.5"
       base_url: "https://opencode.ai/zen/go/v1"
