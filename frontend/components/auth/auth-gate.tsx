@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth-store';
 import { useAuth } from '@/hooks/use-websocket';
 import { useConfigStatus } from '@/hooks/use-setup';
@@ -12,12 +12,15 @@ const t = translations.auth;
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(true);
   const [isAuth, setIsAuth] = useState(false);
   const [tokenInput, setTokenInput] = useState('');
   const [showError, setShowError] = useState(false);
   const { login } = useAuth();
   const checkAuth = useAuthStore((state) => state.checkAuth);
+
+  const isOnboardingPage = pathname === '/onboarding';
   const { data: configStatus, isLoading: configLoading } = useConfigStatus();
 
   useEffect(() => {
@@ -29,12 +32,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     init();
   }, [checkAuth]);
 
-  // Redirect to onboarding if setup is needed
+  // Redirect to onboarding if setup is needed (but not if already there)
   useEffect(() => {
-    if (isAuth && !configLoading && configStatus?.needs_setup) {
+    if (isAuth && !configLoading && configStatus?.needs_setup && !isOnboardingPage) {
       router.push('/onboarding');
     }
-  }, [isAuth, configStatus, configLoading, router]);
+  }, [isAuth, configStatus, configLoading, router, isOnboardingPage]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,6 +98,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     );
+  }
+
+  // If we're on the onboarding page, let it render freely (it handles its own flow)
+  if (isOnboardingPage) {
+    return <>{children}</>;
   }
 
   // Still loading config status - show spinner briefly
