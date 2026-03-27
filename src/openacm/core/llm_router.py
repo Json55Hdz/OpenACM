@@ -55,18 +55,24 @@ class LLMRouter:
             return self.config.providers[provider].get("default_model", "unknown")
         return "unknown"
 
-    def set_model(self, model: str):
+    def set_model(self, model: str, provider: str | None = None):
         """
-        Set the current model.
-        Can be 'provider/model' or just 'model' (uses current provider).
+        Set the current model and optionally the provider.
+
+        If provider is given explicitly, use it.
+        Otherwise if model has 'provider/model' format, extract the provider.
+        Otherwise keep the current provider.
         """
-        if "/" in model:
-            # Explicit provider/model format
+        if provider:
+            self._current_provider = provider
             self._current_model = model
+        elif "/" in model:
+            # Explicit provider/model format
             self._current_provider = model.split("/")[0]
+            self._current_model = model
         else:
             self._current_model = model
-        log.info("Model changed", model=self.current_model)
+        log.info("Model changed", model=self.current_model, provider=self._current_provider)
 
     def _build_model_string(self) -> str:
         """Build the LiteLLM model string."""

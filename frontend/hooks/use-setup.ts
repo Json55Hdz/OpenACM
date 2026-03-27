@@ -63,10 +63,10 @@ export function useSetModel() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (model: string) => {
+    mutationFn: async ({ model, provider }: { model: string; provider?: string }) => {
       return fetchAPI('/api/config/model', {
         method: 'POST',
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, provider }),
       });
     },
     onSuccess: () => {

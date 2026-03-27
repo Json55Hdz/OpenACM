@@ -100,6 +100,7 @@ export default function ConfigPage() {
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [telegramToken, setTelegramToken] = useState('');
 
   // Initialize JSON config when data loads
@@ -130,8 +131,9 @@ export default function ConfigPage() {
 
   const handleModelChange = () => {
     if (selectedModel) {
-      setModelMut.mutate(selectedModel);
+      setModelMut.mutate({ model: selectedModel, provider: selectedProvider });
       setSelectedModel('');
+      setSelectedProvider(undefined);
     }
   };
 
@@ -191,7 +193,10 @@ export default function ConfigPage() {
                 <div className="pt-4 border-t border-slate-800">
                   <ModelSelector
                     selectedModel={selectedModel}
-                    onSelect={setSelectedModel}
+                    onSelect={({ model: m, provider: p }) => {
+                      setSelectedModel(m);
+                      setSelectedProvider(p);
+                    }}
                   />
                   {selectedModel && (
                     <button
@@ -220,20 +225,18 @@ export default function ConfigPage() {
           >
             <div className="space-y-4">
               <TelegramSetup value={telegramToken} onChange={setTelegramToken} />
-              {telegramToken.trim() && (
-                <button
-                  onClick={handleTelegramSave}
-                  disabled={saveSetup.isPending}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
-                >
-                  {saveSetup.isPending ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Save size={16} />
-                  )}
-                  Save Telegram Token
-                </button>
-              )}
+              <button
+                onClick={handleTelegramSave}
+                disabled={!telegramToken.trim() || saveSetup.isPending}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              >
+                {saveSetup.isPending ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Save size={16} />
+                )}
+                Save Telegram Token
+              </button>
             </div>
           </ConfigSection>
 

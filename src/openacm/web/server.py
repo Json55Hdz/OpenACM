@@ -427,12 +427,17 @@ def create_app() -> FastAPI:
 
     @app.post("/api/config/model")
     async def set_model(request: Request):
-        """Change the LLM model."""
+        """Change the LLM model and optionally the provider."""
         data = await request.json()
         model = data.get("model", "")
+        provider = data.get("provider", None)
         if model and _brain:
-            _brain.llm_router.set_model(model)
-            return {"status": "ok", "model": _brain.llm_router.current_model}
+            _brain.llm_router.set_model(model, provider=provider)
+            return {
+                "status": "ok",
+                "model": _brain.llm_router.current_model,
+                "provider": _brain.llm_router._current_provider,
+            }
         return {"status": "error", "message": "No model specified"}
 
     # ─── API: Conversations ───────────────────────────────────

@@ -69,13 +69,13 @@ export function getProviderById(id: string): ProviderDefinition | undefined {
   return PROVIDERS.find((p) => p.id === id);
 }
 
-export function getSuggestedModelsForProviders(configuredIds: string[]): { provider: string; model: string }[] {
-  const result: { provider: string; model: string }[] = [];
+export function getSuggestedModelsForProviders(configuredIds: string[]): { provider: string; providerId: string; model: string }[] {
+  const result: { provider: string; providerId: string; model: string }[] = [];
   for (const id of configuredIds) {
     const provider = getProviderById(id);
     if (provider) {
       for (const model of provider.suggestedModels) {
-        result.push({ provider: provider.name, model });
+        result.push({ provider: provider.name, providerId: provider.id, model });
       }
     }
   }

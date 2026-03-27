@@ -2,14 +2,19 @@
 
 import { useState } from 'react';
 import { useProviderStatus } from '@/hooks/use-setup';
-import { getSuggestedModelsForProviders } from '@/lib/providers';
+import { getSuggestedModelsForProviders, getProviderById } from '@/lib/providers';
 import { translations } from '@/lib/translations';
 
 const t = translations.onboarding.modelSelect;
 
+export interface ModelSelection {
+  model: string;
+  provider?: string;  // provider id (e.g. "gemini", "openai")
+}
+
 interface ModelSelectorProps {
   selectedModel: string;
-  onSelect: (model: string) => void;
+  onSelect: (selection: ModelSelection) => void;
 }
 
 export function ModelSelector({ selectedModel, onSelect }: ModelSelectorProps) {
@@ -25,7 +30,7 @@ export function ModelSelector({ selectedModel, onSelect }: ModelSelectorProps) {
   const handleCustomChange = (value: string) => {
     setCustomModel(value);
     if (value.trim()) {
-      onSelect(value.trim());
+      onSelect({ model: value.trim() });
     }
   };
 
@@ -38,12 +43,12 @@ export function ModelSelector({ selectedModel, onSelect }: ModelSelectorProps) {
 
       {suggestedModels.length > 0 && (
         <div className="space-y-2">
-          {suggestedModels.map(({ provider, model }) => (
+          {suggestedModels.map(({ provider, model, providerId }) => (
             <button
-              key={model}
+              key={`${providerId}-${model}`}
               type="button"
               onClick={() => {
-                onSelect(model);
+                onSelect({ model, provider: providerId });
                 setCustomModel('');
               }}
               className={`w-full flex items-center justify-between p-3 rounded-lg border transition-colors text-left ${

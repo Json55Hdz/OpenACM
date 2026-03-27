@@ -86,6 +86,7 @@ export default function OnboardingPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [telegramToken, setTelegramToken] = useState('');
 
   // Auto-advance past auth if already authenticated
@@ -129,8 +130,8 @@ export default function OnboardingPage() {
     }
 
     try {
-      // Save model
-      await setModel.mutateAsync(selectedModel);
+      // Save model + provider
+      await setModel.mutateAsync({ model: selectedModel, provider: selectedProvider });
 
       // Save telegram token if provided
       if (telegramToken.trim()) {
@@ -253,7 +254,13 @@ export default function OnboardingPage() {
           {/* Step 3: Model & Telegram */}
           {currentStep === 3 && (
             <div className="space-y-8">
-              <ModelSelector selectedModel={selectedModel} onSelect={setSelectedModel} />
+              <ModelSelector
+                selectedModel={selectedModel}
+                onSelect={({ model, provider }) => {
+                  setSelectedModel(model);
+                  setSelectedProvider(provider);
+                }}
+              />
 
               <div className="border-t border-slate-700 pt-6">
                 <TelegramSetup value={telegramToken} onChange={setTelegramToken} />
