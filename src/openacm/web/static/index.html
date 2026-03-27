@@ -87,6 +87,12 @@
                 </a>
             </li>
             <li>
+                <a href="#" class="nav-link" data-page="skills" id="nav-skills">
+                    <span class="nav-icon">🧠</span>
+                    <span class="nav-label">Skills</span>
+                </a>
+            </li>
+            <li>
                 <a href="#" class="nav-link" data-page="config" id="nav-config">
                     <span class="nav-icon">⚙️</span>
                     <span class="nav-label">Configuración</span>
@@ -282,6 +288,93 @@
                             <tbody id="executions-body">
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Page: Skills -->
+        <section class="page" id="page-skills">
+            <div class="skills-header">
+                <button class="btn btn-primary" id="btn-create-skill">+ Nueva Skill</button>
+                <button class="btn btn-secondary" id="btn-generate-skill">✨ Generar con IA</button>
+            </div>
+            
+            <div class="skills-grid" id="skills-list">
+                <!-- Populated via JS -->
+            </div>
+            
+            <!-- Create Skill Modal -->
+            <div class="modal" id="skill-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 id="skill-modal-title">Nueva Skill</h3>
+                        <button class="modal-close" id="skill-modal-close">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="skill-form">
+                            <input type="hidden" id="skill-id">
+                            <div class="form-group">
+                                <label>Nombre</label>
+                                <input type="text" id="skill-name" class="form-input" placeholder="mi-skill" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Descripción</label>
+                                <input type="text" id="skill-description" class="form-input" placeholder="Breve descripción de qué hace esta skill" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Categoría</label>
+                                <select id="skill-category" class="form-input">
+                                    <option value="security">Seguridad</option>
+                                    <option value="development">Desarrollo</option>
+                                    <option value="ai">IA/ML</option>
+                                    <option value="custom">Personalizada</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Contenido (Markdown)</label>
+                                <textarea id="skill-content" class="form-input" rows="15" placeholder="# Mi Skill
+
+## Instrucciones
+Eres un experto en..." required></textarea>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="skill-cancel">Cancelar</button>
+                        <button class="btn btn-primary" id="skill-save">Guardar</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Generate Skill Modal -->
+            <div class="modal" id="generate-skill-modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3>Generar Skill con IA</h3>
+                        <button class="modal-close" id="generate-modal-close">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="generate-skill-form">
+                            <div class="form-group">
+                                <label>Nombre de la Skill</label>
+                                <input type="text" id="gen-skill-name" class="form-input" placeholder="experto-en-x" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Descripción</label>
+                                <input type="text" id="gen-skill-description" class="form-input" placeholder="Qué hace esta skill..." required>
+                            </div>
+                            <div class="form-group">
+                                <label>Casos de Uso</label>
+                                <textarea id="gen-skill-usecases" class="form-input" rows="5" placeholder="- Cuando el usuario pregunte sobre X...
+- Para revisar código de Y...
+- Al analizar datos de Z..." required></textarea>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="generate-cancel">Cancelar</button>
+                        <button class="btn btn-primary" id="generate-submit">Generar</button>
                     </div>
                 </div>
             </div>

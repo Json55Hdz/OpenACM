@@ -28,12 +28,12 @@ async def _get_or_create_kernel():
 
     try:
         from jupyter_client import KernelManager
-        
+
         _kernel_manager = KernelManager(kernel_name="python3")
         _kernel_manager.start_kernel()
         _kernel_client = _kernel_manager.client()
         _kernel_client.start_channels()
-        
+
         # Give it a second to boot
         await asyncio.sleep(1.5)
         log.info("Jupyter kernel started")
@@ -88,95 +88,99 @@ async def run_python(code: str, reset: bool = False, **kwargs) -> str:
     try:
         import queue
         from openacm.security.crypto import save_encrypted
-        
+
         if reset:
             await stop_kernel()
-            
+
         km, kc = await _get_or_create_kernel()
-        
+
         # Execute the code
         msg_id = kc.execute(code)
-        
+
         output_parts = []
         media_files = []
-        
+
         # Collect results
         status_idle = False
-        
+
         while not status_idle:
             try:
-                # Need awaitable or thread for queue.get if it blocks heavily, 
+                # Need awaitable or thread for queue.get if it blocks heavily,
                 # but timeout=1 handles it in chunks
                 msg = await asyncio.to_thread(kc.get_iopub_msg, timeout=2)
-                
+
                 # Check if this msg belongs to our execution
                 if msg["parent_header"].get("msg_id") != msg_id:
                     continue
-                
+
                 msg_type = msg["msg_type"]
                 content = msg["content"]
-                
+
                 if msg_type == "status" and content.get("execution_state") == "idle":
                     status_idle = True
-                    
+
                 elif msg_type == "stream":
                     text = content.get("text", "")
                     output_parts.append(text)
-                    
+
                 elif msg_type == "error":
                     # Execution threw an error
                     err_name = content.get("ename", "Error")
                     err_value = content.get("evalue", "")
                     tb = "\n".join(content.get("traceback", []))
-                    
+
                     # Remove ANSI colors from jupyter traceback for clean text
                     import re
-                    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                    tb_clean = ansi_escape.sub('', tb)
+
+                    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+                    tb_clean = ansi_escape.sub("", tb)
                     output_parts.append(f"❌ {err_name}: {err_value}\n{tb_clean}")
-                    
+
                 elif msg_type in ["display_data", "execute_result"]:
                     data = content.get("data", {})
-                    
+
                     # Priority 1: Images
                     if "image/png" in data:
                         png_b64 = data["image/png"]
+                        # SECURITY: POR DISEÑO - Decodifica imágenes matplotlib del kernel
                         raw_bytes = base64.b64decode(png_b64)
-                        
+
                         file_id = secrets.token_hex(16)
                         file_name = f"plot_{file_id}.png"
                         dest_path = Path("data/media") / file_name
-                        
+
                         save_encrypted(raw_bytes, dest_path)
                         media_files.append(file_name)
-                        
+
                     # Priority 2: Text representation
                     elif "text/plain" in data:
                         output_parts.append(data["text/plain"])
-                        
+
             except queue.Empty:
                 # If we timeout without getting idle, assume it's stuck or we missed it
                 output_parts.append("\n[Execution interrupted or timed out reading stream]")
                 break
-                
+
         # Format the final response
         final_text = "".join(output_parts).strip()
-        
+
         # If no text but images were produced
         if not final_text and not media_files:
             return "✅ Code executed successfully. (No output generated)"
-            
+
         result = []
         if final_text:
             result.append("📄 Output:\n```text\n" + final_text + "\n```")
-            
+
         if media_files:
-            result.append("✅ Generated plots/images! You MUST include these URLs in your message so the user can see them:")
+            result.append(
+                "✅ Generated plots/images! You MUST include these URLs in your message so the user can see them:"
+            )
             for m in media_files:
                 result.append(f"/api/media/{m}")
-                
+
         return "\n\n".join(result)
-        
+
     except Exception as e:
         log.error("run_python execution failed", error=str(e))
         return f"Error executing python: {str(e)}"

@@ -68,6 +68,7 @@ async function bootApp() {
     initNavigation();
     initChat();
     initWebSockets();
+    initSkills();
     initConfigToggles();
     
     // Check onboarding
@@ -164,7 +165,8 @@ function switchPage(pageName) {
         dashboard: 'Dashboard',
         chat: 'Chat',
         tools: 'Herramientas',
-        config: 'Configuración'
+        skills: 'Skills',
+        config: 'Configuración',
     };
     document.getElementById('page-title').textContent = titles[pageName] || pageName;
 }
@@ -923,5 +925,173 @@ function addToolTrace(toolName, output, status, traceId) {
             existingTrace.innerHTML = `✅ <strong>${toolName}</strong> finalizado. <details style="cursor:pointer;"><summary>Ver resultado</summary><pre style="margin-top:0.5rem; white-space: pre-wrap;">${output}</pre></details>`;
             container.scrollTop = container.scrollHeight;
         }
+    }
+}
+
+// ─── Skills ─────────────────────────────────────────────────
+async function loadSkills() {
+    try {
+        const skills = await fetchAPI('/api/skills');
+        if (!skills) return;
+        
+        const container = document.getElementById('skills-list');
+        container.innerHTML = skills.map(skill => `
+            <div class="skill-card ${skill.is_active ? '' : 'inactive'} ${skill.is_builtin ? 'builtin' : ''}">
+                <div class="skill-header">
+                    <h4 class="skill-name">${skill.name}</h4>
+                    <span class="skill-category ${skill.category}">${skill.category}</span>
+                </div>
+                <p class="skill-description">${skill.description}</p>
+                <div class="skill-footer">
+                    <div class="skill-status">
+                        <span class="skill-status-dot ${skill.is_active ? '' : 'inactive'}"></span>
+                        ${skill.is_active ? 'Activa' : 'Inactiva'}
+                        ${skill.is_builtin ? ' • Built-in' : ''}
+                    </div>
+                    <div class="skill-actions">
+                        <button class="skill-btn toggle" onclick="toggleSkill(${skill.id}, ${!skill.is_active})">
+                            ${skill.is_active ? 'Desactivar' : 'Activar'}
+                        </button>
+                        ${!skill.is_builtin ? `
+                            <button class="skill-btn" onclick="editSkill(${skill.id})">Editar</button>
+                            <button class="skill-btn delete" onclick="deleteSkill(${skill.id})">Eliminar</button>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (err) {
+        console.error('Error loading skills:', err);
+    }
+}
+
+async function toggleSkill(id, activate) {
+    try {
+        await fetchAPI(`/api/skills/${id}/toggle`, { method: 'POST' });
+        loadSkills();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+function initSkills() {
+    // Load skills when page is shown
+    document.getElementById('nav-skills').addEventListener('click', loadSkills);
+    
+    // Create skill modal
+    const createModal = document.getElementById('skill-modal');
+    document.getElementById('btn-create-skill').addEventListener('click', () => {
+        document.getElementById('skill-form').reset();
+        document.getElementById('skill-id').value = '';
+        document.getElementById('skill-modal-title').textContent = 'Nueva Skill';
+        createModal.classList.add('active');
+    });
+    
+    document.getElementById('skill-modal-close').addEventListener('click', () => {
+        createModal.classList.remove('active');
+    });
+    
+    document.getElementById('skill-cancel').addEventListener('click', () => {
+        createModal.classList.remove('active');
+    });
+    
+    document.getElementById('skill-save').addEventListener('click', async () => {
+        const id = document.getElementById('skill-id').value;
+        const data = {
+            name: document.getElementById('skill-name').value,
+            description: document.getElementById('skill-description').value,
+            category: document.getElementById('skill-category').value,
+            content: document.getElementById('skill-content').value,
+        };
+        
+        try {
+            if (id) {
+                await fetchAPI(`/api/skills/${id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(data),
+                });
+            } else {
+                await fetchAPI('/api/skills', {
+                    method: 'POST',
+                    body: JSON.stringify(data),
+                });
+            }
+            createModal.classList.remove('active');
+            loadSkills();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+    });
+    
+    // Generate skill modal
+    const generateModal = document.getElementById('generate-skill-modal');
+    document.getElementById('btn-generate-skill').addEventListener('click', () => {
+        document.getElementById('generate-skill-form').reset();
+        generateModal.classList.add('active');
+    });
+    
+    document.getElementById('generate-modal-close').addEventListener('click', () => {
+        generateModal.classList.remove('active');
+    });
+    
+    document.getElementById('generate-cancel').addEventListener('click', () => {
+        generateModal.classList.remove('active');
+    });
+    
+    document.getElementById('generate-submit').addEventListener('click', async () => {
+        const data = {
+            name: document.getElementById('gen-skill-name').value,
+            description: document.getElementById('gen-skill-description').value,
+            use_cases: document.getElementById('gen-skill-usecases').value,
+        };
+        
+        try {
+            const btn = document.getElementById('generate-submit');
+            btn.textContent = 'Generando...';
+            btn.disabled = true;
+            
+            await fetchAPI('/api/skills/generate', {
+                method: 'POST',
+                body: JSON.stringify(data),
+            });
+            
+            generateModal.classList.remove('active');
+            loadSkills();
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            const btn = document.getElementById('generate-submit');
+            btn.textContent = 'Generar';
+            btn.disabled = false;
+        }
+    });
+}
+
+async function editSkill(id) {
+    try {
+        const skills = await fetchAPI('/api/skills');
+        const skill = skills.find(s => s.id === id);
+        if (!skill) return;
+        
+        document.getElementById('skill-id').value = skill.id;
+        document.getElementById('skill-name').value = skill.name;
+        document.getElementById('skill-description').value = skill.description;
+        document.getElementById('skill-category').value = skill.category;
+        document.getElementById('skill-content').value = skill.content;
+        document.getElementById('skill-modal-title').textContent = 'Editar Skill';
+        document.getElementById('skill-modal').classList.add('active');
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function deleteSkill(id) {
+    if (!confirm('¿Eliminar esta skill permanentemente?')) return;
+    
+    try {
+        await fetchAPI(`/api/skills/${id}`, { method: 'DELETE' });
+        loadSkills();
+    } catch (err) {
+        alert('Error: ' + err.message);
     }
 }

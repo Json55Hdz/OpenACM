@@ -1,7 +1,7 @@
 """
 OpenACM Application Orchestrator.
 
-Boots up all subsystems: config, database, LLM router, brain, 
+Boots up all subsystems: config, database, LLM router, brain,
 channels, web dashboard, and the interactive console.
 """
 
@@ -19,6 +19,7 @@ from openacm.core.events import EventBus
 from openacm.core.llm_router import LLMRouter
 from openacm.core.brain import Brain
 from openacm.core.memory import MemoryManager
+from openacm.core.skill_manager import SkillManager
 from openacm.storage.database import Database
 from openacm.tools.registry import ToolRegistry
 from openacm.security.sandbox import Sandbox
@@ -48,6 +49,7 @@ class OpenACM:
         self.memory: MemoryManager | None = None
         self.brain: Brain | None = None
         self.tool_registry: ToolRegistry | None = None
+        self.skill_manager: SkillManager | None = None
         self.sandbox: Sandbox | None = None
         self.security_policy: SecurityPolicy | None = None
         self._channels: list = []
@@ -57,45 +59,48 @@ class OpenACM:
     async def run(self):
         """Start OpenACM."""
         self._print_banner()
-        
+
         # Phase 1: Load config
         console.print("[dim]Loading configuration...[/dim]")
         self.config = load_config()
-        
+
         # Phase 2: Initialize core systems
         console.print("[dim]Initializing core systems...[/dim]")
         await self._init_core()
-        
+
         # Phase 3: Register tools
         console.print("[dim]Registering tools...[/dim]")
         await self._init_tools()
-        
+
         # Phase 4: Start channels
         console.print("[dim]Starting channels...[/dim]")
         await self._init_channels()
-        
+
         # Phase 5: Generate dashboard token
         from openacm.security.crypto import get_or_create_dashboard_token
+
         dashboard_token = get_or_create_dashboard_token()
-        
+
         # Phase 5.1: Start web dashboard
         console.print("[dim]Starting web dashboard...[/dim]")
         await self._init_web()
-        
-        console.print(Panel(
-            f"[green bold]✅ OpenACM is running![/green bold]\n\n"
-            f"  🧠 LLM: [cyan]{self.config.llm.default_provider}[/cyan] "
-            f"([cyan]{self._get_default_model()}[/cyan])\n"
-            f"  🖥️  Web: [cyan]http://{self.config.web.host}:{self.config.web.port}[/cyan]\n"
-            f"  🔒 Security: [yellow]{self.config.security.execution_mode}[/yellow] mode\n"
-            f"  📱 Channels: {self._get_active_channels_str()}\n\n"
-            f"  🔑 Dashboard Token:\n"
-            f"  [bold yellow]{dashboard_token}[/bold yellow]\n"
-            f"  [dim](Cópialo la primera vez que abras el dashboard)[/dim]",
-            title="[bold white]OpenACM v0.1.0[/bold white]",
-            border_style="green",
-        ))
-        
+
+        console.print(
+            Panel(
+                f"[green bold]✅ OpenACM is running![/green bold]\n\n"
+                f"  🧠 LLM: [cyan]{self.config.llm.default_provider}[/cyan] "
+                f"([cyan]{self._get_default_model()}[/cyan])\n"
+                f"  🖥️  Web: [cyan]http://{self.config.web.host}:{self.config.web.port}[/cyan]\n"
+                f"  🔒 Security: [yellow]{self.config.security.execution_mode}[/yellow] mode\n"
+                f"  📱 Channels: {self._get_active_channels_str()}\n\n"
+                f"  🔑 Dashboard Token:\n"
+                f"  [bold yellow]{dashboard_token}[/bold yellow]\n"
+                f"  [dim](Cópialo la primera vez que abras el dashboard)[/dim]",
+                title="[bold white]OpenACM v0.1.0[/bold white]",
+                border_style="green",
+            )
+        )
+
         # Phase 6: Interactive console loop
         await self._console_loop()
 
@@ -103,33 +108,45 @@ class OpenACM:
         """Initialize core subsystems."""
         # Event bus
         self.event_bus = EventBus()
-        
+
         # Database
         self.database = Database(self.config.storage.database_path)
         await self.database.initialize()
-        
+
         # Security
         self.security_policy = SecurityPolicy(self.config.security)
         self.sandbox = Sandbox(self.security_policy, self.event_bus)
-        
+
         # LLM Router
         self.llm_router = LLMRouter(self.config.llm, self.event_bus)
-        
+
         # Memory
         self.memory = MemoryManager(self.database, self.config.assistant)
-        
+
         # RAG Engine
         try:
             import chromadb
             from openacm.core import rag
+
             rag._rag_engine = rag.RAGEngine()
             await rag._rag_engine.initialize()
             console.print("  [green]✓[/green] Optional RAG engine ready")
         except ImportError:
-            console.print("  [yellow]⚠[/yellow] RAG engine dependencies missing (chromadb/sentence-transformers)")
+            console.print(
+                "  [yellow]⚠[/yellow] RAG engine dependencies missing (chromadb/sentence-transformers)"
+            )
         except Exception as e:
             console.print(f"  [yellow]⚠[/yellow] RAG engine initialization failed: {e}")
-        
+
+        # Skill Manager
+        self.skill_manager = SkillManager(self.database)
+        await self.skill_manager.initialize()
+        skill_count = len(await self.skill_manager.get_all_skills())
+        active_count = len(self.skill_manager._active_skills)
+        console.print(
+            f"  [green]✓[/green] Skill manager ready ({active_count}/{skill_count} active)"
+        )
+
         # Brain
         self.brain = Brain(
             config=self.config.assistant,
@@ -137,14 +154,27 @@ class OpenACM:
             memory=self.memory,
             event_bus=self.event_bus,
             tool_registry=None,  # set after tools init
+            skill_manager=self.skill_manager,
         )
 
     async def _init_tools(self):
         """Register all tools."""
         self.tool_registry = ToolRegistry(self.sandbox, self.event_bus, self.database)
-        
+
         # Import and register all built-in tools
-        from openacm.tools import system_cmd, file_ops, system_info, web_search, google_services, screenshot, rag_tools, browser_agent, python_kernel
+        from openacm.tools import (
+            system_cmd,
+            file_ops,
+            system_info,
+            web_search,
+            google_services,
+            screenshot,
+            rag_tools,
+            browser_agent,
+            python_kernel,
+            skill_creator,
+        )
+
         self.tool_registry.register_module(system_cmd)
         self.tool_registry.register_module(file_ops)
         self.tool_registry.register_module(system_info)
@@ -154,10 +184,11 @@ class OpenACM:
         self.tool_registry.register_module(rag_tools)
         self.tool_registry.register_module(browser_agent)
         self.tool_registry.register_module(python_kernel)
-        
+        self.tool_registry.register_module(skill_creator)
+
         # Give brain access to tools
         self.brain.tool_registry = self.tool_registry
-        
+
         tool_count = len(self.tool_registry.tools)
         console.print(f"  [green]✓[/green] {tool_count} tools registered")
 
@@ -166,6 +197,7 @@ class OpenACM:
         if self.config.channels.discord.enabled:
             try:
                 from openacm.channels.discord_channel import DiscordChannel
+
                 channel = DiscordChannel(self.config.channels.discord, self.brain, self.event_bus)
                 self._channels.append(channel)
                 asyncio.create_task(channel.start())
@@ -176,6 +208,7 @@ class OpenACM:
         if self.config.channels.telegram.enabled:
             try:
                 from openacm.channels.telegram_channel import TelegramChannel
+
                 channel = TelegramChannel(self.config.channels.telegram, self.brain, self.event_bus)
                 self._channels.append(channel)
                 asyncio.create_task(channel.start())
@@ -186,6 +219,7 @@ class OpenACM:
         if self.config.channels.whatsapp.enabled:
             try:
                 from openacm.channels.whatsapp_channel import WhatsAppChannel
+
                 channel = WhatsAppChannel(self.config.channels.whatsapp, self.brain, self.event_bus)
                 self._channels.append(channel)
                 asyncio.create_task(channel.start())
@@ -200,6 +234,7 @@ class OpenACM:
         """Start the web dashboard."""
         try:
             from openacm.web.server import create_web_server
+
             self._web_server = await create_web_server(
                 config=self.config,
                 brain=self.brain,
@@ -217,13 +252,13 @@ class OpenACM:
 
     async def _console_loop(self):
         """Interactive console for direct chatting."""
-        console.print("\n[dim]Type your message below (or 'quit' to exit, '/help' for commands):[/dim]\n")
+        console.print(
+            "\n[dim]Type your message below (or 'quit' to exit, '/help' for commands):[/dim]\n"
+        )
 
         while not self._shutdown_event.is_set():
             try:
-                user_input = await asyncio.to_thread(
-                    console.input, "[bold cyan]You>[/bold cyan] "
-                )
+                user_input = await asyncio.to_thread(console.input, "[bold cyan]You>[/bold cyan] ")
                 user_input = user_input.strip()
 
                 if not user_input:
@@ -261,17 +296,19 @@ class OpenACM:
 
         match cmd:
             case "/help":
-                console.print(Panel(
-                    "/model <provider/model>  — Switch LLM model\n"
-                    "/models                  — List available models\n"
-                    "/clear                   — Clear conversation history\n"
-                    "/stats                   — Show usage statistics\n"
-                    "/config                  — Show current configuration\n"
-                    "/tools                   — List available tools\n"
-                    "/quit                    — Exit OpenACM",
-                    title="[bold]Commands[/bold]",
-                    border_style="blue",
-                ))
+                console.print(
+                    Panel(
+                        "/model <provider/model>  — Switch LLM model\n"
+                        "/models                  — List available models\n"
+                        "/clear                   — Clear conversation history\n"
+                        "/stats                   — Show usage statistics\n"
+                        "/config                  — Show current configuration\n"
+                        "/tools                   — List available tools\n"
+                        "/quit                    — Exit OpenACM",
+                        title="[bold]Commands[/bold]",
+                        border_style="blue",
+                    )
+                )
             case "/model":
                 if args:
                     self.llm_router.set_model(args)
@@ -290,14 +327,16 @@ class OpenACM:
                 console.print("[green]✓ Conversation cleared[/green]")
             case "/stats":
                 stats = await self.database.get_stats()
-                console.print(Panel(
-                    f"Messages: {stats.get('total_messages', 0)}\n"
-                    f"Tokens used: {stats.get('total_tokens', 0)}\n"
-                    f"Tool executions: {stats.get('total_tool_calls', 0)}\n"
-                    f"Active conversations: {stats.get('active_conversations', 0)}",
-                    title="[bold]Usage Stats[/bold]",
-                    border_style="cyan",
-                ))
+                console.print(
+                    Panel(
+                        f"Messages: {stats.get('total_messages', 0)}\n"
+                        f"Tokens used: {stats.get('total_tokens', 0)}\n"
+                        f"Tool executions: {stats.get('total_tool_calls', 0)}\n"
+                        f"Active conversations: {stats.get('active_conversations', 0)}",
+                        title="[bold]Usage Stats[/bold]",
+                        border_style="cyan",
+                    )
+                )
             case "/tools":
                 for name, tool in self.tool_registry.tools.items():
                     risk = tool.risk_level
@@ -307,7 +346,9 @@ class OpenACM:
                 console.print(f"Provider: [cyan]{self.config.llm.default_provider}[/cyan]")
                 console.print(f"Model: [cyan]{self._get_default_model()}[/cyan]")
                 console.print(f"Security: [yellow]{self.config.security.execution_mode}[/yellow]")
-                console.print(f"Web: [cyan]http://{self.config.web.host}:{self.config.web.port}[/cyan]")
+                console.print(
+                    f"Web: [cyan]http://{self.config.web.host}:{self.config.web.port}[/cyan]"
+                )
             case _:
                 console.print(f"[red]Unknown command: {cmd}[/red]. Type /help for commands.")
 
@@ -333,17 +374,19 @@ class OpenACM:
         # Close database
         if self.database:
             await self.database.close()
-            
+
         # Stop browser agent
         try:
             from openacm.tools import browser_agent
+
             await browser_agent.stop_browser()
         except Exception:
             pass
-            
+
         # Stop Python Kernel
         try:
             from openacm.tools import python_kernel
+
             await python_kernel.stop_kernel()
         except Exception:
             pass

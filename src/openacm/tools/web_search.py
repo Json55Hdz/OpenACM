@@ -88,10 +88,11 @@ async def get_webpage(url: str, max_length: int = 5000, **kwargs) -> str:
         import httpx
         import re
 
+        # SECURITY: POR DISEÑO - HTTP client para búsqueda web
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            response = await client.get(url, headers={
-                "User-Agent": "Mozilla/5.0 (compatible; OpenACM/0.1)"
-            })
+            response = await client.get(
+                url, headers={"User-Agent": "Mozilla/5.0 (compatible; OpenACM/0.1)"}
+            )
             response.raise_for_status()
             html = response.text
 
@@ -105,6 +106,7 @@ async def get_webpage(url: str, max_length: int = 5000, **kwargs) -> str:
         text = re.sub(r"\s+", " ", text).strip()
         # Decode HTML entities
         import html as html_lib
+
         text = html_lib.unescape(text)
 
         if len(text) > max_length:

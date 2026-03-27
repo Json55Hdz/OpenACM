@@ -42,6 +42,7 @@ class WhatsAppChannel(BaseChannel):
 
     async def start(self):
         """Connect to the WhatsApp bridge."""
+        # SECURITY: POR DISEÑO - HTTP client para WhatsApp Business API
         self._http_client = httpx.AsyncClient(
             base_url=self.config.bridge_url,
             timeout=30,
@@ -67,7 +68,7 @@ class WhatsAppChannel(BaseChannel):
 
         # Start listening for incoming messages via WebSocket
         self._listen_task = asyncio.create_task(self._listen_loop())
-        
+
         if self._connected:
             await self.event_bus.emit(EVENT_CHANNEL_CONNECTED, {"channel": "whatsapp"})
 
@@ -84,10 +85,13 @@ class WhatsAppChannel(BaseChannel):
         if not self._http_client:
             return False
         try:
-            resp = await self._http_client.post("/send", json={
-                "to": target_id,
-                "message": content,
-            })
+            resp = await self._http_client.post(
+                "/send",
+                json={
+                    "to": target_id,
+                    "message": content,
+                },
+            )
             return resp.status_code == 200
         except Exception as e:
             log.error("WhatsApp send failed", error=str(e))

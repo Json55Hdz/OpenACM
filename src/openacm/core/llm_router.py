@@ -33,7 +33,7 @@ class LLMRouter:
         self._total_tokens = 0
         self._total_cost = 0.0
         self._total_requests = 0
-        
+
         # Configure LiteLLM with provider settings
         self._configure_providers()
 
@@ -56,7 +56,7 @@ class LLMRouter:
 
     def set_model(self, model: str):
         """
-        Set the current model. 
+        Set the current model.
         Can be 'provider/model' or just 'model' (uses current provider).
         """
         if "/" in model:
@@ -86,7 +86,7 @@ class LLMRouter:
                 if self._get_api_base() and provider != "openai":
                     return f"openai/{model}"
                 return model  # OpenAI models don't need prefix
-        
+
         # Use default from config
         provider = self._current_provider
         if provider in self.config.providers:
@@ -102,7 +102,7 @@ class LLMRouter:
                 if provider != "openai" and "base_url" in settings:
                     return f"openai/{model}"
                 return model
-        
+
         return "ollama/llama3.2"
 
     def _get_api_base(self) -> str | None:
@@ -130,15 +130,17 @@ class LLMRouter:
         api_base = self._get_api_base().rstrip("/")
         api_key_env = f"{self._current_provider.upper()}_API_KEY"
         api_key = os.environ.get(api_key_env, "")
-        
+
         # Get clean model name (no openai/ prefix)
-        model = self._current_model or self.config.providers[self._current_provider].get("default_model", "")
-        
+        model = self._current_model or self.config.providers[self._current_provider].get(
+            "default_model", ""
+        )
+
         url = f"{api_base}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -149,16 +151,17 @@ class LLMRouter:
             payload["tool_choice"] = "auto"
         if max_tokens:
             payload["max_tokens"] = max_tokens
-        
+
+        # SECURITY: POR DISEÑO - HTTP client para APIs de LLM
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, headers=headers, json=payload, timeout=120.0)
             resp.raise_for_status()
             data = resp.json()
-        
+
         choice = data["choices"][0]
         msg = choice["message"]
         usage = data.get("usage", {})
-        
+
         result = {
             "content": msg.get("content") or "",
             "tool_calls": [],
@@ -171,7 +174,7 @@ class LLMRouter:
             "elapsed": 0,
             "finish_reason": choice.get("finish_reason", "stop"),
         }
-        
+
         if msg.get("tool_calls"):
             result["tool_calls"] = [
                 {
@@ -183,7 +186,7 @@ class LLMRouter:
                 }
                 for tc in msg["tool_calls"]
             ]
-        
+
         return result
 
     async def chat(
@@ -196,20 +199,23 @@ class LLMRouter:
     ) -> dict[str, Any]:
         """
         Send a chat completion request.
-        
+
         Returns dict with: content, tool_calls, usage (tokens), model, etc.
         """
         model = self._build_model_string()
         api_base = self._get_api_base()
-        
+
         start_time = time.time()
         self._total_requests += 1
 
-        await self.event_bus.emit(EVENT_LLM_REQUEST, {
-            "model": model,
-            "message_count": len(messages),
-            "has_tools": bool(tools),
-        })
+        await self.event_bus.emit(
+            EVENT_LLM_REQUEST,
+            {
+                "model": model,
+                "message_count": len(messages),
+                "has_tools": bool(tools),
+            },
+        )
 
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
@@ -224,10 +230,10 @@ class LLMRouter:
                     "temperature": temperature,
                     "stream": False,
                 }
-                
+
                 if api_base:
                     kwargs["api_base"] = api_base
-                
+
                 # Dynamically inject API key for any custom provider
                 api_key_env = f"{self._current_provider.upper()}_API_KEY"
                 if api_key_env in os.environ:
@@ -240,13 +246,13 @@ class LLMRouter:
                     kwargs["max_tokens"] = max_tokens
 
                 response = await litellm.acompletion(**kwargs)
-                
+
                 elapsed = time.time() - start_time
-                
+
                 # Extract response data
                 choice = response.choices[0]
                 message = choice.message
-                
+
                 result = {
                     "content": message.content or "",
                     "tool_calls": [],
@@ -259,7 +265,7 @@ class LLMRouter:
                     "elapsed": elapsed,
                     "finish_reason": choice.finish_reason,
                 }
-                
+
                 # Extract tool calls if present
                 if hasattr(message, "tool_calls") and message.tool_calls:
                     result["tool_calls"] = [
@@ -272,17 +278,20 @@ class LLMRouter:
                         }
                         for tc in message.tool_calls
                     ]
-            
+
             # Track totals
             self._total_tokens += result["usage"]["total_tokens"]
-            
-            await self.event_bus.emit(EVENT_LLM_RESPONSE, {
-                "model": model,
-                "tokens": result["usage"]["total_tokens"],
-                "elapsed": result["elapsed"],
-                "has_tool_calls": bool(result["tool_calls"]),
-            })
-            
+
+            await self.event_bus.emit(
+                EVENT_LLM_RESPONSE,
+                {
+                    "model": model,
+                    "tokens": result["usage"]["total_tokens"],
+                    "elapsed": result["elapsed"],
+                    "has_tool_calls": bool(result["tool_calls"]),
+                },
+            )
+
             log.debug(
                 "LLM response",
                 model=model,
@@ -290,7 +299,7 @@ class LLMRouter:
                 elapsed=f"{result['elapsed']:.2f}s",
                 tool_calls=len(result["tool_calls"]),
             )
-            
+
             return result
 
         except Exception as e:
@@ -314,19 +323,19 @@ class LLMRouter:
             "temperature": temperature,
             "stream": True,
         }
-        
+
         if api_base:
             kwargs["api_base"] = api_base
-            
+
         api_key_env = f"{self._current_provider.upper()}_API_KEY"
         if api_key_env in os.environ:
             kwargs["api_key"] = os.environ[api_key_env]
-            
+
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
         response = await litellm.acompletion(**kwargs)
-        
+
         async for chunk in response:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content

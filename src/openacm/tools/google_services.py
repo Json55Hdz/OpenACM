@@ -37,7 +37,7 @@ async def _get_google_service(service_name: str, version: str):
     Uses OAuth2 with token caching.
     """
     global _credentials_cache
-    
+
     try:
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
@@ -45,8 +45,10 @@ async def _get_google_service(service_name: str, version: str):
         from googleapiclient.discovery import build
     except ImportError:
         raise RuntimeError(
-            "Google API libraries not installed. Run:\n"
-            "pip install google-api-python-client google-auth-oauthlib google-auth-httplib2"
+            "Google API libraries not installed. "
+            "These dependencies are already listed in pyproject.toml. "
+            "To install them, run: pip install -e .\n\n"
+            "Or manually: pip install google-api-python-client google-auth-oauthlib google-auth-httplib2"
         )
 
     creds = _credentials_cache
@@ -74,12 +76,12 @@ async def _get_google_service(service_name: str, version: str):
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             creds = flow.run_local_server(port=0)
-        
+
         # Save token
         token_path.parent.mkdir(parents=True, exist_ok=True)
         with open(token_path, "w") as f:
             f.write(creds.to_json())
-    
+
     _credentials_cache = creds
     return build(service_name, version, credentials=creds)
 
@@ -87,6 +89,7 @@ async def _get_google_service(service_name: str, version: str):
 # ═══════════════════════════════════════════════════════
 #  GMAIL TOOLS
 # ═══════════════════════════════════════════════════════
+
 
 @tool(
     name="gmail_read",
@@ -120,41 +123,50 @@ async def gmail_read(query: str = "", max_results: int = 10, **kwargs) -> str:
     """Read emails from Gmail."""
     try:
         service = await _get_google_service("gmail", "v1")
-        
-        results = service.users().messages().list(
-            userId="me",
-            q=query or "is:inbox",
-            maxResults=max_results,
-        ).execute()
-        
+
+        results = (
+            service.users()
+            .messages()
+            .list(
+                userId="me",
+                q=query or "is:inbox",
+                maxResults=max_results,
+            )
+            .execute()
+        )
+
         messages = results.get("messages", [])
         if not messages:
             return "No se encontraron emails" + (f" para: {query}" if query else ".")
-        
+
         output = []
         for msg_ref in messages:
-            msg = service.users().messages().get(
-                userId="me", id=msg_ref["id"], format="metadata",
-                metadataHeaders=["Subject", "From", "Date"],
-            ).execute()
-            
+            msg = (
+                service.users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=msg_ref["id"],
+                    format="metadata",
+                    metadataHeaders=["Subject", "From", "Date"],
+                )
+                .execute()
+            )
+
             headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
             subject = headers.get("Subject", "(sin asunto)")
             sender = headers.get("From", "?")
             date = headers.get("Date", "?")
             snippet = msg.get("snippet", "")
             unread = "UNREAD" in msg.get("labelIds", [])
-            
+
             status = "📩" if unread else "📧"
             output.append(
-                f"{status} **{subject}**\n"
-                f"   De: {sender}\n"
-                f"   Fecha: {date}\n"
-                f"   {snippet[:100]}..."
+                f"{status} **{subject}**\n   De: {sender}\n   Fecha: {date}\n   {snippet[:100]}..."
             )
-        
+
         return f"📬 {len(messages)} emails encontrados:\n\n" + "\n\n".join(output)
-    
+
     except FileNotFoundError as e:
         return str(e)
     except Exception as e:
@@ -163,9 +175,7 @@ async def gmail_read(query: str = "", max_results: int = 10, **kwargs) -> str:
 
 @tool(
     name="gmail_send",
-    description=(
-        "Send an email via Gmail. Specify recipient, subject, and body."
-    ),
+    description=("Send an email via Gmail. Specify recipient, subject, and body."),
     parameters={
         "type": "object",
         "properties": {
@@ -191,22 +201,22 @@ async def gmail_send(to: str, subject: str, body: str, **kwargs) -> str:
     try:
         import base64
         from email.mime.text import MIMEText
-        
+
         service = await _get_google_service("gmail", "v1")
-        
+
         message = MIMEText(body)
         message["to"] = to
         message["subject"] = subject
-        
+
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        
+
         service.users().messages().send(
             userId="me",
             body={"raw": raw},
         ).execute()
-        
-        return f"✅ Email enviado a {to}: \"{subject}\""
-    
+
+        return f'✅ Email enviado a {to}: "{subject}"'
+
     except Exception as e:
         return f"Error enviando email: {str(e)}"
 
@@ -214,6 +224,7 @@ async def gmail_send(to: str, subject: str, body: str, **kwargs) -> str:
 # ═══════════════════════════════════════════════════════
 #  GOOGLE CALENDAR TOOLS
 # ═══════════════════════════════════════════════════════
+
 
 @tool(
     name="calendar_list",
@@ -243,48 +254,50 @@ async def calendar_list(max_results: int = 10, days_ahead: int = 7, **kwargs) ->
     """List upcoming calendar events."""
     try:
         from datetime import datetime, timezone, timedelta
-        
+
         service = await _get_google_service("calendar", "v3")
-        
+
         now = datetime.now(timezone.utc)
         time_max = now + timedelta(days=days_ahead)
-        
-        events_result = service.events().list(
-            calendarId="primary",
-            timeMin=now.isoformat(),
-            timeMax=time_max.isoformat(),
-            maxResults=max_results,
-            singleEvents=True,
-            orderBy="startTime",
-        ).execute()
-        
+
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=now.isoformat(),
+                timeMax=time_max.isoformat(),
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+
         events = events_result.get("items", [])
         if not events:
             return f"📅 No hay eventos en los próximos {days_ahead} días."
-        
+
         output = []
         for event in events:
             start = event["start"].get("dateTime", event["start"].get("date"))
             end = event["end"].get("dateTime", event["end"].get("date"))
             summary = event.get("summary", "(sin título)")
             location = event.get("location", "")
-            
+
             line = f"📅 **{summary}**\n   📆 {start}"
             if location:
                 line += f"\n   📍 {location}"
             output.append(line)
-        
+
         return f"📅 {len(events)} eventos próximos:\n\n" + "\n\n".join(output)
-    
+
     except Exception as e:
         return f"Error leyendo calendario: {str(e)}"
 
 
 @tool(
     name="calendar_create",
-    description=(
-        "Create a new event in Google Calendar."
-    ),
+    description=("Create a new event in Google Calendar."),
     parameters={
         "type": "object",
         "properties": {
@@ -326,7 +339,7 @@ async def calendar_create(
     """Create a calendar event."""
     try:
         service = await _get_google_service("calendar", "v3")
-        
+
         event = {
             "summary": summary,
             "start": {"dateTime": start_time, "timeZone": "America/Bogota"},
@@ -336,13 +349,13 @@ async def calendar_create(
             event["description"] = description
         if location:
             event["location"] = location
-        
-        created = service.events().insert(
-            calendarId="primary", body=event
-        ).execute()
-        
-        return f"✅ Evento creado: \"{summary}\" ({start_time})\n   Link: {created.get('htmlLink', '')}"
-    
+
+        created = service.events().insert(calendarId="primary", body=event).execute()
+
+        return (
+            f'✅ Evento creado: "{summary}" ({start_time})\n   Link: {created.get("htmlLink", "")}'
+        )
+
     except Exception as e:
         return f"Error creando evento: {str(e)}"
 
@@ -351,11 +364,10 @@ async def calendar_create(
 #  GOOGLE DRIVE TOOLS
 # ═══════════════════════════════════════════════════════
 
+
 @tool(
     name="drive_list",
-    description=(
-        "List files in Google Drive. Can search by name or type."
-    ),
+    description=("List files in Google Drive. Can search by name or type."),
     parameters={
         "type": "object",
         "properties": {
@@ -382,7 +394,7 @@ async def drive_list(query: str = "", max_results: int = 20, **kwargs) -> str:
     """List files in Google Drive."""
     try:
         service = await _get_google_service("drive", "v3")
-        
+
         params = {
             "pageSize": max_results,
             "fields": "files(id, name, mimeType, size, modifiedTime, webViewLink)",
@@ -390,33 +402,31 @@ async def drive_list(query: str = "", max_results: int = 20, **kwargs) -> str:
         }
         if query:
             params["q"] = query
-        
+
         results = service.files().list(**params).execute()
         files = results.get("files", [])
-        
+
         if not files:
             return "📁 No se encontraron archivos" + (f" para: {query}" if query else ".")
-        
+
         output = []
         for f in files:
             name = f.get("name", "?")
             mime = f.get("mimeType", "?").split("/")[-1]
             size = _format_drive_size(int(f.get("size", 0))) if f.get("size") else "-"
             modified = f.get("modifiedTime", "?")[:10]
-            
+
             output.append(f"  📄 {name} ({mime}, {size}) — {modified}")
-        
+
         return f"📁 {len(files)} archivos en Drive:\n" + "\n".join(output)
-    
+
     except Exception as e:
         return f"Error listando Drive: {str(e)}"
 
 
 @tool(
     name="drive_search",
-    description=(
-        "Search for files in Google Drive by name."
-    ),
+    description=("Search for files in Google Drive by name."),
     parameters={
         "type": "object",
         "properties": {
@@ -438,12 +448,10 @@ async def drive_search(name: str, **kwargs) -> str:
 #  YOUTUBE TOOLS
 # ═══════════════════════════════════════════════════════
 
+
 @tool(
     name="youtube_search",
-    description=(
-        "Search for videos on YouTube. Returns titles, channels, "
-        "view counts, and URLs."
-    ),
+    description=("Search for videos on YouTube. Returns titles, channels, view counts, and URLs."),
     parameters={
         "type": "object",
         "properties": {
@@ -465,18 +473,22 @@ async def youtube_search(query: str, max_results: int = 5, **kwargs) -> str:
     """Search YouTube videos."""
     try:
         service = await _get_google_service("youtube", "v3")
-        
-        results = service.search().list(
-            q=query,
-            part="snippet",
-            maxResults=max_results,
-            type="video",
-        ).execute()
-        
+
+        results = (
+            service.search()
+            .list(
+                q=query,
+                part="snippet",
+                maxResults=max_results,
+                type="video",
+            )
+            .execute()
+        )
+
         items = results.get("items", [])
         if not items:
             return f"🎥 No se encontraron videos para: {query}"
-        
+
         output = []
         for item in items:
             snippet = item["snippet"]
@@ -485,15 +497,11 @@ async def youtube_search(query: str, max_results: int = 5, **kwargs) -> str:
             channel = snippet.get("channelTitle", "?")
             published = snippet.get("publishedAt", "?")[:10]
             url = f"https://youtube.com/watch?v={video_id}"
-            
-            output.append(
-                f"🎥 **{title}**\n"
-                f"   📺 {channel} — {published}\n"
-                f"   🔗 {url}"
-            )
-        
+
+            output.append(f"🎥 **{title}**\n   📺 {channel} — {published}\n   🔗 {url}")
+
         return f"🎥 {len(items)} videos encontrados:\n\n" + "\n\n".join(output)
-    
+
     except Exception as e:
         return f"Error buscando en YouTube: {str(e)}"
 

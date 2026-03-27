@@ -78,6 +78,23 @@ class Database:
                 ON tool_executions(timestamp);
             CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp 
                 ON llm_usage(timestamp);
+
+            CREATE TABLE IF NOT EXISTS skills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT DEFAULT 'general',
+                is_active INTEGER DEFAULT 1,
+                is_builtin INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_skills_category 
+                ON skills(category);
+            CREATE INDEX IF NOT EXISTS idx_skills_active 
+                ON skills(is_active);
         """)
         await self._db.commit()
         log.info("Database initialized", path=self.db_path)
@@ -219,8 +236,7 @@ class Database:
 
         # Messages today
         cursor = await self._db.execute(
-            "SELECT COUNT(*) as cnt FROM messages "
-            "WHERE timestamp > datetime('now', 'start of day')"
+            "SELECT COUNT(*) as cnt FROM messages WHERE timestamp > datetime('now', 'start of day')"
         )
         row = await cursor.fetchone()
         stats["messages_today"] = row["cnt"] if row else 0
@@ -257,7 +273,7 @@ class Database:
         """Get message counts and last activity grouped by user and channel."""
         if not self._db:
             return []
-        
+
         # We use a subquery to fetch the content of the most recent message
         query = """
             SELECT 
@@ -275,3 +291,117 @@ class Database:
         cursor = await self._db.execute(query)
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    # ─── Skills ───────────────────────────────────────────────
+
+    async def create_skill(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        category: str = "general",
+        is_builtin: bool = False,
+    ) -> int:
+        """Create a new skill."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO skills (name, description, content, category, is_builtin) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, description, content, category, int(is_builtin)),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_skill(self, skill_id: int) -> dict[str, Any] | None:
+        """Get a skill by ID."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM skills WHERE id = ?",
+            (skill_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_skill_by_name(self, name: str) -> dict[str, Any] | None:
+        """Get a skill by name."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM skills WHERE name = ?",
+            (name,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_skills(self, active_only: bool = False) -> list[dict[str, Any]]:
+        """Get all skills."""
+        if not self._db:
+            return []
+        query = "SELECT * FROM skills"
+        if active_only:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY category, name"
+        cursor = await self._db.execute(query)
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def update_skill(
+        self,
+        skill_id: int,
+        description: str | None = None,
+        content: str | None = None,
+        category: str | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
+        """Update a skill."""
+        if not self._db:
+            return False
+        updates = []
+        params = []
+        if description is not None:
+            updates.append("description = ?")
+            params.append(description)
+        if content is not None:
+            updates.append("content = ?")
+            params.append(content)
+        if category is not None:
+            updates.append("category = ?")
+            params.append(category)
+        if is_active is not None:
+            updates.append("is_active = ?")
+            params.append(int(is_active))
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(skill_id)
+        await self._db.execute(
+            f"UPDATE skills SET {', '.join(updates)} WHERE id = ?",
+            params,
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_skill(self, skill_id: int) -> bool:
+        """Delete a skill (only non-built-in)."""
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM skills WHERE id = ? AND is_builtin = 0",
+            (skill_id,),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def toggle_skill(self, skill_id: int) -> bool:
+        """Toggle skill active status."""
+        if not self._db:
+            return False
+        await self._db.execute(
+            "UPDATE skills SET is_active = NOT is_active, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (skill_id,),
+        )
+        await self._db.commit()
+        return True
