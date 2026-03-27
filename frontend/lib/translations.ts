@@ -150,8 +150,13 @@ export const translations = {
 
   config: {
     title: 'Configuration',
+    subtitle: 'Manage your system configuration',
+    providers: {
+      title: 'LLM Providers',
+      subtitle: 'Manage API keys for your AI providers.',
+    },
     model: {
-      title: 'LLM Model',
+      title: 'Current Model',
       currentProvider: 'Current Provider',
       currentModel: 'Current Model',
       changeModel: 'Change Model',
@@ -159,6 +164,10 @@ export const translations = {
       change: 'Change',
       updateSuccess: 'Model updated successfully',
       updateError: 'Failed to update model',
+    },
+    telegram: {
+      title: 'Telegram',
+      subtitle: 'Manage your Telegram bot connection.',
     },
     security: {
       title: 'Security',
@@ -197,6 +206,48 @@ export const translations = {
     connecting: 'Connecting...',
     ready: 'Ready!',
     error: 'Error',
+    steps: {
+      auth: 'Authentication',
+      authDesc: 'Enter your access token to connect to the system.',
+      providers: 'LLM Providers',
+      providersDesc: 'Configure at least one AI provider to power your assistant.',
+      modelTelegram: 'Model & Telegram',
+      modelTelegramDesc: 'Choose your default model and optionally connect Telegram.',
+      ready: 'Ready!',
+      readyDesc: 'Your assistant is configured and ready to go.',
+    },
+    providerSetup: {
+      title: 'Configure LLM Providers',
+      subtitle: 'Add API keys for the providers you want to use. At least one is required.',
+      configured: 'Configured',
+      notConfigured: 'Not configured',
+      noKeyNeeded: 'No key needed',
+      enterApiKey: 'Enter API key',
+      getApiKey: 'Get API key',
+      saveAndContinue: 'Save & Continue',
+      saving: 'Saving...',
+      atLeastOne: 'Configure at least one provider to continue.',
+      saved: 'Provider keys saved successfully',
+    },
+    modelSelect: {
+      title: 'Select Default Model',
+      subtitle: 'Choose the model your assistant will use by default.',
+      selectModel: 'Select a model',
+      customModel: 'Or type a custom model name',
+      customPlaceholder: 'e.g. gpt-4o-mini',
+    },
+    telegramSetup: {
+      title: 'Telegram Bot (Optional)',
+      subtitle: 'Connect a Telegram bot to chat with your assistant on the go.',
+      tokenLabel: 'Bot Token',
+      tokenPlaceholder: '123456:ABC-DEF1234ghIkl-zyx57W2v...',
+      howToGet: 'Get a token from @BotFather on Telegram',
+    },
+    readyScreen: {
+      title: 'All Set!',
+      subtitle: 'Your OpenACM assistant is configured and ready to use.',
+      goToDashboard: 'Go to Dashboard',
+    },
   },
 
   errors: {

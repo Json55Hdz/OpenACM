@@ -3,12 +3,16 @@
 import { useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig } from '@/hooks/use-api';
-import { useDashboardStore } from '@/stores/dashboard-store';
-import { 
-  Settings, 
-  Bot, 
-  Shield, 
-  MessageSquare, 
+import { useSetModel } from '@/hooks/use-setup';
+import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
+import { ModelSelector } from '@/components/setup/model-selector';
+import { TelegramSetup } from '@/components/setup/telegram-setup';
+import { useSaveSetup } from '@/hooks/use-setup';
+import { translations } from '@/lib/translations';
+import {
+  Settings,
+  Bot,
+  Shield,
   Terminal,
   Save,
   Loader2,
@@ -17,9 +21,7 @@ import {
   RefreshCw,
   ToggleLeft,
   ToggleRight,
-  Smartphone,
-  Globe,
-  Monitor
+  Send,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -29,44 +31,49 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-interface Channel {
-  id: string;
-  name: string;
-  type: 'console' | 'web' | 'mobile';
-  status: 'online' | 'offline';
-  messages_today: number;
-}
+const tc = translations.config;
 
-function ConfigSection({ 
-  title, 
-  icon: Icon, 
-  children 
-}: { 
-  title: string; 
-  icon: React.ElementType; 
-  children: React.ReactNode 
+function ConfigSection({
+  title,
+  subtitle,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  icon: React.ElementType;
+  children: React.ReactNode;
 }) {
   return (
     <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
       <div className="px-6 py-4 border-b border-slate-800 bg-slate-800/30">
         <div className="flex items-center gap-3">
           <Icon size={20} className="text-blue-400" />
-          <h3 className="font-semibold text-white">{title}</h3>
+          <div>
+            <h3 className="font-semibold text-white">{title}</h3>
+            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
+          </div>
         </div>
       </div>
-      <div className="p-6">
-        {children}
-      </div>
+      <div className="p-6">{children}</div>
     </div>
   );
 }
 
-function InfoRow({ label, value, copyable = false }: { label: string; value: string; copyable?: boolean }) {
+function InfoRow({
+  label,
+  value,
+  copyable = false,
+}: {
+  label: string;
+  value: string;
+  copyable?: boolean;
+}) {
   const handleCopy = () => {
     navigator.clipboard.writeText(value);
     toast.success('Copied to clipboard');
   };
-  
+
   return (
     <div className="flex items-center justify-between py-3 border-b border-slate-800 last:border-b-0">
       <span className="text-sm text-slate-400">{label}</span>
@@ -85,85 +92,57 @@ function InfoRow({ label, value, copyable = false }: { label: string; value: str
   );
 }
 
-function ChannelCard({ channel }: { channel: Channel }) {
-  const icons = {
-    console: Monitor,
-    web: Globe,
-    mobile: Smartphone,
-  };
-  
-  const Icon = icons[channel.type];
-  
-  return (
-    <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-slate-800 rounded-lg flex items-center justify-center">
-          <Icon size={20} className="text-slate-400" />
-        </div>
-        <div>
-          <p className="font-medium text-slate-200">{channel.name}</p>
-          <p className="text-xs text-slate-500 capitalize">{channel.type}</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-4">
-        <div className="text-right">
-          <p className="text-sm font-medium text-slate-300">{channel.messages_today}</p>
-          <p className="text-xs text-slate-500">messages today</p>
-        </div>
-        <span className={cn(
-          "px-2 py-1 text-xs font-medium rounded-full",
-          channel.status === 'online' 
-            ? "bg-green-500/20 text-green-400" 
-            : "bg-slate-700 text-slate-400"
-        )}>
-          {channel.status === 'online' ? 'Online' : 'Offline'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 export default function ConfigPage() {
-  const { config, model, isLoading, updateModel } = useConfig();
-  const stats = useDashboardStore((state) => state.stats);
+  const { config, model, isLoading } = useConfig();
+  const setModelMut = useSetModel();
+  const saveSetup = useSaveSetup();
   const [isVerbose, setIsVerbose] = useState(false);
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  
-  // Mock channels data
-  const channels: Channel[] = [
-    { id: 'console', name: 'Console', type: 'console', status: 'online', messages_today: 12 },
-    { id: 'web', name: 'Web Chat', type: 'web', status: 'online', messages_today: 45 },
-  ];
-  
+  const [selectedModel, setSelectedModel] = useState('');
+  const [telegramToken, setTelegramToken] = useState('');
+
   // Initialize JSON config when data loads
   useState(() => {
     if (config) {
       setJsonConfig(JSON.stringify(config, null, 2));
     }
   });
-  
+
   const handleSaveConfig = async () => {
     setIsSaving(true);
     try {
-      // Parse and validate JSON
-      const parsed = JSON.parse(jsonConfig);
-      // Here you would send to API
+      JSON.parse(jsonConfig);
       toast.success('Configuration saved successfully');
-    } catch (e) {
+    } catch {
       toast.error('Invalid JSON. Check the syntax.');
     } finally {
       setIsSaving(false);
     }
   };
-  
+
   const handleReloadConfig = () => {
     if (config) {
       setJsonConfig(JSON.stringify(config, null, 2));
       toast.success('Configuration reloaded');
     }
   };
-  
+
+  const handleModelChange = () => {
+    if (selectedModel) {
+      setModelMut.mutate(selectedModel);
+      setSelectedModel('');
+    }
+  };
+
+  const handleTelegramSave = async () => {
+    if (telegramToken.trim()) {
+      await saveSetup.mutateAsync({ TELEGRAM_TOKEN: telegramToken.trim() });
+      toast.success('Telegram token saved');
+      setTelegramToken('');
+    }
+  };
+
   return (
     <AppLayout>
       <div className="p-6 lg:p-8">
@@ -171,16 +150,27 @@ export default function ConfigPage() {
         <header className="mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-white">Configuration</h1>
-              <p className="text-slate-400 mt-1">Manage the system configuration</p>
+              <h1 className="text-3xl font-bold text-white">{tc.title}</h1>
+              <p className="text-slate-400 mt-1">{tc.subtitle}</p>
             </div>
           </div>
         </header>
-        
+
         {/* Config Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Model Info */}
-          <ConfigSection title="LLM Model" icon={Bot}>
+          {/* LLM Providers */}
+          <div className="lg:col-span-2">
+            <ConfigSection
+              title={tc.providers.title}
+              subtitle={tc.providers.subtitle}
+              icon={Settings}
+            >
+              <ProviderSetupForm mode="config" />
+            </ConfigSection>
+          </div>
+
+          {/* Current Model */}
+          <ConfigSection title={tc.model.title} icon={Bot}>
             {isLoading ? (
               <div className="space-y-3">
                 <div className="h-10 bg-slate-800 rounded animate-pulse" />
@@ -189,75 +179,83 @@ export default function ConfigPage() {
             ) : (
               <div className="space-y-4">
                 <InfoRow
-                  label="Current Model"
-                  value={model?.model || stats.currentModel || 'Not configured'}
+                  label={tc.model.currentModel}
+                  value={model?.model || 'Not configured'}
                   copyable
                 />
                 <InfoRow
-                  label="Provider"
-                  value={model?.provider || 'OpenRouter'}
+                  label={tc.model.currentProvider}
+                  value={model?.provider || 'Unknown'}
                 />
-                <InfoRow
-                  label="Status"
-                  value={model?.status || 'Active'}
-                />
-                
+
                 <div className="pt-4 border-t border-slate-800">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Change Model
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="openai/gpt-4o"
-                      className="flex-1 px-4 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
-                    />
+                  <ModelSelector
+                    selectedModel={selectedModel}
+                    onSelect={setSelectedModel}
+                  />
+                  {selectedModel && (
                     <button
-                      onClick={() => {
-                        const input = document.querySelector('input[placeholder="openai/gpt-4o"]') as HTMLInputElement;
-                        if (input?.value) {
-                          updateModel(input.value);
-                        }
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                      onClick={handleModelChange}
+                      disabled={setModelMut.isPending}
+                      className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
                     >
-                      <RefreshCw size={16} />
-                      Change
+                      {setModelMut.isPending ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <RefreshCw size={16} />
+                      )}
+                      {tc.model.change}
                     </button>
-                  </div>
+                  )}
                 </div>
               </div>
             )}
           </ConfigSection>
-          
-          {/* Security */}
-          <ConfigSection title="Security" icon={Shield}>
+
+          {/* Telegram */}
+          <ConfigSection
+            title={tc.telegram.title}
+            subtitle={tc.telegram.subtitle}
+            icon={Send}
+          >
             <div className="space-y-4">
+              <TelegramSetup value={telegramToken} onChange={setTelegramToken} />
+              {telegramToken.trim() && (
+                <button
+                  onClick={handleTelegramSave}
+                  disabled={saveSetup.isPending}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                >
+                  {saveSetup.isPending ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  Save Telegram Token
+                </button>
+              )}
+            </div>
+          </ConfigSection>
+
+          {/* Security */}
+          <ConfigSection title={tc.security.title} icon={Shield}>
+            <div className="space-y-4">
+              <InfoRow label="Authentication" value="Bearer Token" />
+              <InfoRow label="Execution Mode" value={config?.security?.execution_mode || 'confirmation'} />
               <InfoRow
-                label="Authentication"
-                value="Bearer Token"
+                label="Whitelisted Commands"
+                value={String(config?.security?.whitelisted_commands?.length || 0)}
               />
-              <InfoRow
-                label="Token Expiration"
-                value="24 hours"
-              />
-              <InfoRow
-                label="Rate Limit"
-                value="100 req/min"
-              />
-              <InfoRow
-                label="Encryption"
-                value="TLS 1.3"
-              />
-              
+              <InfoRow label="Encryption" value="TLS 1.3" />
+
               <div className="pt-4 border-t border-slate-800">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-slate-300">Debug Mode</span>
                   <button
                     onClick={() => setIsVerbose(!isVerbose)}
                     className={cn(
-                      "p-1 rounded transition-colors",
-                      isVerbose ? "text-blue-400" : "text-slate-500"
+                      'p-1 rounded transition-colors',
+                      isVerbose ? 'text-blue-400' : 'text-slate-500'
                     )}
                   >
                     {isVerbose ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
@@ -269,25 +267,9 @@ export default function ConfigPage() {
               </div>
             </div>
           </ConfigSection>
-          
-          {/* Channels */}
-          <ConfigSection title="Channels" icon={MessageSquare}>
-            <div className="space-y-3">
-              {channels.map((channel) => (
-                <ChannelCard key={channel.id} channel={channel} />
-              ))}
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-slate-800">
-              <button className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-dashed border-slate-700 text-slate-500 rounded-lg hover:border-slate-500 hover:text-slate-400 transition-colors">
-                <RefreshCw size={16} />
-                <span>Sync Channels</span>
-              </button>
-            </div>
-          </ConfigSection>
-          
+
           {/* JSON Config */}
-          <ConfigSection title="JSON Configuration" icon={Terminal}>
+          <ConfigSection title={tc.fullConfig} icon={Terminal}>
             <div className="space-y-4">
               <div className="relative">
                 <textarea
@@ -298,7 +280,7 @@ export default function ConfigPage() {
                   spellCheck={false}
                 />
               </div>
-              
+
               <div className="flex gap-2">
                 <button
                   onClick={handleReloadConfig}
@@ -323,15 +305,15 @@ export default function ConfigPage() {
             </div>
           </ConfigSection>
         </div>
-        
+
         {/* System Info Footer */}
         <div className="mt-8 p-4 bg-slate-900 rounded-xl border border-slate-800">
           <div className="flex flex-wrap items-center justify-between gap-4 text-sm text-slate-500">
             <div className="flex items-center gap-4">
               <span>OpenACM v0.1.0</span>
-              <span>•</span>
-              <span>Next.js 15</span>
-              <span>•</span>
+              <span>·</span>
+              <span>Next.js 16</span>
+              <span>·</span>
               <span>React 19</span>
             </div>
             <div className="flex items-center gap-2">

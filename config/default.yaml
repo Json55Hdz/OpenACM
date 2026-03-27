@@ -40,6 +40,9 @@ llm:
       #   Kimi-K2.5
       #   MiniMax-M2.5
       # Use with your API key (OPENCODE_GO_API_KEY in .env)
+    openrouter:
+      default_model: "openrouter/auto"
+      base_url: "https://openrouter.ai/api/v1"
 
 security:
   execution_mode: "confirmation"  # confirmation | auto | yolo

@@ -234,11 +234,35 @@ def create_app() -> FastAPI:
         """Check if essential configuration is missing (e.g. LLM API Key)."""
         if not _config or not _brain:
             return {"needs_setup": True}
-        provider = _brain.llm_router._current_provider
-        api_key_env = f"{provider.upper()}_API_KEY"
-        if not os.environ.get(api_key_env):
-            return {"needs_setup": True, "provider": provider}
+        # Check if ANY provider has a key configured (not just the current one)
+        known_key_vars = [
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENCODE_GO_API_KEY",
+        ]
+        any_configured = any(os.environ.get(k) for k in known_key_vars)
+        # Ollama doesn't need a key, check if it's the selected provider
+        if not any_configured and _brain.llm_router._current_provider == "ollama":
+            any_configured = True
+        if not any_configured:
+            return {"needs_setup": True, "provider": _brain.llm_router._current_provider}
         return {"needs_setup": False}
+
+    @app.get("/api/config/providers")
+    async def get_provider_status():
+        """Return boolean status for each LLM provider (no keys exposed)."""
+        providers = {
+            "openai": bool(os.environ.get("OPENAI_API_KEY")),
+            "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
+            "gemini": bool(os.environ.get("GEMINI_API_KEY")),
+            "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "opencode_go": bool(os.environ.get("OPENCODE_GO_API_KEY")),
+            "ollama": True,  # Ollama is local, no key needed
+        }
+        telegram_configured = bool(os.environ.get("TELEGRAM_TOKEN"))
+        return {"providers": providers, "telegram_configured": telegram_configured}
 
     @app.post("/api/config/setup")
     async def post_config_setup(request: Request):
