@@ -27,7 +27,12 @@ data/
 .DS_Store
 Thumbs.db
 
-# Node (WhatsApp bridge)
+# Node
 node_modules/
 bridges/whatsapp/.wwebjs_auth/
 bridges/whatsapp/.wwebjs_cache/
+
+# Frontend (Next.js)
+frontend/.next/
+frontend/dist/
+frontend/node_modules/
