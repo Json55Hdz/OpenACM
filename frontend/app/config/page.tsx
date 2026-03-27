@@ -3,11 +3,11 @@
 import { useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig } from '@/hooks/use-api';
-import { useSetModel } from '@/hooks/use-setup';
+import { useSetModel, useProviderStatus } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
-import { ModelSelector } from '@/components/setup/model-selector';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
+import { PROVIDERS, getProviderById } from '@/lib/providers';
 import { translations } from '@/lib/translations';
 import {
   Settings,
@@ -99,9 +99,9 @@ export default function ConfigPage() {
   const [isVerbose, setIsVerbose] = useState(false);
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [selectedModel, setSelectedModel] = useState('');
-  const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [telegramToken, setTelegramToken] = useState('');
+  const [customModel, setCustomModel] = useState('');
+  const { data: providerStatus } = useProviderStatus();
 
   // Initialize JSON config when data loads
   useState(() => {
@@ -129,13 +129,15 @@ export default function ConfigPage() {
     }
   };
 
-  const handleModelChange = () => {
-    if (selectedModel) {
-      setModelMut.mutate({ model: selectedModel, provider: selectedProvider });
-      setSelectedModel('');
-      setSelectedProvider(undefined);
-    }
+  const handleSetModel = (modelName: string, providerId: string) => {
+    setModelMut.mutate({ model: modelName, provider: providerId });
+    setCustomModel('');
   };
+
+  const configuredProviders = PROVIDERS.filter(
+    (p) => providerStatus?.providers?.[p.id]
+  );
+  const activeProviderId = model?.provider || '';
 
   const handleTelegramSave = async () => {
     if (telegramToken.trim()) {
@@ -171,7 +173,7 @@ export default function ConfigPage() {
             </ConfigSection>
           </div>
 
-          {/* Current Model */}
+          {/* Default Model */}
           <ConfigSection title={tc.model.title} icon={Bot}>
             {isLoading ? (
               <div className="space-y-3">
@@ -180,38 +182,93 @@ export default function ConfigPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                <InfoRow
-                  label={tc.model.currentModel}
-                  value={model?.model || 'Not configured'}
-                  copyable
-                />
-                <InfoRow
-                  label={tc.model.currentProvider}
-                  value={model?.provider || 'Unknown'}
-                />
+                {/* Current active indicator */}
+                <div className="flex items-center justify-between p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                  <div>
+                    <p className="text-xs text-blue-400">Active</p>
+                    <p className="text-sm font-mono text-white">{model?.model || 'Not configured'}</p>
+                  </div>
+                  <span className="text-xs text-slate-400">{model?.provider || ''}</span>
+                </div>
 
-                <div className="pt-4 border-t border-slate-800">
-                  <ModelSelector
-                    selectedModel={selectedModel}
-                    onSelect={({ model: m, provider: p }) => {
-                      setSelectedModel(m);
-                      setSelectedProvider(p);
-                    }}
-                  />
-                  {selectedModel && (
+                {/* Provider tabs */}
+                {configuredProviders.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate-500 mb-2">Switch provider &amp; model</p>
+                    <div className="space-y-3">
+                      {configuredProviders.map((prov) => {
+                        const isActive = activeProviderId === prov.id;
+                        const provDef = getProviderById(prov.id);
+                        const models = provDef?.suggestedModels ?? [];
+
+                        return (
+                          <div key={prov.id} className={`rounded-lg border transition-colors ${
+                            isActive ? 'border-blue-500/40 bg-blue-500/5' : 'border-slate-700/50 bg-slate-800/30'
+                          }`}>
+                            <div className="px-3 py-2 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-blue-400' : 'bg-slate-600'}`} />
+                                <span className={`text-sm font-medium ${isActive ? 'text-white' : 'text-slate-400'}`}>
+                                  {prov.name}
+                                </span>
+                              </div>
+                              {isActive && (
+                                <span className="text-[10px] uppercase tracking-wider text-blue-400 font-semibold">Active</span>
+                              )}
+                            </div>
+                            <div className="px-3 pb-2 flex flex-wrap gap-1.5">
+                              {models.map((m) => {
+                                const isCurrent = model?.model === m && isActive;
+                                return (
+                                  <button
+                                    key={m}
+                                    onClick={() => handleSetModel(m, prov.id)}
+                                    disabled={setModelMut.isPending}
+                                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
+                                      isCurrent
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-slate-700/60 text-slate-300 hover:bg-slate-600 hover:text-white'
+                                    } disabled:opacity-50`}
+                                  >
+                                    {m}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom model */}
+                <div className="pt-3 border-t border-slate-800">
+                  <label className="block text-xs text-slate-500 mb-1.5">Custom model name</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={customModel}
+                      onChange={(e) => setCustomModel(e.target.value)}
+                      placeholder="e.g. gpt-4o-mini"
+                      className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
                     <button
-                      onClick={handleModelChange}
-                      disabled={setModelMut.isPending}
-                      className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+                      onClick={() => {
+                        if (customModel.trim()) {
+                          handleSetModel(customModel.trim(), activeProviderId);
+                        }
+                      }}
+                      disabled={!customModel.trim() || setModelMut.isPending}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                     >
                       {setModelMut.isPending ? (
-                        <Loader2 size={16} className="animate-spin" />
+                        <Loader2 size={14} className="animate-spin" />
                       ) : (
-                        <RefreshCw size={16} />
+                        'Set'
                       )}
-                      {tc.model.change}
                     </button>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
