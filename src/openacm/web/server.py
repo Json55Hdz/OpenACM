@@ -535,11 +535,14 @@ def create_app() -> FastAPI:
                         cmd, args, target_user, target_channel
                     )
                     if result.handled:
-                        await websocket.send_json({
-                            "type": "command",
-                            "content": result.text,
-                            "data": result.data,
-                        })
+                        try:
+                            await websocket.send_json({
+                                "type": "command",
+                                "content": result.text,
+                                "data": result.data,
+                            })
+                        except (WebSocketDisconnect, Exception):
+                            return
                         continue
 
                 if _brain:
@@ -557,13 +560,19 @@ def create_app() -> FastAPI:
                                 "content": response,
                             }
                         )
+                    except WebSocketDisconnect:
+                        return
                     except Exception as e:
-                        await websocket.send_json(
-                            {
-                                "type": "error",
-                                "content": str(e),
-                            }
-                        )
+                        try:
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "content": str(e),
+                                }
+                            )
+                        except (WebSocketDisconnect, Exception):
+                            # Client already gone — nothing to do
+                            return
                 else:
                     await websocket.send_json(
                         {

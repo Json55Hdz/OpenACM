@@ -239,10 +239,39 @@ class LLMRouter:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
+        # Debug: log exactly what we're sending
+        tool_names = [t["function"]["name"] for t in tools] if tools else []
+        log.info(
+            "Custom provider request",
+            url=url,
+            model=model,
+            message_count=len(messages),
+            has_tools=bool(tools),
+            tool_count=len(tools) if tools else 0,
+            tool_names=tool_names,
+            tool_choice=payload.get("tool_choice"),
+            temperature=temperature,
+            max_tokens=max_tokens,
+            has_api_key=bool(api_key),
+            payload_keys=list(payload.keys()),
+        )
+
         # SECURITY: POR DISEÑO - HTTP client para APIs de LLM
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, headers=headers, json=payload, timeout=120.0)
-            resp.raise_for_status()
+
+            if resp.status_code != 200:
+                # Log the full error body before raising
+                body = resp.text
+                log.error(
+                    "Custom provider error response",
+                    status=resp.status_code,
+                    url=url,
+                    model=model,
+                    response_body=body[:2000],
+                )
+                resp.raise_for_status()
+
             data = resp.json()
 
         choice = data["choices"][0]
