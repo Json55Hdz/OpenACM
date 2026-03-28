@@ -252,14 +252,19 @@ class Brain:
 
         # Cap tool count for providers with limited context
         profile = self.llm_router.get_provider_profile()
-        if tools and profile.max_tools_per_call and len(tools) > profile.max_tools_per_call:
-            log.info(
-                "Capping tool count for provider",
-                provider=profile.name,
-                original=len(tools),
-                cap=profile.max_tools_per_call,
-            )
-            tools = tools[: profile.max_tools_per_call]
+        if tools and profile.max_tools_per_call is not None:
+            if profile.max_tools_per_call == 0:
+                # Provider does not support tools at all
+                tools = None
+                log.info("Tools disabled for provider", provider=profile.name)
+            elif len(tools) > profile.max_tools_per_call:
+                log.info(
+                    "Capping tool count for provider",
+                    provider=profile.name,
+                    original=len(tools),
+                    cap=profile.max_tools_per_call,
+                )
+                tools = tools[: profile.max_tools_per_call]
 
         # Agentic loop: LLM may call tools multiple times
         iterations = 0

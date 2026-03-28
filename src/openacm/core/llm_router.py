@@ -104,6 +104,16 @@ class LLMRouter:
                 tool_choice_mode="auto",
                 max_tools_per_call=15,
             )
+        if provider == "opencode_go":
+            # OpenCode.ai proxy crashes when tools are sent
+            # (their backend fails reading usage.prompt_tokens).
+            # Disable tools entirely until they fix it.
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=False,
+                tool_choice_mode="none",
+                max_tools_per_call=0,
+            )
         # Unknown / custom — conservative defaults
         return ProviderProfile(
             name=provider,
