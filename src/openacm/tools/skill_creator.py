@@ -124,7 +124,7 @@ Be specific and practical, not generic.
 """
 
         # Generate content using LLM
-        response = await _brain.llm_router.generate(
+        response = await _brain.llm_router.chat(
             messages=[{"role": "user", "content": skill_prompt}],
             temperature=0.7,
             max_tokens=2000,

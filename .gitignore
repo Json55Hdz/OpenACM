@@ -17,6 +17,9 @@ config/.env
 data/
 *.db
 
+# AI-generated workspace (files saved by OpenACM — not tracked in git)
+workspace/
+
 # IDE
 .vscode/
 .idea/

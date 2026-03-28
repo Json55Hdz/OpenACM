@@ -58,6 +58,7 @@ class Brain:
         self.event_bus = event_bus
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
+        self.terminal_history: list[dict] = []
 
     def _prepare_messages_for_llm(
         self,
@@ -145,7 +146,30 @@ class Brain:
         openacm_context = get_openacm_context() if is_new_conversation else get_short_context()
         system_prompt = f"{openacm_context}\n\n{system_prompt}"
 
-        # 2. Agregar skills relevantes si existen
+        # 2. Agregar contexto de la terminal del usuario si hay historial reciente
+        if self.terminal_history:
+            recent = [
+                e for e in self.terminal_history[-10:] if e.get("command")
+            ]
+            if recent:
+                term_lines = []
+                for e in recent:
+                    output = e.get("output", "").strip()
+                    if output:
+                        term_lines.append(f"$ {e['command']}\n{output[:500]}")
+                    else:
+                        term_lines.append(f"$ {e['command']}")
+                terminal_ctx = "\n".join(term_lines)
+                system_prompt += (
+                    f"\n\n## User's Recent Terminal Activity\n"
+                    f"The user has an interactive terminal open. "
+                    f"These are their recent commands and outputs:\n"
+                    f"```\n{terminal_ctx}\n```\n"
+                    f"Use this context to understand what the user is working on. "
+                    f"You can reference these results in your responses."
+                )
+
+        # 3. Agregar skills relevantes si existen
         if self.skill_manager:
             skills_prompt = await self.skill_manager.get_active_skills_prompt(content)
             if skills_prompt:
@@ -388,15 +412,33 @@ class Brain:
                 return assistant_content
 
             # Process tool calls
-            # First, add the assistant message with tool_calls to memory
+            # First, add the assistant message with tool_calls to memory.
+            # reasoning_content must be preserved for models like Kimi K2.5 that
+            # use thinking mode — they reject histories missing this field.
             await self.memory.add_message(
                 user_id,
                 channel_id,
                 "assistant",
                 response["content"] or "",
                 tool_calls=response["tool_calls"],
+                reasoning_content=response.get("reasoning_content"),  # "" is valid, None means skip
             )
             messages = await self.memory.get_messages(user_id, channel_id)
+
+            # If the LLM wrote something before calling tools, emit it immediately
+            # so the frontend shows it in real-time (not just after all tools finish).
+            if response["content"] and response["content"].strip():
+                await self.event_bus.emit(
+                    EVENT_MESSAGE_SENT,
+                    {
+                        "content": response["content"],
+                        "user_id": user_id,
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                        "tokens": 0,
+                        "partial": True,  # signals: more tool calls may follow
+                    },
+                )
 
             # Execute each tool call
             for tool_call in response["tool_calls"]:

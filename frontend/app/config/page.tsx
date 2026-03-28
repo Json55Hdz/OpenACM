@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig } from '@/hooks/use-api';
-import { useSetModel, useProviderStatus } from '@/hooks/use-setup';
+import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
@@ -17,11 +17,14 @@ import {
   Save,
   Loader2,
   CheckCircle,
+  MinusCircle,
   Copy,
   RefreshCw,
   ToggleLeft,
   ToggleRight,
   Send,
+  Globe2,
+  Trash2,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -102,7 +105,12 @@ export default function ConfigPage() {
   const [telegramToken, setTelegramToken] = useState('');
   const [customModel, setCustomModel] = useState('');
   const [customProvider, setCustomProvider] = useState('');
+  const [googleCredJson, setGoogleCredJson] = useState('');
   const { data: providerStatus } = useProviderStatus();
+  const { data: googleStatus } = useGoogleStatus();
+  const saveGoogleCreds = useSaveGoogleCredentials();
+  const deleteGoogleCreds = useDeleteGoogleCredentials();
+  const startGoogleAuth = useStartGoogleAuth();
 
   // Initialize JSON config when data loads
   useState(() => {
@@ -306,6 +314,151 @@ export default function ConfigPage() {
                 )}
                 Save Telegram Token
               </button>
+            </div>
+          </ConfigSection>
+
+          {/* Google Services */}
+          <ConfigSection
+            title="Google Services"
+            subtitle="Gmail, Calendar, Drive, YouTube"
+            icon={Globe2}
+          >
+            <div className="space-y-4">
+              {/* Status badges */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
+                  googleStatus?.credentials_exist
+                    ? "bg-green-500/10 border-green-500/30 text-green-400"
+                    : "bg-slate-800 border-slate-700 text-slate-500"
+                )}>
+                  {googleStatus?.credentials_exist ? <CheckCircle size={14} /> : <MinusCircle size={14} />}
+                  Credentials
+                </div>
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
+                  googleStatus?.token_exist
+                    ? "bg-green-500/10 border-green-500/30 text-green-400"
+                    : "bg-slate-800 border-slate-700 text-slate-500"
+                )}>
+                  {googleStatus?.token_exist ? <CheckCircle size={14} /> : <MinusCircle size={14} />}
+                  Authorized
+                </div>
+              </div>
+
+              {/* Step 1: Upload credentials (only if not yet uploaded) */}
+              {!googleStatus?.credentials_exist && (
+                <>
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 space-y-1">
+                    <p className="font-medium text-blue-200">Step 1 — Get credentials:</p>
+                    <ol className="list-decimal list-inside space-y-0.5 text-blue-300/80">
+                      <li>Google Cloud Console → APIs &amp; Services → Credentials</li>
+                      <li>Create OAuth 2.0 credentials (Desktop application)</li>
+                      <li>Enable: Gmail, Calendar, Drive, YouTube APIs</li>
+                      <li>Download JSON and paste below</li>
+                    </ol>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1.5">Paste credentials.json content</label>
+                    <textarea
+                      value={googleCredJson}
+                      onChange={(e) => setGoogleCredJson(e.target.value)}
+                      placeholder={'{\n  "installed": {\n    "client_id": "...",\n    ...\n  }\n}'}
+                      rows={4}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (googleCredJson.trim()) {
+                        await saveGoogleCreds.mutateAsync(googleCredJson.trim());
+                        setGoogleCredJson('');
+                      }
+                    }}
+                    disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+                  >
+                    {saveGoogleCreds.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save Credentials
+                  </button>
+                </>
+              )}
+
+              {/* Step 2: Authorize (credentials uploaded but not yet authorized) */}
+              {googleStatus?.credentials_exist && !googleStatus?.token_exist && (
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300">
+                    <p className="font-medium text-blue-200 mb-1">Step 2 — Authorize OpenACM</p>
+                    <p>A new tab will open with Google's login page. Sign in and click <strong>Allow</strong>. OpenACM will detect authorization automatically.</p>
+                  </div>
+                  <button
+                    onClick={() => startGoogleAuth.mutate()}
+                    disabled={startGoogleAuth.isPending}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    {startGoogleAuth.isPending
+                      ? <Loader2 size={14} className="animate-spin" />
+                      : <Globe2 size={14} />}
+                    Connect with Google
+                  </button>
+                  {startGoogleAuth.isSuccess && (
+                    <p className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" /> Waiting for authorization...
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Connected state */}
+              {googleStatus?.token_exist && (
+                <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-3">
+                  <CheckCircle size={18} className="text-green-400 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-green-400 text-sm font-medium">Connected</p>
+                    <p className="text-slate-500 text-xs">Gmail, Calendar, Drive and YouTube are active</p>
+                  </div>
+                  <button
+                    onClick={() => deleteGoogleCreds.mutate()}
+                    disabled={deleteGoogleCreds.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/40 hover:bg-red-800/50 text-red-400 border border-red-700/40 rounded-lg text-xs transition-colors"
+                  >
+                    <Trash2 size={12} /> Disconnect
+                  </button>
+                </div>
+              )}
+
+              {/* Replace credentials when already connected */}
+              {googleStatus?.credentials_exist && (
+                <details className="group">
+                  <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">
+                    Replace credentials JSON
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    <textarea
+                      value={googleCredJson}
+                      onChange={(e) => setGoogleCredJson(e.target.value)}
+                      placeholder={'{\n  "installed": { "client_id": "...", ... }\n}'}
+                      rows={3}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none"
+                      spellCheck={false}
+                    />
+                    <button
+                      onClick={async () => {
+                        if (googleCredJson.trim()) {
+                          await saveGoogleCreds.mutateAsync(googleCredJson.trim());
+                          setGoogleCredJson('');
+                        }
+                      }}
+                      disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
+                    >
+                      {saveGoogleCreds.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                      Save
+                    </button>
+                  </div>
+                </details>
+              )}
             </div>
           </ConfigSection>
 

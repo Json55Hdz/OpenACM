@@ -25,6 +25,7 @@ class CommandResult:
 COMMANDS_HELP = (
     "/new     — Start a new conversation (clear history)\n"
     "/clear   — Same as /new\n"
+    "/reset   — Emergency reset: clears history + fixes broken tool state\n"
     "/help    — Show this help\n"
     "/model   — Show current model\n"
     "/model <name> — Switch to a different model (persisted)\n"
@@ -49,6 +50,8 @@ class CommandProcessor:
         match cmd:
             case "/new" | "/clear":
                 return await self._cmd_clear(user_id, channel_id)
+            case "/reset":
+                return await self._cmd_reset(user_id, channel_id)
             case "/help":
                 return self._cmd_help()
             case "/model":
@@ -65,6 +68,15 @@ class CommandProcessor:
     async def _cmd_clear(self, user_id: str, channel_id: str) -> CommandResult:
         await self.brain.memory.clear(user_id, channel_id)
         return CommandResult(handled=True, text="Conversation cleared.")
+
+    async def _cmd_reset(self, user_id: str, channel_id: str) -> CommandResult:
+        """Emergency reset: wipes conversation memory to fix broken LLM state."""
+        await self.brain.memory.clear(user_id, channel_id)
+        return CommandResult(
+            handled=True,
+            text="🔄 Reset complete. Conversation history cleared.\nThe AI is ready for a fresh start.",
+            data={"reset": True},
+        )
 
     @staticmethod
     def _cmd_help() -> CommandResult:

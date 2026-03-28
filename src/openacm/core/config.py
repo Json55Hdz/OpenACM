@@ -41,7 +41,7 @@ class SecurityConfig(BaseModel):
     whitelisted_commands: list[str] = Field(default_factory=list)
     blocked_patterns: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
-    max_command_timeout: int = 60
+    max_command_timeout: int = 0  # 0 = no limit — wait until command finishes naturally
     max_output_length: int = 50000
 
 
@@ -92,6 +92,7 @@ class StorageConfig(BaseModel):
     """Storage configuration."""
 
     database_path: str = "data/openacm.db"
+    workspace_path: str = "workspace"  # default save location for AI-generated files
     log_conversations: bool = True
     log_tool_executions: bool = True
 
@@ -188,9 +189,17 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     if "storage" in data:
         config_data["storage"] = data["storage"]
 
-    # Make database path absolute relative to project root
+    # Make paths absolute relative to project root
     config = AppConfig(**config_data)
     if not Path(config.storage.database_path).is_absolute():
         config.storage.database_path = str(root / config.storage.database_path)
+    if not Path(config.storage.workspace_path).is_absolute():
+        config.storage.workspace_path = str(root / config.storage.workspace_path)
+
+    # Auto-enable Telegram if token is available from env but channel is not enabled yet
+    telegram_token = os.environ.get("TELEGRAM_TOKEN", "")
+    if telegram_token and ":" in telegram_token and not config.channels.telegram.enabled:
+        config.channels.telegram.token = telegram_token
+        config.channels.telegram.enabled = True
 
     return config

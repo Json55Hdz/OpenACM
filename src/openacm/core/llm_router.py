@@ -211,6 +211,95 @@ class LLMRouter:
         native = {"ollama", "openai", "anthropic", "gemini"}
         return self._current_provider not in native and self._get_api_base() is not None
 
+    def _normalize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Sanitize message history for any provider.
+
+        Fixes:
+        - Orphaned tool_calls (no matching tool response) → inject synthetic response
+        - Orphaned tool responses (no matching tool_call) → drop them
+        - Empty tool_call_ids → assign stable UUID
+        - reasoning_content → only kept for Kimi; stripped for all other providers
+        - Gemini: strip reasoning_content from all messages (Gemini doesn't know the field)
+        """
+        import uuid as _uuid_norm
+
+        is_kimi = "kimi" in self._current_provider.lower() or "moonshot" in self._current_provider.lower()
+
+        # Pass 0: strip tool messages with empty tool_call_id
+        messages = [
+            msg for msg in messages
+            if not (msg.get("role") == "tool" and not msg.get("tool_call_id"))
+        ]
+
+        # Pass 1: collect all tool_call_ids that already have a response
+        responded_ids: set[str] = set()
+        for msg in messages:
+            if msg.get("role") == "tool" and msg.get("tool_call_id"):
+                responded_ids.add(msg["tool_call_id"])
+
+        # Pass 2: normalize assistant tool_calls + inject missing responses
+        normalized: list[dict[str, Any]] = []
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                clean_tool_calls = []
+                for tc in msg["tool_calls"]:
+                    cid = tc.get("id", "")
+                    if not cid:
+                        cid = f"call_{_uuid_norm.uuid4().hex[:12]}"
+                        tc = {**tc, "id": cid}
+                    clean_tool_calls.append(tc)
+                msg = {**msg, "tool_calls": clean_tool_calls}
+
+                # reasoning_content: keep only for Kimi, strip for everything else
+                if is_kimi:
+                    if not msg.get("reasoning_content"):
+                        msg = {**msg, "reasoning_content": "I analyzed the request and determined the appropriate tool to use."}
+                else:
+                    if "reasoning_content" in msg:
+                        msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
+
+                normalized.append(msg)
+                # Inject synthetic responses for any orphaned tool_call_ids
+                for tc in clean_tool_calls:
+                    cid = tc.get("id", "")
+                    if cid and cid not in responded_ids:
+                        log.warning("Injecting synthetic tool response for orphaned tool_call_id", id=cid)
+                        normalized.append({
+                            "role": "tool",
+                            "tool_call_id": cid,
+                            "content": "Error: Tool execution was interrupted or timed out.",
+                        })
+            else:
+                # Strip reasoning_content from non-assistant messages too
+                if not is_kimi and "reasoning_content" in msg:
+                    msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
+                normalized.append(msg)
+
+        # Pass 3: drop tool responses with no matching tool_call
+        all_tc_ids: set[str] = set()
+        for msg in normalized:
+            if msg.get("role") == "assistant":
+                for tc in msg.get("tool_calls") or []:
+                    cid = tc.get("id", "")
+                    if cid:
+                        all_tc_ids.add(cid)
+
+        final: list[dict[str, Any]] = []
+        for msg in normalized:
+            if msg.get("role") == "tool":
+                tcid = msg.get("tool_call_id", "")
+                if not tcid or tcid not in all_tc_ids:
+                    log.warning(
+                        "Dropping unmatched tool response",
+                        tool_call_id=repr(tcid),
+                        all_known_ids=list(all_tc_ids),
+                    )
+                    continue
+            final.append(msg)
+
+        return final
+
     async def _custom_chat(
         self,
         messages: list[dict[str, Any]],
@@ -244,9 +333,12 @@ class LLMRouter:
 
         effective_tc = tool_choice_override or self.get_provider_profile().tool_choice_mode
 
+        # Normalize messages (fix orphaned tool calls/responses, strip unknown fields)
+        final = self._normalize_messages(messages)
+
         payload: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": final,
             "temperature": temperature,
             "stream": True,
         }
@@ -263,7 +355,7 @@ class LLMRouter:
             "Custom provider request (stream)",
             url=url,
             model=model,
-            message_count=len(messages),
+            message_count=len(final),
             has_tools=bool(tools),
             tool_count=len(tools) if tools else 0,
             tool_names=tool_names,
@@ -275,6 +367,7 @@ class LLMRouter:
 
         # Collect streamed chunks
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         # tool_calls keyed by index: {0: {"id": ..., "name": ..., "arguments": ...}}
         tool_calls_acc: dict[int, dict[str, str]] = {}
         finish_reason = "stop"
@@ -282,7 +375,7 @@ class LLMRouter:
         # SECURITY: POR DISEÑO - HTTP client para APIs de LLM
         async with httpx.AsyncClient() as client:
             async with client.stream(
-                "POST", url, headers=headers, json=payload, timeout=120.0
+                "POST", url, headers=headers, json=payload, timeout=300.0
             ) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()
@@ -320,6 +413,18 @@ class LLMRouter:
                     if fr:
                         finish_reason = fr
 
+                    # Accumulate reasoning content (Kimi thinking mode).
+                    # Check both delta-level and choices-level since providers differ.
+                    rc = (
+                        delta.get("reasoning_content")
+                        or delta.get("thinking")
+                        or choices[0].get("reasoning_content")
+                        or choices[0].get("thinking")
+                        or ""
+                    )
+                    if rc:
+                        reasoning_parts.append(rc)
+
                     # Accumulate content
                     if delta.get("content"):
                         content_parts.append(delta["content"])
@@ -342,19 +447,32 @@ class LLMRouter:
                             tool_calls_acc[idx]["arguments"] += func["arguments"]
 
         # Build final result
+        import uuid as _uuid
         assembled_tool_calls = []
         for idx in sorted(tool_calls_acc):
             tc = tool_calls_acc[idx]
+            # Kimi sometimes omits the id in the stream — generate one so it's never empty
+            tc_id = tc["id"] or f"call_{_uuid.uuid4().hex[:12]}"
             assembled_tool_calls.append({
-                "id": tc["id"],
+                "id": tc_id,
                 "function": {
                     "name": tc["name"],
                     "arguments": tc["arguments"],
                 },
             })
 
+        captured_reasoning = "".join(reasoning_parts)
+        log.debug(
+            "Custom provider stream complete",
+            model=model,
+            reasoning_chars=len(captured_reasoning),
+            tool_calls=len(assembled_tool_calls),
+            content_chars=len("".join(content_parts)),
+        )
+
         result = {
             "content": "".join(content_parts),
+            "reasoning_content": captured_reasoning,
             "tool_calls": assembled_tool_calls,
             "usage": {
                 "prompt_tokens": 0,
@@ -448,6 +566,9 @@ class LLMRouter:
         """Single chat attempt."""
         profile = self.get_provider_profile()
         effective_tool_choice = tool_choice_override or profile.tool_choice_mode
+
+        # Normalize messages for all providers (fix orphaned tool calls, strip unknown fields)
+        messages = self._normalize_messages(messages)
 
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
@@ -551,6 +672,8 @@ class LLMRouter:
         """Stream a chat completion response, yielding text chunks."""
         model = self._build_model_string()
         api_base = self._get_api_base()
+
+        messages = self._normalize_messages(messages)
 
         kwargs: dict[str, Any] = {
             "model": model,

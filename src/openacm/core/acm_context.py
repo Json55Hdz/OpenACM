@@ -82,6 +82,41 @@ When you generate a file (PDF, image, document, etc.) you MUST:
 
 **NEVER** just write the link in text without using send_file_to_chat first!
 
+## CRITICAL: Background vs Foreground Commands
+Some commands run forever and never exit (dev servers, tunnels, watchers). If you run them without `background=true`, you will block indefinitely and the user will never get a response.
+
+**Use `background=true` for:**
+- `npm run dev`, `npm start`, `vite`, `next dev`, `uvicorn`, `flask run`
+- `npx lt`, `ngrok`, `cloudflared tunnel`
+- `python -m http.server`, `live-server`
+- Any command you expect to keep running in the terminal
+
+**Use normal (foreground) for:**
+- One-shot commands: `npm install`, `git clone`, `pip install`, `npm run build`
+- Scripts that produce a result and exit
+
+Example:
+```
+# Wrong — blocks forever:
+run_command("npx lt --port 3000")
+
+# Correct — starts tunnel, returns URL after ~6s, keeps running:
+run_command("npx lt --port 3000", background=True)
+```
+
+## CRITICAL: Running Commands Without Interaction
+When executing commands with `run_command`, **ALWAYS use non-interactive flags** to avoid the process hanging waiting for user input:
+- **npm / npx**: Use `--yes` or `-y` flag → `npm install --yes`, `npx create-vite@latest myapp --template react --yes`
+- **pip**: Use `-y` or `--yes` → `pip install package -y` (no prompt needed, but good habit)
+- **apt / apt-get**: Use `-y` → `apt-get install -y package`
+- **yarn**: Use `--yes` → `yarn add package`
+- **git clone**: Non-interactive by default, but use `--quiet` to suppress prompts
+- **cp / mv / rm**: Use `-f` to force without prompts
+- When unsure, prefix with `echo y |` or append `< /dev/null` to feed stdin
+- **NEVER run commands that wait for keyboard input** — always add the appropriate flag
+
+The sandbox auto-injects `CI=true` and feeds `y` to stdin as a safety net, but **you must still use the right flags** — some tools ignore CI and stdin.
+
 ## CRITICAL: Formatting File Links
 When providing download links to users, you MUST follow this exact format:
 - **ALWAYS** write the link as plain text: `/api/media/filename.pdf`
@@ -122,8 +157,40 @@ When working with Windows file paths:
 
 
 def get_openacm_context() -> str:
-    """Get the base OpenACM context."""
-    return OPENACM_BASE_CONTEXT
+    """Get the base OpenACM context with dynamic OS info."""
+    import platform
+    import os
+    from pathlib import Path
+
+    os_name = platform.system()
+    os_version = platform.version()
+    cwd = os.getcwd()
+
+    if os_name == "Windows":
+        shell = "cmd.exe or PowerShell"
+        path_style = "Windows paths (C:\\Users\\...)"
+    elif os_name == "Darwin":
+        shell = "zsh (macOS)"
+        path_style = "Unix paths (/Users/...)"
+    else:
+        shell = "bash (Linux)"
+        path_style = "Unix paths (/home/...)"
+
+    workspace = os.environ.get("OPENACM_WORKSPACE", str(Path(cwd) / "workspace"))
+
+    os_block = (
+        f"\n## Host System\n"
+        f"- OS: **{os_name}** ({os_version})\n"
+        f"- Shell: {shell}\n"
+        f"- Paths: {path_style}\n"
+        f"- Working directory: `{cwd}`\n"
+        f"- **Workspace (default save dir):** `{workspace}`\n"
+        f"Use the correct commands and path separators for this OS.\n"
+        f"**ALWAYS save generated files to the workspace unless the user specifies another path.**\n"
+        f"You can also use the `$OPENACM_WORKSPACE` env var in shell commands (e.g. `run_command`).\n"
+    )
+
+    return OPENACM_BASE_CONTEXT + os_block
 
 
 # Short version for system prompts where space is limited
@@ -140,9 +207,21 @@ RULES:
 4. Show results, not explanations — execute, then report output
 5. If you can do it with a tool, DO IT immediately
 6. If you need a Python library, install it (pip install X) then use it — you CAN install packages
+7. ALWAYS use non-interactive flags in commands: --yes/-y for npm/npx/apt, -f for cp/mv/rm. Never run commands that wait for keyboard input.
+8. For long-running processes (dev servers, tunnels, watch tasks, `npm run dev`, `npx lt`, `python -m http.server`, etc.) ALWAYS use `background=true` in run_command. These never exit on their own — without background=true you will block forever and the user gets no response.
 """
 
 
 def get_short_context() -> str:
-    """Get short version of OpenACM context."""
-    return OPENACM_CONTEXT_SHORT
+    """Get short version of OpenACM context with OS info."""
+    import platform
+    import os
+    os_name = platform.system()
+    if os_name == "Windows":
+        shell = "cmd.exe/PowerShell"
+    elif os_name == "Darwin":
+        shell = "zsh (macOS)"
+    else:
+        shell = "bash (Linux)"
+    workspace = os.environ.get("OPENACM_WORKSPACE", "workspace")
+    return OPENACM_CONTEXT_SHORT + f"\nOS: {os_name} | Shell: {shell} | Workspace: {workspace}\n"

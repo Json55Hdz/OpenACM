@@ -100,11 +100,30 @@ class TelegramChannel(BaseChannel):
 
     async def stop(self):
         """Stop the Telegram bot."""
+        # Deregister event handlers first to prevent stale duplicates after restart
+        try:
+            self.event_bus.off(EVENT_TOOL_CALLED, self._on_tool_called)
+            self.event_bus.off(EVENT_TOOL_RESULT, self._on_tool_result)
+            self.event_bus.off(EVENT_MESSAGE_SENT, self._on_message_sent)
+        except Exception:
+            pass
         if self._app:
-            await self._app.updater.stop()
-            await self._app.stop()
-            await self._app.shutdown()
+            try:
+                await self._app.updater.stop()
+                await self._app.stop()
+                await self._app.shutdown()
+            except Exception as e:
+                log.warning("Error stopping Telegram app", error=str(e))
+            self._app = None
         self._connected = False
+
+    async def restart(self, new_token: str | None = None):
+        """Restart the bot, optionally with a new token."""
+        log.info("Restarting Telegram bot", new_token_provided=bool(new_token))
+        await self.stop()
+        if new_token:
+            self.config.token = new_token
+        await self.start()
 
     async def send_message(self, target_id: str, content: str, **kwargs) -> bool:
         """Send a message to a Telegram chat."""
@@ -193,7 +212,9 @@ class TelegramChannel(BaseChannel):
     async def _on_message_sent(self, event_type: str, data: dict):
         if not self._app or not self._connected:
             return
-
+        # Skip partial messages (intermediate AI text before tool calls)
+        if data.get("partial"):
+            return
         channel_type = data.get("channel_type")
         if channel_type != "telegram":
             return

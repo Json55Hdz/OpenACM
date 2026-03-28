@@ -331,7 +331,7 @@ What to avoid and why.
 Make it practical and actionable. The AI should be able to immediately apply this knowledge.
 """
 
-        response = await llm_router.generate(
+        response = await llm_router.chat(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
         )

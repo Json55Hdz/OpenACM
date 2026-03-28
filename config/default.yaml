@@ -90,7 +90,7 @@ security:
     - "C:\\Windows\\System32"
     - "/etc/shadow"
     - "/etc/passwd"
-  max_command_timeout: 60
+  max_command_timeout: 0  # 0 = no limit — wait until command finishes naturally
   max_output_length: 50000
 
 web:

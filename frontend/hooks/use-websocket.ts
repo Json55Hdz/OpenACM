@@ -3,7 +3,29 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore, authStore } from '@/stores/auth-store';
+import { useTerminalStore } from '@/stores/terminal-store';
 import { toast } from 'sonner';
+
+const TERMINAL_TOOLS = new Set(['run_command', 'run_python', 'python_kernel', 'execute_command']);
+
+function _mirrorToolToTerminal(phase: 'called' | 'result', tool: string, data: string) {
+  if (!TERMINAL_TOOLS.has(tool)) return;
+  const store = useTerminalStore.getState();
+  if (phase === 'called') {
+    // Extract command/code from JSON arguments
+    let cmd = data;
+    try {
+      const args = JSON.parse(data);
+      cmd = args.command || args.code || data;
+    } catch { /* use raw */ }
+    store.addLine({ type: 'ai_input', text: `[AI:${tool}] $ ${cmd}` });
+  } else {
+    const lines = data.split('\n');
+    for (const line of lines) {
+      store.addLine({ type: 'ai_output', text: line });
+    }
+  }
+}
 
 interface WebSocketMessage {
   type: string;
@@ -18,6 +40,7 @@ interface WebSocketMessage {
   result?: string;
   message?: string;
   status?: string;
+  partial?: boolean;
 }
 
 export function useWebSocket() {
@@ -134,8 +157,14 @@ export function useWebSocket() {
           });
         }
       } else if (data.type === 'message.sent') {
-        // Web channel responses come through /ws/chat directly — skip the echo
-        if (data.channel_type === 'web') return;
+        if (data.channel_type === 'web') {
+          // Partial messages (AI text emitted before tool calls) — show immediately
+          if (data.partial && data.channel_id === currentTarget.channel) {
+            addMessage({ content: data.content || '', role: 'assistant' });
+          }
+          // Non-partial web responses come through /ws/chat directly — skip the echo
+          return;
+        }
         if (data.channel_id === currentTarget.channel) {
           addMessage({
             content: data.content || '',
@@ -154,6 +183,8 @@ export function useWebSocket() {
             status: 'running',
           },
         });
+        // Mirror terminal tools to the terminal panel
+        _mirrorToolToTerminal('called', data.tool || '', data.arguments || '');
       } else if (data.type === 'tool.result') {
         addMessage({
           content: `${data.tool || 'Tool'} completed`,
@@ -166,6 +197,8 @@ export function useWebSocket() {
             status: 'completed',
           },
         });
+        // Mirror terminal tools to the terminal panel (final result summary)
+        _mirrorToolToTerminal('result', data.tool || '', data.result || '');
       }
     };
 

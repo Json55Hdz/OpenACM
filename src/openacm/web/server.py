@@ -38,6 +38,10 @@ log = structlog.get_logger()
 
 # Store connected WebSocket clients
 _ws_clients: set[WebSocket] = set()
+_terminal_ws_clients: set[WebSocket] = set()
+
+# Tools that produce shell-like output to show in the terminal panel
+_TERMINAL_TOOLS = {"run_command", "run_python", "python_kernel", "execute_command"}
 
 # Global refs (set during startup)
 _brain: Brain | None = None
@@ -46,6 +50,7 @@ _event_bus: EventBus | None = None
 _tool_registry: ToolRegistry | None = None
 _config: AppConfig | None = None
 _command_processor: CommandProcessor | None = None
+_channels: list = []
 
 
 def create_app() -> FastAPI:
@@ -90,8 +95,8 @@ def create_app() -> FastAPI:
             if not path.startswith("/api/"):
                 return await call_next(request)
 
-            # API routes below here require auth (except /api/auth/check)
-            if path == "/api/auth/check":
+            # API routes below here require auth (except public ones)
+            if path in ("/api/auth/check", "/api/ping", "/api/config/google/callback"):
                 return await call_next(request)
 
             # Check token for other API routes
@@ -134,6 +139,24 @@ def create_app() -> FastAPI:
         if token == _dashboard_token:
             return {"valid": True}
         return JSONResponse(status_code=401, content={"valid": False})
+
+    @app.get("/api/ping")
+    async def ping():
+        """Public health check — used by frontend to detect restarts."""
+        return {"ok": True}
+
+    @app.post("/api/system/restart")
+    async def restart_system():
+        """Restart the OpenACM process (replaces process image via os.execv)."""
+        import sys
+
+        async def _do_restart():
+            await asyncio.sleep(0.6)  # Let the HTTP response go out first
+            log.info("Restarting OpenACM process...")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        asyncio.create_task(_do_restart())
+        return {"status": "restarting"}
 
     # ─── Pages ────────────────────────────────────────────────
 
@@ -272,6 +295,166 @@ def create_app() -> FastAPI:
             return {"needs_setup": True, "provider": _brain.llm_router._current_provider}
         return {"needs_setup": False}
 
+    # Pending OAuth2 flow state (flow object keyed by state string)
+    _google_oauth_flows: dict[str, Any] = {}
+
+    @app.get("/api/config/google")
+    async def get_google_status():
+        """Check if Google credentials and OAuth token exist."""
+        from openacm.core.config import _find_project_root
+        root = _find_project_root()
+        creds_path = root / "config" / "google_credentials.json"
+        token_path = root / "config" / "google_token.json"
+        return {
+            "credentials_exist": creds_path.exists(),
+            "token_exist": token_path.exists(),
+        }
+
+    @app.post("/api/config/google")
+    async def save_google_credentials(request: Request):
+        """Save Google OAuth2 credentials JSON file."""
+        import json as _json
+        from openacm.core.config import _find_project_root
+
+        data = await request.json()
+        credentials_json = data.get("credentials_json", "")
+        if not credentials_json:
+            raise HTTPException(status_code=400, detail="credentials_json required")
+
+        try:
+            parsed = _json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+        root = _find_project_root()
+        creds_path = root / "config" / "google_credentials.json"
+        creds_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(creds_path, "w", encoding="utf-8") as f:
+            _json.dump(parsed, f, indent=2)
+
+        return {"status": "ok"}
+
+    @app.delete("/api/config/google")
+    async def delete_google_credentials():
+        """Remove Google credentials and token (disconnect)."""
+        from openacm.core.config import _find_project_root
+        root = _find_project_root()
+        for fname in ("google_credentials.json", "google_token.json"):
+            p = root / "config" / fname
+            if p.exists():
+                p.unlink()
+        # Clear cached credentials in the tools module too
+        try:
+            import openacm.tools.google_services as _gs
+            _gs._credentials_cache = None
+        except Exception:
+            pass
+        return {"status": "ok"}
+
+    @app.post("/api/config/google/start_auth")
+    async def start_google_auth(request: Request):
+        """
+        Begin the OAuth2 authorization flow.
+        Returns the Google authorization URL to open in a browser tab.
+        The redirect_uri points back to this server's /api/config/google/callback endpoint.
+        """
+        from openacm.core.config import _find_project_root
+        SCOPES = [
+            "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/youtube.readonly",
+        ]
+        try:
+            from google_auth_oauthlib.flow import Flow
+        except ImportError:
+            raise HTTPException(status_code=500, detail="google-auth-oauthlib not installed. Run: pip install -e .")
+
+        root = _find_project_root()
+        creds_path = root / "config" / "google_credentials.json"
+        if not creds_path.exists():
+            raise HTTPException(status_code=400, detail="Upload google_credentials.json first")
+
+        port = _config.web.port if _config else 8080
+        redirect_uri = f"http://localhost:{port}/api/config/google/callback"
+
+        flow = Flow.from_client_secrets_file(
+            str(creds_path),
+            scopes=SCOPES,
+            redirect_uri=redirect_uri,
+        )
+        auth_url, state = flow.authorization_url(
+            access_type="offline",
+            include_granted_scopes="true",
+            prompt="consent",
+        )
+        _google_oauth_flows[state] = flow
+        return {"url": auth_url, "state": state}
+
+    @app.get("/api/config/google/callback")
+    async def google_oauth_callback(request: Request):
+        """
+        Receives the OAuth2 callback from Google after the user authorizes.
+        Exchanges the authorization code for tokens and saves them.
+        Returns a friendly HTML page so the user can close the tab.
+        """
+        from openacm.core.config import _find_project_root
+        state = request.query_params.get("state", "")
+        code = request.query_params.get("code", "")
+        error = request.query_params.get("error", "")
+
+        if error:
+            return HTMLResponse(f"""
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#f87171">
+            <h2>❌ Google Authorization Failed</h2>
+            <p>{error}</p>
+            <p>You can close this tab.</p>
+            </body></html>""")
+
+        flow = _google_oauth_flows.pop(state, None)
+        if not flow:
+            return HTMLResponse("""
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#f87171">
+            <h2>❌ Invalid or expired authorization session</h2>
+            <p>Please try again from the OpenACM settings.</p>
+            <p>You can close this tab.</p>
+            </body></html>""")
+
+        try:
+            flow.fetch_token(code=code)
+            creds = flow.credentials
+
+            root = _find_project_root()
+            token_path = root / "config" / "google_token.json"
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(token_path, "w") as f:
+                f.write(creds.to_json())
+
+            # Invalidate the in-memory credentials cache so next call reloads
+            try:
+                import openacm.tools.google_services as _gs
+                _gs._credentials_cache = None
+            except Exception:
+                pass
+
+            log.info("Google OAuth2 token saved successfully")
+        except Exception as e:
+            log.error("Google OAuth2 token exchange failed", error=str(e))
+            return HTMLResponse(f"""
+            <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#f87171">
+            <h2>❌ Token Exchange Failed</h2>
+            <p>{e}</p>
+            <p>You can close this tab.</p>
+            </body></html>""")
+
+        return HTMLResponse("""
+        <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#34d399">
+        <h2>✅ Google Connected Successfully!</h2>
+        <p style="color:#94a3b8">Gmail, Calendar, Drive and YouTube are now available.</p>
+        <p style="color:#64748b">You can close this tab and return to OpenACM.</p>
+        <script>setTimeout(()=>window.close(),3000)</script>
+        </body></html>""")
+
     @app.get("/api/config/providers")
     async def get_provider_status():
         """Return boolean status for each LLM provider (no keys exposed)."""
@@ -305,6 +488,30 @@ def create_app() -> FastAPI:
                 set_key(str(env_path), safe_key, value)
                 os.environ[safe_key] = value
                 updated.append(safe_key)
+
+        # Restart Telegram bot if its token was updated
+        if "TELEGRAM_TOKEN" in updated:
+            from openacm.channels.telegram_channel import TelegramChannel
+
+            new_token = os.environ.get("TELEGRAM_TOKEN", "")
+
+            # Stop and remove ALL existing Telegram channel instances first
+            # (prevents stale duplicates accumulating across wizard re-runs)
+            existing = [ch for ch in _channels if isinstance(ch, TelegramChannel)]
+            for ch in existing:
+                asyncio.create_task(ch.stop())
+                _channels.remove(ch)
+
+            # Create a fresh channel with the new token
+            if _config and _brain and _event_bus and new_token:
+                _config.channels.telegram.enabled = True
+                _config.channels.telegram.token = new_token
+                ch = TelegramChannel(
+                    _config.channels.telegram, _brain, _event_bus, _database
+                )
+                _channels.append(ch)
+                asyncio.create_task(ch.start())
+                log.info("Telegram bot (re)created with updated token")
 
         return {"status": "ok", "updated": updated}
 
@@ -372,6 +579,16 @@ def create_app() -> FastAPI:
             content_type = "application/pdf"
         elif ext in [".mp3"]:
             content_type = "audio/mpeg"
+        elif ext in [".glb"]:
+            content_type = "model/gltf-binary"
+        elif ext in [".gltf"]:
+            content_type = "model/gltf+json"
+        elif ext in [".obj"]:
+            content_type = "text/plain"
+        elif ext in [".stl"]:
+            content_type = "model/stl"
+        elif ext in [".blend"]:
+            content_type = "application/octet-stream"
 
         return Response(content=decrypted_bytes, media_type=content_type)
 
@@ -583,6 +800,123 @@ def create_app() -> FastAPI:
         except WebSocketDisconnect:
             pass
 
+    # ─── WebSocket: Terminal ─────────────────────────────────
+
+    @app.websocket("/ws/terminal")
+    async def ws_terminal(websocket: WebSocket):
+        """WebSocket endpoint for interactive terminal sessions."""
+        import platform
+        import json as _json
+
+        if not _verify_ws_token(websocket):
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+        await websocket.accept()
+        _terminal_ws_clients.add(websocket)
+
+        # Pick shell based on OS
+        if platform.system() == "Windows":
+            shell_cmd = ["cmd.exe"]
+        else:
+            shell_cmd = ["/bin/bash", "-i"]
+
+        process = None
+        stdout_task = asyncio.create_task(asyncio.sleep(0))  # placeholder
+        stderr_task = asyncio.create_task(asyncio.sleep(0))  # placeholder
+        try:
+            # SECURITY: POR DISEÑO — Terminal interactiva para el administrador
+            # autenticado del dashboard. Requiere token de dashboard válido.
+            process = await asyncio.create_subprocess_exec(
+                *shell_cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            async def read_stream(stream, stream_type="output"):
+                """Read from stdout/stderr and send to WebSocket."""
+                try:
+                    while True:
+                        data = await stream.read(4096)
+                        if not data:
+                            break
+                        text = data.decode("utf-8", errors="replace")
+                        await websocket.send_json({"type": stream_type, "data": text})
+
+                        # Track in brain's terminal history
+                        if _brain and hasattr(_brain, "terminal_history"):
+                            # Append output to last entry if exists
+                            if _brain.terminal_history and not _brain.terminal_history[-1].get("_closed"):
+                                _brain.terminal_history[-1]["output"] += text
+                                # Cap output size per command
+                                if len(_brain.terminal_history[-1]["output"]) > 2000:
+                                    _brain.terminal_history[-1]["output"] = (
+                                        _brain.terminal_history[-1]["output"][:2000] + "\n... (truncated)"
+                                    )
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+            # Launch readers for stdout and stderr
+            stdout_task = asyncio.create_task(read_stream(process.stdout, "output"))
+            stderr_task = asyncio.create_task(read_stream(process.stderr, "output"))
+
+            # Read from WebSocket and write to process stdin
+            while True:
+                raw = await websocket.receive_text()
+                try:
+                    msg = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    continue
+
+                if msg.get("type") == "input":
+                    cmd_data = msg.get("data", "")
+                    if process.stdin and not process.stdin.is_closing():
+                        process.stdin.write(cmd_data.encode("utf-8"))
+                        await process.stdin.drain()
+
+                        # Track command in brain's terminal history
+                        if _brain and hasattr(_brain, "terminal_history"):
+                            cmd_clean = cmd_data.strip()
+                            if cmd_clean:
+                                # Close previous entry
+                                if _brain.terminal_history:
+                                    _brain.terminal_history[-1]["_closed"] = True
+                                _brain.terminal_history.append({
+                                    "command": cmd_clean,
+                                    "output": "",
+                                    "_closed": False,
+                                })
+                                # Keep only last 30 commands
+                                if len(_brain.terminal_history) > 30:
+                                    _brain.terminal_history[:] = _brain.terminal_history[-30:]
+
+                elif msg.get("type") == "signal":
+                    if process and process.returncode is None:
+                        try:
+                            process.send_signal(2)  # SIGINT
+                        except (ProcessLookupError, OSError):
+                            pass
+
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            log.error("Terminal WebSocket error", error=str(e))
+        finally:
+            _terminal_ws_clients.discard(websocket)
+            if process and process.returncode is None:
+                try:
+                    process.terminate()
+                    await asyncio.wait_for(process.wait(), timeout=3.0)
+                except (asyncio.TimeoutError, ProcessLookupError):
+                    try:
+                        process.kill()
+                    except (ProcessLookupError, OSError):
+                        pass
+            # Cancel reader tasks
+            for task in [stdout_task, stderr_task]:
+                if not task.done():
+                    task.cancel()
+
     # ─── WebSocket: Events ────────────────────────────────────
 
     @app.websocket("/ws/events")
@@ -600,6 +934,20 @@ def create_app() -> FastAPI:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             _ws_clients.discard(websocket)
+
+    # ─── API: Terminal ─────────────────────────────────────────
+
+    @app.get("/api/terminal/history")
+    async def get_terminal_history():
+        """Get recent terminal command history (used by AI as context)."""
+        if not _brain:
+            return []
+        history = [
+            {"command": e.get("command", ""), "output": e.get("output", "")[:500]}
+            for e in _brain.terminal_history[-20:]
+            if e.get("command")
+        ]
+        return history
 
     # ─── API: Skills ──────────────────────────────────────────
 
@@ -728,21 +1076,37 @@ async def broadcast_event(event_type: str, data: dict[str, Any]):
     _ws_clients -= disconnected
 
 
+async def _broadcast_to_terminal(data: dict[str, Any]):
+    """Broadcast a message to all connected terminal WebSocket clients."""
+    global _terminal_ws_clients
+    if not _terminal_ws_clients:
+        return
+    disconnected = set()
+    for client in _terminal_ws_clients:
+        try:
+            await client.send_json(data)
+        except Exception:
+            disconnected.add(client)
+    _terminal_ws_clients -= disconnected
+
+
 async def create_web_server(
     config: AppConfig,
     brain: Brain,
     database: Database,
     event_bus: EventBus,
     tool_registry: ToolRegistry,
+    channels: list | None = None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels
     _brain = brain
     _database = database
     _event_bus = event_bus
     _tool_registry = tool_registry
     _config = config
     _command_processor = CommandProcessor(brain, database)
+    _channels = channels or []
 
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):
@@ -768,6 +1132,48 @@ async def create_web_server(
         EVENT_LLM_RESPONSE,
     ]:
         event_bus.on(evt, on_event)
+
+    # Mirror AI tool calls to the terminal panel
+    async def on_tool_called(event_type: str, data: dict[str, Any]):
+        tool_name = data.get("tool", "")
+        if tool_name not in _TERMINAL_TOOLS:
+            return
+        args_raw = data.get("arguments", "")
+        try:
+            import json as _j
+            args = _j.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            command = args.get("command") or args.get("code") or args_raw
+        except Exception:
+            command = str(args_raw)
+        await _broadcast_to_terminal({
+            "type": "ai_command",
+            "tool": tool_name,
+            "data": str(command),
+        })
+
+    async def on_tool_result(event_type: str, data: dict[str, Any]):
+        tool_name = data.get("tool", "")
+        if tool_name not in _TERMINAL_TOOLS:
+            return
+        result = data.get("result", "")
+        await _broadcast_to_terminal({
+            "type": "ai_output",
+            "tool": tool_name,
+            "data": str(result),
+        })
+
+    event_bus.on(EVENT_TOOL_CALLED, on_tool_called)
+    event_bus.on(EVENT_TOOL_RESULT, on_tool_result)
+
+    from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
+
+    async def on_tool_output_stream(event_type: str, data: dict[str, Any]):
+        chunk = data.get("chunk", "")
+        tool = data.get("tool", "")
+        if chunk:
+            await _broadcast_to_terminal({"type": "ai_output", "tool": tool, "data": chunk})
+
+    event_bus.on(EVENT_TOOL_OUTPUT_STREAM, on_tool_output_stream)
 
     app = create_app()
 

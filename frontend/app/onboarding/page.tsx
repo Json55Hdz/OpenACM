@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/use-websocket';
-import { useConfigStatus, useSaveSetup, useSetModel } from '@/hooks/use-setup';
+import { useConfigStatus, useSaveSetup, useSetModel, useGoogleStatus, useSaveGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { ModelSelector } from '@/components/setup/model-selector';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
@@ -18,6 +18,8 @@ import {
   Lock,
   Loader2,
   Rocket,
+  Globe2,
+  ChevronsRight,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -33,7 +35,8 @@ const STEPS = [
   { number: 1, title: t.steps.auth, description: t.steps.authDesc },
   { number: 2, title: t.steps.providers, description: t.steps.providersDesc },
   { number: 3, title: t.steps.modelTelegram, description: t.steps.modelTelegramDesc },
-  { number: 4, title: t.steps.ready, description: t.steps.readyDesc },
+  { number: 4, title: 'Google Services', description: 'Optional — Gmail, Calendar, Drive' },
+  { number: 5, title: t.steps.ready, description: t.steps.readyDesc },
 ];
 
 function StepIndicator({
@@ -88,16 +91,19 @@ export default function OnboardingPage() {
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>();
   const [telegramToken, setTelegramToken] = useState('');
+  const [googleCredJson, setGoogleCredJson] = useState('');
+  const { data: googleStatus } = useGoogleStatus();
+  const saveGoogleCreds = useSaveGoogleCredentials();
+  const startGoogleAuth = useStartGoogleAuth();
 
   // Auto-advance past auth if already authenticated
   useEffect(() => {
-    if (isAuthenticated && currentStep === 1) {
-      // Check if setup is needed
-      if (configStatus && !configStatus.needs_setup) {
-        router.push('/dashboard');
-      } else if (configStatus?.needs_setup) {
-        setCurrentStep(2);
-      }
+    if (!isAuthenticated || currentStep !== 1) return;
+    if (configStatus === undefined) return; // still loading — wait
+    if (!configStatus.needs_setup) {
+      router.push('/dashboard');
+    } else {
+      setCurrentStep(2);
     }
   }, [isAuthenticated, configStatus, currentStep, router]);
 
@@ -130,19 +136,27 @@ export default function OnboardingPage() {
     }
 
     try {
-      // Save model + provider
       await setModel.mutateAsync({ model: selectedModel, provider: selectedProvider });
-
-      // Save telegram token if provided
       if (telegramToken.trim()) {
         await saveSetup.mutateAsync({ TELEGRAM_TOKEN: telegramToken.trim() });
       }
-
       setTelegramToken('');
-      setCurrentStep(4);
+      setCurrentStep(4); // → Google step
     } catch {
       toast.error('Failed to save settings');
     }
+  };
+
+  const handleGoogleSave = async () => {
+    if (googleCredJson.trim()) {
+      try {
+        await saveGoogleCreds.mutateAsync(googleCredJson.trim());
+        setGoogleCredJson('');
+      } catch {
+        return; // error handled by hook
+      }
+    }
+    setCurrentStep(5);
   };
 
   return (
@@ -292,8 +306,134 @@ export default function OnboardingPage() {
             </div>
           )}
 
-          {/* Step 4: Ready */}
+          {/* Step 4: Google Services (optional) */}
           {currentStep === 4 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-bold text-white mb-1">Google Services</h2>
+                <p className="text-sm text-slate-400">
+                  Optional — lets the AI use Gmail, Calendar, Drive and YouTube. You can skip and configure later.
+                </p>
+              </div>
+
+              {/* Status badges */}
+              <div className="flex gap-3">
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm flex-1",
+                  googleStatus?.credentials_exist
+                    ? "bg-green-500/10 border-green-500/30 text-green-400"
+                    : "bg-slate-800 border-slate-700 text-slate-500"
+                )}>
+                  <CheckCircle size={14} className={googleStatus?.credentials_exist ? '' : 'opacity-30'} />
+                  Credentials
+                </div>
+                <div className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm flex-1",
+                  googleStatus?.token_exist
+                    ? "bg-green-500/10 border-green-500/30 text-green-400"
+                    : "bg-slate-800 border-slate-700 text-slate-500"
+                )}>
+                  <CheckCircle size={14} className={googleStatus?.token_exist ? '' : 'opacity-30'} />
+                  Authorized
+                </div>
+              </div>
+
+              {/* If already fully connected */}
+              {googleStatus?.token_exist ? (
+                <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-center">
+                  <CheckCircle size={24} className="text-green-400 mx-auto mb-2" />
+                  <p className="text-green-400 font-medium">Google is connected!</p>
+                  <p className="text-slate-400 text-sm mt-1">Gmail, Calendar, Drive and YouTube are ready.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Step 1: credentials */}
+                  {!googleStatus?.credentials_exist && (
+                    <>
+                      <div className="p-3 bg-slate-800/50 rounded-lg text-xs text-slate-400 space-y-1">
+                        <p className="font-medium text-slate-300 flex items-center gap-1.5">
+                          <Globe2 size={14} /> How to get credentials:
+                        </p>
+                        <ol className="list-decimal list-inside space-y-0.5">
+                          <li>Google Cloud Console → APIs &amp; Services → Credentials</li>
+                          <li>Create OAuth 2.0 credentials (Desktop application)</li>
+                          <li>Enable: Gmail, Calendar, Drive, YouTube APIs</li>
+                          <li>Download JSON and paste below</li>
+                        </ol>
+                      </div>
+                      <textarea
+                        value={googleCredJson}
+                        onChange={(e) => setGoogleCredJson(e.target.value)}
+                        placeholder={'{\n  "installed": { "client_id": "...", ... }\n}'}
+                        rows={4}
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none"
+                        spellCheck={false}
+                      />
+                      <button
+                        onClick={handleGoogleSave}
+                        disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors"
+                      >
+                        {saveGoogleCreds.isPending ? <Loader2 size={18} className="animate-spin" /> : <><CheckCircle size={18} /><span>Save Credentials</span></>}
+                      </button>
+                    </>
+                  )}
+
+                  {/* Step 2: authorize */}
+                  {googleStatus?.credentials_exist && !googleStatus?.token_exist && (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-sm text-blue-300">
+                        <p className="font-medium mb-1">Credentials uploaded ✓</p>
+                        <p className="text-blue-400/80">Now authorize OpenACM to access your Google account. A new tab will open — sign in and click Allow.</p>
+                      </div>
+                      <button
+                        onClick={() => startGoogleAuth.mutate()}
+                        disabled={startGoogleAuth.isPending}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white rounded-xl font-medium transition-colors"
+                      >
+                        {startGoogleAuth.isPending ? (
+                          <Loader2 size={18} className="animate-spin" />
+                        ) : (
+                          <><Globe2 size={18} /><span>Connect with Google</span></>
+                        )}
+                      </button>
+                      {startGoogleAuth.isSuccess && (
+                        <p className="text-center text-sm text-slate-400 flex items-center justify-center gap-2">
+                          <Loader2 size={14} className="animate-spin" /> Waiting for authorization in the browser tab...
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setCurrentStep(3)}
+                  className="flex items-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium transition-colors"
+                >
+                  <ArrowLeft size={18} /> Back
+                </button>
+                <button
+                  onClick={() => setCurrentStep(5)}
+                  className="flex items-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl font-medium transition-colors"
+                >
+                  <ChevronsRight size={18} /> Skip
+                </button>
+                {googleStatus?.token_exist && (
+                  <button
+                    onClick={() => setCurrentStep(5)}
+                    className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-medium transition-colors"
+                  >
+                    <span>Continue</span><ArrowRight size={18} />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Step 5: Ready */}
+          {currentStep === 5 && (
             <div className="text-center py-12">
               <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Rocket size={40} className="text-green-400" />

@@ -108,6 +108,15 @@ class OpenACM:
 
     async def _init_core(self):
         """Initialize core subsystems."""
+        # Create workspace dir and expose it as an env var so all subprocesses inherit it
+        import os
+        from pathlib import Path
+
+        workspace = Path(self.config.storage.workspace_path)
+        workspace.mkdir(parents=True, exist_ok=True)
+        os.environ["OPENACM_WORKSPACE"] = str(workspace)
+        os.environ["OPENACM_PROJECT_ROOT"] = str(workspace.parent)
+
         # Event bus
         self.event_bus = EventBus()
 
@@ -181,6 +190,7 @@ class OpenACM:
             browser_agent,
             python_kernel,
             skill_creator,
+            blender_tool,
         )
 
         self.tool_registry.register_module(system_cmd)
@@ -193,6 +203,7 @@ class OpenACM:
         self.tool_registry.register_module(browser_agent)
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
+        self.tool_registry.register_module(blender_tool)
 
         # Give brain access to tools
         self.brain.tool_registry = self.tool_registry
@@ -251,6 +262,7 @@ class OpenACM:
                 database=self.database,
                 event_bus=self.event_bus,
                 tool_registry=self.tool_registry,
+                channels=self._channels,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "

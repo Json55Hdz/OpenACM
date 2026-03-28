@@ -2,32 +2,49 @@
 System Command Tool — execute OS commands securely.
 """
 
+import asyncio
+
 from openacm.tools.base import tool
+
+# Registry of background processes: pid -> asyncio.subprocess.Process
+_bg_processes: dict[int, asyncio.subprocess.Process] = {}
 
 
 @tool(
     name="run_command",
     description=(
         "[OpenACM Tool] Execute commands directly in the operating system terminal. "
-        "ALWAYS AVAILABLE. Use for: ls, dir, git, python, pip, etc. "
+        "ALWAYS AVAILABLE. Use for: ls, dir, git, python, pip, npm run dev, servers, tunnels, etc. "
         "Command runs in a secure sandbox. "
-        "EXAMPLES: 'dir', 'ls -la', 'git status', 'python script.py'"
+        "Use background=true for long-running processes (dev servers, tunnels, watch tasks) "
+        "— captures startup output for ~6 seconds then detaches, returning the PID. "
+        "EXAMPLES: 'dir', 'ls -la', 'git status', 'python script.py', "
+        "'npm run dev' (background=true), 'npx lt --port 3000' (background=true)"
     ),
     parameters={
         "type": "object",
         "properties": {
             "command": {
                 "type": "string",
-                "description": "Command to execute (e.g.: 'dir', 'ls -la', 'git status')",
+                "description": "Command to execute",
             },
             "timeout": {
                 "type": "integer",
-                "description": "Maximum time in seconds (default: 30)",
-                "default": 30,
+                "description": "Max seconds to wait (0 = no limit). Ignored when background=true.",
+                "default": 0,
             },
             "working_directory": {
                 "type": "string",
                 "description": "Optional working directory",
+            },
+            "background": {
+                "type": "boolean",
+                "description": (
+                    "Run the process in the background (fire-and-forget). "
+                    "Use this for servers, tunnels, watch tasks — anything that runs forever. "
+                    "Captures up to 6 seconds of startup output then returns the PID."
+                ),
+                "default": False,
             },
         },
         "required": ["command"],
@@ -38,8 +55,9 @@ from openacm.tools.base import tool
 )
 async def run_command(
     command: str,
-    timeout: int = 30,
+    timeout: int = 0,
     working_directory: str | None = None,
+    background: bool = False,
     _sandbox=None,
     **kwargs,
 ) -> str:
@@ -47,9 +65,134 @@ async def run_command(
     if not _sandbox:
         return "Error: Sandbox not available"
 
+    # Stream output to terminal panel in real time if brain/event_bus available
+    brain = kwargs.get("_brain")
+    on_output = None
+    if brain and hasattr(brain, "event_bus"):
+        from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
+
+        async def on_output(chunk: str):
+            await brain.event_bus.emit(
+                EVENT_TOOL_OUTPUT_STREAM,
+                {"tool": "run_command", "chunk": chunk},
+            )
+
+    if background:
+        return await _run_background(command, working_directory, on_output, _sandbox)
+
     result = await _sandbox.execute(
         command=command,
-        timeout=timeout,
+        timeout=timeout if timeout > 0 else None,
         cwd=working_directory,
+        on_output=on_output,
     )
     return result.output
+
+
+async def _run_background(
+    command: str,
+    cwd: str | None,
+    on_output,
+    sandbox,
+) -> str:
+    """
+    Launch a command in the background.
+    Reads stdout/stderr for up to 6 seconds to capture startup output (URLs, errors, etc.),
+    then detaches and returns the PID so the AI can continue.
+    """
+    import platform
+    import os as _os
+
+    proc_env = {**_os.environ, "CI": "true", "npm_config_yes": "true"}
+
+    if platform.system() == "Windows":
+        process = await asyncio.create_subprocess_exec(
+            "cmd.exe", "/c", command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=proc_env,
+        )
+    else:
+        import shlex
+        args = shlex.split(command)
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=proc_env,
+        )
+
+    pid = process.pid
+    _bg_processes[pid] = process
+
+    # Collect startup output for up to 6 seconds
+    startup_lines: list[str] = []
+
+    async def _drain(stream):
+        try:
+            while True:
+                chunk = await asyncio.wait_for(stream.read(512), timeout=0.2)
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", errors="replace")
+                startup_lines.append(text)
+                if on_output:
+                    try:
+                        await on_output(text)
+                    except Exception:
+                        pass
+        except (asyncio.TimeoutError, Exception):
+            pass
+
+    deadline = asyncio.get_event_loop().time() + 6.0
+    while asyncio.get_event_loop().time() < deadline:
+        # Check if process already died (error at startup)
+        if process.returncode is not None:
+            break
+        await _drain(process.stdout)
+        await _drain(process.stderr)
+        await asyncio.sleep(0.3)
+
+    # One last drain
+    await _drain(process.stdout)
+    await _drain(process.stderr)
+
+    startup_output = "".join(startup_lines).strip()
+
+    if process.returncode is not None and process.returncode != 0:
+        return (
+            f"Process exited immediately with code {process.returncode}.\n"
+            + (startup_output or "(no output)")
+        )
+
+    # Keep draining stdout/stderr to prevent pipe buffer from filling up.
+    # Still forward to on_output so the terminal panel stays live,
+    # but the AI never sees this — it already got the startup summary.
+    async def _discard_forever(stream):
+        try:
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    break  # process exited
+                if on_output:
+                    try:
+                        text = chunk.decode("utf-8", errors="replace")
+                        await on_output(text)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    if process.returncode is None:
+        asyncio.ensure_future(_discard_forever(process.stdout))
+        asyncio.ensure_future(_discard_forever(process.stderr))
+
+    return (
+        f"Process started in background (PID {pid}).\n"
+        f"Startup output:\n{startup_output or '(no output yet)'}\n\n"
+        f"The process is still running. To stop it: run_command('taskkill /PID {pid} /F') on Windows or run_command('kill {pid}') on Linux/Mac."
+    )

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel } from '@/hooks/use-api';
+import { useAPI, useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel } from '@/hooks/use-api';
 import {
   Send,
   Paperclip,
@@ -20,10 +20,14 @@ import {
   Cpu,
   BarChart3,
   Download,
+  SquareTerminal,
+  RotateCcw,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
+import { TerminalPanel } from '@/components/terminal/terminal-panel';
+import { useTerminalStore } from '@/stores/terminal-store';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -176,9 +180,13 @@ export default function ChatPage() {
   const chatCommand = useChatCommand();
   const clearConversation = useClearConversation();
   const { data: modelData } = useCurrentModel();
+  const { fetchAPI } = useAPI();
+
+  const { isOpen: isTerminalOpen, toggleOpen: toggleTerminal } = useTerminalStore();
 
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isRestarting, setIsRestarting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Track which conversation we last loaded history for
@@ -193,14 +201,21 @@ export default function ChatPage() {
     if (history && Array.isArray(history)) {
       loadedKeyRef.current = key;
       if (history.length > 0) {
-        setMessages(
-          history.map((msg: { role: string; content: string }) => ({
+        const visible = history
+          .filter((msg: { role: string; content: string }) => {
+            // Skip system prompts, tool results, and assistant-only-tool-call messages
+            if (msg.role === 'system') return false;
+            if (msg.role === 'tool') return false;
+            // Skip assistant messages that have no visible text (were just tool-call planners)
+            if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
+            return true;
+          })
+          .map((msg: { role: string; content: string }) => ({
             content: msg.content,
-            role: msg.role as 'user' | 'assistant' | 'error',
-          }))
-        );
+            role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+          }));
+        setMessages(visible);
       }
-      // If history is empty, messages were already cleared by setTarget
     }
   }, [history, currentTarget.channel, currentTarget.user, setMessages]);
   
@@ -209,6 +224,33 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaitingResponse]);
   
+  const handleRestart = async () => {
+    setIsRestarting(true);
+    try {
+      await fetchAPI('/api/system/restart', { method: 'POST' });
+    } catch {
+      // Expected — server may close the connection before responding
+    }
+    // Poll /api/ping until the server is back up, then reload
+    const poll = async () => {
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const res = await fetch('/api/ping');
+          if (res.ok) {
+            window.location.reload();
+            return;
+          }
+        } catch {
+          // Server still down, keep polling
+        }
+      }
+      // Timeout after 60s — reload anyway
+      window.location.reload();
+    };
+    poll();
+  };
+
   const executeCommand = async (command: string) => {
     try {
       const result = await chatCommand.mutateAsync({
@@ -229,8 +271,8 @@ export default function ChatPage() {
         a.click();
         URL.revokeObjectURL(url);
       }
-      // If it was a clear/new command, also clear local messages
-      if (command.startsWith('/new') || command.startsWith('/clear')) {
+      // If it was a clear/new/reset command, also clear local messages
+      if (command.startsWith('/new') || command.startsWith('/clear') || command.startsWith('/reset')) {
         setMessages([]);
       }
     } catch {
@@ -320,6 +362,14 @@ export default function ChatPage() {
   
   return (
     <AppLayout>
+      {/* Restarting overlay */}
+      {isRestarting && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-sm">
+          <Loader2 size={48} className="animate-spin text-blue-400 mb-6" />
+          <h2 className="text-2xl font-bold text-white mb-2">Restarting OpenACM...</h2>
+          <p className="text-slate-400">Waiting for the server to come back up</p>
+        </div>
+      )}
       <div className="h-screen flex">
         {/* Sidebar - Conversation List */}
         <div className={cn(
@@ -411,12 +461,24 @@ export default function ChatPage() {
                 onClick={() => setShowToolLogs(!showToolLogs)}
                 className={cn(
                   "px-3 py-1.5 text-sm rounded-lg transition-colors",
-                  showToolLogs 
-                    ? "bg-blue-600/20 text-blue-400 border border-blue-600/30" 
+                  showToolLogs
+                    ? "bg-blue-600/20 text-blue-400 border border-blue-600/30"
                     : "text-slate-400 hover:bg-slate-800"
                 )}
               >
                 Tool Logs
+              </button>
+              <button
+                onClick={toggleTerminal}
+                className={cn(
+                  "px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-1.5",
+                  isTerminalOpen
+                    ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/30"
+                    : "text-slate-400 hover:bg-slate-800"
+                )}
+              >
+                <SquareTerminal size={14} />
+                Terminal
               </button>
               <button className="p-2 text-slate-400 hover:text-white">
                 <MoreVertical size={20} />
@@ -506,7 +568,19 @@ export default function ChatPage() {
               <Download size={13} />
               Export
             </button>
+            <button
+              onClick={handleRestart}
+              disabled={isRestarting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-red-900/40 text-red-400 hover:bg-red-800/50 hover:text-red-300 border border-red-700/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Restart OpenACM — restarts the server process"
+            >
+              <RotateCcw size={13} />
+              Restart
+            </button>
           </div>
+
+          {/* Terminal Panel */}
+          <TerminalPanel />
 
           {/* Input Area */}
           <div className="p-4 border-t border-slate-800 bg-slate-900/50">

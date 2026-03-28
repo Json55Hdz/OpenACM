@@ -61,24 +61,27 @@ class MemoryManager:
         tool_calls: list[dict] | None = None,
         tool_call_id: str | None = None,
         name: str | None = None,
+        reasoning_content: str | None = None,
     ):
         """Add a message to the conversation history."""
         key = self._key(user_id, channel_id)
-        
+
         if key not in self._cache:
             self._cache[key] = []
-        
+
         message: dict[str, Any] = {
             "role": role,
             "content": content,
         }
-        
+
         if tool_calls:
             message["tool_calls"] = tool_calls
         if tool_call_id:
             message["tool_call_id"] = tool_call_id
         if name:
             message["name"] = name
+        if reasoning_content is not None:  # include even when empty string
+            message["reasoning_content"] = reasoning_content
         
         self._cache[key].append(message)
         

@@ -73,6 +73,7 @@ class Sandbox:
         timeout: int | None = None,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        on_output=None,  # async callable(chunk: str) for real-time streaming
     ) -> SandboxResult:
         """
         Execute a command in the sandbox.
@@ -85,39 +86,82 @@ class Sandbox:
         if not allowed:
             raise SecurityViolation(f"Command blocked: {reason}")
 
-        timeout = timeout or self.policy.config.max_command_timeout
+        # Use provided timeout, fall back to config, 0/None means no limit
+        configured = self.policy.config.max_command_timeout
+        if timeout is None:
+            timeout = configured if configured else None
+        elif timeout <= 0:
+            timeout = None  # explicit 0 = no limit
         max_output = self.policy.config.max_output_length
 
         start_time = time.time()
         truncated = False
 
         try:
+            # Inject CI=true so npm/yarn/npx and many other tools skip interactive prompts
+            import os as _os
+            proc_env = {**(_os.environ if env is None else env), "CI": "true", "npm_config_yes": "true"}
+
             if self._is_windows:
                 # On Windows, use cmd.exe /c
                 process = await asyncio.create_subprocess_exec(
                     "cmd.exe", "/c", command,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
-                    env=env,
+                    env=proc_env,
                 )
             else:
                 # On Linux/macOS, parse and execute directly
                 args = shlex.split(command)
                 process = await asyncio.create_subprocess_exec(
                     *args,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
-                    env=env,
+                    env=proc_env,
                 )
 
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout
-            )
+            # Auto-answer any initial "proceed? (y)" prompts
+            if process.stdin:
+                process.stdin.write(b"y\n")
+                try:
+                    await process.stdin.drain()
+                except Exception:
+                    pass
+                process.stdin.close()
 
-            stdout = stdout_bytes.decode("utf-8", errors="replace")
-            stderr = stderr_bytes.decode("utf-8", errors="replace")
+            # Stream stdout and stderr concurrently, calling on_output per chunk
+            stdout_parts: list[str] = []
+            stderr_parts: list[str] = []
+
+            async def _read_stream(stream, parts: list[str], is_stderr: bool = False):
+                while True:
+                    chunk = await stream.read(512)
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", errors="replace")
+                    parts.append(text)
+                    if on_output:
+                        try:
+                            await on_output(text)
+                        except Exception:
+                            pass
+
+            coro = asyncio.gather(
+                _read_stream(process.stdout, stdout_parts),
+                _read_stream(process.stderr, stderr_parts, is_stderr=True),
+            )
+            if timeout:
+                await asyncio.wait_for(coro, timeout=timeout)
+            else:
+                await coro  # no timeout — wait until the command finishes
+            await process.wait()
+
+            stdout = "".join(stdout_parts)
+            stderr = "".join(stderr_parts)
 
             # Truncate output if too long
             if len(stdout) > max_output:
