@@ -105,14 +105,14 @@ class LLMRouter:
                 max_tools_per_call=15,
             )
         if provider == "opencode_go":
-            # OpenCode.ai proxy crashes when tools are sent
+            # OpenCode.ai proxy crashes with tool_choice="required"
             # (their backend fails reading usage.prompt_tokens).
-            # Disable tools entirely until they fix it.
+            # Use "auto" and never enforce — let the model decide.
             return ProviderProfile(
                 name=provider,
                 needs_tool_enforcement=False,
-                tool_choice_mode="none",
-                max_tools_per_call=0,
+                tool_choice_mode="auto",
+                max_tools_per_call=15,
             )
         # Unknown / custom — conservative defaults
         return ProviderProfile(
@@ -245,7 +245,10 @@ class LLMRouter:
         }
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = effective_tc
+            # Some proxies (e.g. OpenCode.ai) crash when tool_choice is sent.
+            # Only include it when it's not the default "auto".
+            if effective_tc and effective_tc != "auto":
+                payload["tool_choice"] = effective_tc
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
