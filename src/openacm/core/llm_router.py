@@ -219,8 +219,14 @@ class LLMRouter:
         max_tokens: int | None = None,
         tool_choice_override: str | None = None,
     ) -> dict[str, Any]:
-        """Direct httpx call for custom OpenAI-compatible providers."""
+        """Direct httpx call for custom OpenAI-compatible providers.
+
+        Uses streaming (stream=true) to work around proxies that crash
+        when processing the non-streamed usage object (e.g. OpenCode.ai).
+        Chunks are collected and reassembled into a standard response.
+        """
         import httpx
+        import json as _json
 
         api_base = self._get_api_base().rstrip("/")
         api_key_env = f"{self._current_provider.upper()}_API_KEY"
@@ -242,11 +248,10 @@ class LLMRouter:
             "model": model,
             "messages": messages,
             "temperature": temperature,
+            "stream": True,
         }
         if tools:
             payload["tools"] = tools
-            # Some proxies (e.g. OpenCode.ai) crash when tool_choice is sent.
-            # Only include it when it's not the default "auto".
             if effective_tc and effective_tc != "auto":
                 payload["tool_choice"] = effective_tc
         if max_tokens:
@@ -255,7 +260,7 @@ class LLMRouter:
         # Debug: log exactly what we're sending
         tool_names = [t["function"]["name"] for t in tools] if tools else []
         log.info(
-            "Custom provider request",
+            "Custom provider request (stream)",
             url=url,
             model=model,
             message_count=len(messages),
@@ -266,55 +271,100 @@ class LLMRouter:
             temperature=temperature,
             max_tokens=max_tokens,
             has_api_key=bool(api_key),
-            payload_keys=list(payload.keys()),
         )
+
+        # Collect streamed chunks
+        content_parts: list[str] = []
+        # tool_calls keyed by index: {0: {"id": ..., "name": ..., "arguments": ...}}
+        tool_calls_acc: dict[int, dict[str, str]] = {}
+        finish_reason = "stop"
 
         # SECURITY: POR DISEÑO - HTTP client para APIs de LLM
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, headers=headers, json=payload, timeout=120.0)
+            async with client.stream(
+                "POST", url, headers=headers, json=payload, timeout=120.0
+            ) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    body_text = body.decode("utf-8", errors="replace")
+                    log.error(
+                        "Custom provider error response",
+                        status=resp.status_code,
+                        url=url,
+                        model=model,
+                        response_body=body_text[:2000],
+                    )
+                    raise httpx.HTTPStatusError(
+                        f"Server error '{resp.status_code}' for url '{url}'",
+                        request=resp.request,
+                        response=resp,
+                    )
 
-            if resp.status_code != 200:
-                # Log the full error body before raising
-                body = resp.text
-                log.error(
-                    "Custom provider error response",
-                    status=resp.status_code,
-                    url=url,
-                    model=model,
-                    response_body=body[:2000],
-                )
-                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = _json.loads(data_str)
+                    except _json.JSONDecodeError:
+                        continue
 
-            data = resp.json()
+                    choices = chunk.get("choices", [])
+                    if not choices:
+                        continue
 
-        choice = data["choices"][0]
-        msg = choice["message"]
-        usage = data.get("usage", {})
+                    delta = choices[0].get("delta", {})
+                    fr = choices[0].get("finish_reason")
+                    if fr:
+                        finish_reason = fr
+
+                    # Accumulate content
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+
+                    # Accumulate tool calls
+                    for tc in delta.get("tool_calls", []):
+                        idx = tc.get("index", 0)
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": tc.get("id", ""),
+                                "name": "",
+                                "arguments": "",
+                            }
+                        if tc.get("id"):
+                            tool_calls_acc[idx]["id"] = tc["id"]
+                        func = tc.get("function", {})
+                        if func.get("name"):
+                            tool_calls_acc[idx]["name"] = func["name"]
+                        if func.get("arguments"):
+                            tool_calls_acc[idx]["arguments"] += func["arguments"]
+
+        # Build final result
+        assembled_tool_calls = []
+        for idx in sorted(tool_calls_acc):
+            tc = tool_calls_acc[idx]
+            assembled_tool_calls.append({
+                "id": tc["id"],
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc["arguments"],
+                },
+            })
 
         result = {
-            "content": msg.get("content") or "",
-            "tool_calls": [],
+            "content": "".join(content_parts),
+            "tool_calls": assembled_tool_calls,
             "usage": {
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
             },
             "model": model,
             "elapsed": 0,
-            "finish_reason": choice.get("finish_reason", "stop"),
+            "finish_reason": finish_reason,
         }
-
-        if msg.get("tool_calls"):
-            result["tool_calls"] = [
-                {
-                    "id": tc["id"],
-                    "function": {
-                        "name": tc["function"]["name"],
-                        "arguments": tc["function"]["arguments"],
-                    },
-                }
-                for tc in msg["tool_calls"]
-            ]
 
         return result
 
