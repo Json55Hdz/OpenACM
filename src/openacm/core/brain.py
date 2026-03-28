@@ -21,7 +21,7 @@ from openacm.core.events import (
 )
 from openacm.core.llm_router import LLMRouter
 from openacm.core.memory import MemoryManager
-from openacm.core.acm_context import get_openacm_context
+from openacm.core.acm_context import get_openacm_context, get_short_context
 
 log = structlog.get_logger()
 
@@ -31,6 +31,17 @@ class Brain:
     Central AI engine that processes messages through the LLM
     with tool calling support.
     """
+
+    # Enforcement message injected for providers that need it
+    _TOOL_ENFORCEMENT_MSG = (
+        "You are OpenACM. You MUST respond by calling one of your tools. "
+        "Do NOT describe what you would do — actually DO it using a tool call. "
+        "Available tools: run_command, run_python, web_search, browser_agent, "
+        "file_ops, send_file_to_chat, google_services, screenshot, system_info. "
+        "If you need a Python library, install it first with run_command (pip install X) then use run_python. "
+        "You CAN install packages. You CAN access the internet. You CAN create any file. "
+        "NEVER say 'as a language model' or 'I cannot'. Execute the user's request NOW."
+    )
 
     def __init__(
         self,
@@ -47,6 +58,42 @@ class Brain:
         self.event_bus = event_bus
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
+
+    def _prepare_messages_for_llm(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        is_tool_loop: bool,
+    ) -> list[dict[str, Any]]:
+        """Return a shallow copy of *messages* with optional enforcement injection.
+
+        The enforcement hint is only added when:
+        - tools are available,
+        - the provider profile says it needs enforcement, AND
+        - we are NOT already inside a tool-calling loop (iterations > 1).
+
+        The enforcement is appended to the system prompt (messages[0]) instead
+        of inserted as a separate message, because Gemini requires strict
+        function_call → function_response adjacency and rejects any message
+        in between.
+
+        The original list is never mutated (memory stays clean).
+        """
+        profile = self.llm_router.get_provider_profile()
+
+        if not tools or not profile.needs_tool_enforcement or is_tool_loop:
+            return list(messages)  # shallow copy, no injection
+
+        prepared = list(messages)
+
+        # Append enforcement to the system prompt (messages[0]).
+        # We copy the dict so the in-memory cache is not mutated.
+        if prepared and prepared[0].get("role") == "system":
+            sys_msg = prepared[0].copy()
+            sys_msg["content"] = f"{sys_msg['content']}\n\n{self._TOOL_ENFORCEMENT_MSG}"
+            prepared[0] = sys_msg
+
+        return prepared
 
     async def process_message(
         self,
@@ -92,8 +139,10 @@ class Brain:
         # Build system prompt with OpenACM context FIRST, then skills
         system_prompt = self.config.system_prompt
 
-        # 1. Agregar contexto base de OpenACM (SIEMPRE)
-        openacm_context = get_openacm_context()
+        # 1. Agregar contexto de OpenACM — full on first message, short thereafter
+        existing_messages = await self.memory.get_messages(user_id, channel_id)
+        is_new_conversation = len(existing_messages) == 0
+        openacm_context = get_openacm_context() if is_new_conversation else get_short_context()
         system_prompt = f"{openacm_context}\n\n{system_prompt}"
 
         # 2. Agregar skills relevantes si existen
@@ -105,12 +154,14 @@ class Brain:
         # Get or create conversation with system prompt
         messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
 
-        # RAG: Query long-term memory for relevant context
+        # RAG: Query long-term memory for relevant context (score-filtered)
         try:
             from openacm.core.rag import _rag_engine
 
             if _rag_engine and _rag_engine.is_ready and content:
-                memories = await _rag_engine.query(content, top_k=3)
+                scored_results = await _rag_engine.query_with_scores(content, top_k=5)
+                # Only keep relevant results (cosine distance < 1.0) and limit to 2
+                memories = [doc for doc, dist in scored_results if dist < 1.0][:2]
                 if memories:
                     memory_block = "\n".join(f"- {m[:200]}" for m in memories)
                     # Inject as a system-level hint (after the main system prompt)
@@ -194,10 +245,21 @@ class Brain:
         await self.memory.add_message(user_id, channel_id, "user", final_content)
         messages = await self.memory.get_messages(user_id, channel_id)
 
-        # Get tools in OpenAI format
+        # Get tools in OpenAI format — filtered by user intent to save tokens
         tools = None
         if self.tool_registry:
-            tools = self.tool_registry.get_tools_schema()
+            tools = self.tool_registry.get_tools_by_intent(content)
+
+        # Cap tool count for providers with limited context
+        profile = self.llm_router.get_provider_profile()
+        if tools and profile.max_tools_per_call and len(tools) > profile.max_tools_per_call:
+            log.info(
+                "Capping tool count for provider",
+                provider=profile.name,
+                original=len(tools),
+                cap=profile.max_tools_per_call,
+            )
+            tools = tools[: profile.max_tools_per_call]
 
         # Agentic loop: LLM may call tools multiple times
         iterations = 0
@@ -206,6 +268,7 @@ class Brain:
 
         while iterations < max_iterations:
             iterations += 1
+            is_tool_loop = iterations > 1
 
             # Actualizar estado thinking
             await self.event_bus.emit(
@@ -220,10 +283,23 @@ class Brain:
                 },
             )
 
+            # Build a copy with optional tool-enforcement injection
+            prepared_messages = self._prepare_messages_for_llm(messages, tools, is_tool_loop)
+
+            # Force tool usage on the first iteration for weak providers
+            tc_override = None
+            if (
+                tools
+                and not is_tool_loop
+                and profile.needs_tool_enforcement
+            ):
+                tc_override = "required"
+
             try:
                 response = await self.llm_router.chat(
-                    messages=messages,
+                    messages=prepared_messages,
                     tools=tools,
+                    tool_choice=tc_override,
                 )
             except Exception as e:
                 error_str = str(e)
@@ -387,12 +463,20 @@ class Brain:
                     },
                 )
 
-                # Add tool result to memory
+                # Add tool result to memory (truncated to avoid token bloat)
+                MAX_TOOL_RESULT_CHARS = 6000
+                result_for_memory = str(result)
+                if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
+                    result_for_memory = (
+                        result_for_memory[: MAX_TOOL_RESULT_CHARS - 100]
+                        + f"\n... [truncated, full output was {len(str(result))} chars]"
+                    )
+
                 await self.memory.add_message(
                     user_id,
                     channel_id,
                     "tool",
-                    str(result),
+                    result_for_memory,
                     tool_call_id=tool_call_id,
                     name=tool_name,
                 )

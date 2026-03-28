@@ -23,6 +23,7 @@ from openacm.tools.base import tool
         "required": ["note"],
     },
     risk_level="low",
+    category="ai",
 )
 async def remember_note(note: str, **kwargs) -> str:
     """Save a note to long-term memory."""
@@ -63,6 +64,7 @@ async def remember_note(note: str, **kwargs) -> str:
         "required": ["query"],
     },
     risk_level="low",
+    category="ai",
 )
 async def search_memory(query: str, max_results: int = 5, **kwargs) -> str:
     """Search long-term memory."""

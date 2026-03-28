@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
 import { useWebSocket } from '@/hooks/use-websocket';
-import { useConversations, useConversationHistory } from '@/hooks/use-api';
+import { useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel } from '@/hooks/use-api';
 import {
   Send,
   Paperclip,
@@ -15,7 +15,11 @@ import {
   User,
   Loader2,
   MessageSquare,
-  Wrench
+  Wrench,
+  HelpCircle,
+  Cpu,
+  BarChart3,
+  Download,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -169,6 +173,9 @@ export default function ChatPage() {
   const { sendMessage } = useWebSocket();
   const { data: conversations } = useConversations();
   const { data: history, isFetching: isLoadingHistory } = useConversationHistory(currentTarget.channel, currentTarget.user);
+  const chatCommand = useChatCommand();
+  const clearConversation = useClearConversation();
+  const { data: modelData } = useCurrentModel();
 
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -202,21 +209,59 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaitingResponse]);
   
+  const executeCommand = async (command: string) => {
+    try {
+      const result = await chatCommand.mutateAsync({
+        command,
+        userId: currentTarget.user,
+        channelId: currentTarget.channel,
+      });
+      if (result.text) {
+        addMessage({ content: result.text, role: 'system' });
+      }
+      // Handle special data payloads
+      if (result.data?.export) {
+        const blob = new Blob([result.data.export], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'conversation.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      // If it was a clear/new command, also clear local messages
+      if (command.startsWith('/new') || command.startsWith('/clear')) {
+        setMessages([]);
+      }
+    } catch {
+      toast.error('Command failed');
+    }
+  };
+
   const handleSend = () => {
     if (!inputValue.trim() && currentAttachments.length === 0) return;
-    
+
+    // Intercept slash commands — send via REST, not WebSocket
+    if (inputValue.trim().startsWith('/')) {
+      const cmd = inputValue.trim();
+      setInputValue('');
+      addMessage({ content: cmd, role: 'user' });
+      executeCommand(cmd);
+      return;
+    }
+
     const attachmentIds = currentAttachments.map(a => a.id);
-    
+
     // Add user message to local state
     addMessage({
       content: inputValue,
       role: 'user',
       attachments: currentAttachments,
     });
-    
+
     // Send via WebSocket
     const sent = sendMessage(inputValue, attachmentIds);
-    
+
     if (sent) {
       setInputValue('');
       clearAttachments();
@@ -421,6 +466,48 @@ export default function ChatPage() {
             <div ref={messagesEndRef} />
           </div>
           
+          {/* Command Buttons */}
+          <div className="px-4 py-2 border-t border-slate-800 bg-slate-900/30 flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                executeCommand('/new');
+                clearConversation.mutate({ channelId: currentTarget.channel, userId: currentTarget.user });
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+            >
+              <Plus size={13} />
+              New
+            </button>
+            <button
+              onClick={() => executeCommand('/help')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+            >
+              <HelpCircle size={13} />
+              Help
+            </button>
+            <button
+              onClick={() => executeCommand('/model')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+            >
+              <Cpu size={13} />
+              {modelData?.model ? `Model: ${modelData.model}` : 'Model'}
+            </button>
+            <button
+              onClick={() => executeCommand('/stats')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+            >
+              <BarChart3 size={13} />
+              Stats
+            </button>
+            <button
+              onClick={() => executeCommand('/export')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+            >
+              <Download size={13} />
+              Export
+            </button>
+          </div>
+
           {/* Input Area */}
           <div className="p-4 border-t border-slate-800 bg-slate-900/50">
             {/* Attachments */}

@@ -30,6 +30,7 @@ from openacm.tools.base import tool
         "required": ["path"],
     },
     risk_level="medium",
+    category="file",
 )
 async def read_file(path: str, max_lines: int = 200, **kwargs) -> str:
     """Read file contents."""
@@ -86,6 +87,7 @@ async def read_file(path: str, max_lines: int = 200, **kwargs) -> str:
         "required": ["path", "content"],
     },
     risk_level="high",
+    category="file",
 )
 async def write_file(path: str, content: str, append: bool = False, **kwargs) -> str:
     """Write content to a file."""
@@ -129,6 +131,7 @@ async def write_file(path: str, content: str, append: bool = False, **kwargs) ->
         "required": [],
     },
     risk_level="low",
+    category="file",
 )
 async def list_directory(path: str = ".", show_hidden: bool = False, **kwargs) -> str:
     """List directory contents."""
@@ -188,6 +191,7 @@ async def list_directory(path: str = ".", show_hidden: bool = False, **kwargs) -
         "required": ["directory", "pattern"],
     },
     risk_level="low",
+    category="file",
 )
 async def search_files(directory: str, pattern: str, max_results: int = 50, **kwargs) -> str:
     """Search for files matching a pattern."""
@@ -233,6 +237,7 @@ async def search_files(directory: str, pattern: str, max_results: int = 50, **kw
         "required": ["path"],
     },
     risk_level="low",
+    category="media",
 )
 async def send_file_to_chat(path: str, **kwargs) -> str:
     """Send a local file to the secure media storage and get a link."""

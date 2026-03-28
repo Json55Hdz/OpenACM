@@ -91,10 +91,16 @@ class Database:
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
 
-            CREATE INDEX IF NOT EXISTS idx_skills_category 
+            CREATE INDEX IF NOT EXISTS idx_skills_category
                 ON skills(category);
-            CREATE INDEX IF NOT EXISTS idx_skills_active 
+            CREATE INDEX IF NOT EXISTS idx_skills_active
                 ON skills(is_active);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         await self._db.commit()
         log.info("Database initialized", path=self.db_path)
@@ -405,3 +411,34 @@ class Database:
         )
         await self._db.commit()
         return True
+
+    # ─── Settings ─────────────────────────────────────────────
+
+    async def get_setting(self, key: str) -> str | None:
+        """Get a setting value by key."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+        return row["value"] if row else None
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """Set a setting value (upsert)."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
+            (key, value),
+        )
+        await self._db.commit()
+
+    async def get_all_settings(self) -> dict[str, str]:
+        """Get all settings as a dict."""
+        if not self._db:
+            return {}
+        cursor = await self._db.execute("SELECT key, value FROM settings")
+        rows = await cursor.fetchall()
+        return {row["key"]: row["value"] for row in rows}

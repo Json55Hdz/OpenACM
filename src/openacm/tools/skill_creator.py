@@ -48,6 +48,7 @@ log = structlog.get_logger()
     },
     risk_level="medium",
     needs_sandbox=False,
+    category="meta",
 )
 async def create_skill(
     name: str,
@@ -192,6 +193,7 @@ Be specific and practical, not generic.
     },
     risk_level="low",
     needs_sandbox=False,
+    category="meta",
 )
 async def toggle_skill(
     name: str,
@@ -251,6 +253,7 @@ async def toggle_skill(
     },
     risk_level="low",
     needs_sandbox=False,
+    category="meta",
 )
 async def list_skills(
     show_inactive: bool = True,
@@ -325,6 +328,7 @@ async def list_skills(
     },
     risk_level="high",
     needs_sandbox=False,
+    category="meta",
 )
 async def delete_skill(
     name: str,

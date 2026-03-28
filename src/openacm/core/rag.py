@@ -146,6 +146,35 @@ class RAGEngine:
             log.error("RAG query failed", error=str(e))
             return []
 
+    async def query_with_scores(
+        self, question: str, top_k: int = 5
+    ) -> list[tuple[str, float]]:
+        """
+        Query the vector store and return (document, distance) pairs.
+        Lower distance = more relevant. Uses cosine distance (0 = identical, 2 = opposite).
+        """
+        if not self._ready:
+            return []
+
+        import asyncio
+        collection = _get_collection()
+
+        try:
+            results = await asyncio.to_thread(
+                collection.query,
+                query_texts=[question],
+                n_results=top_k,
+                include=["documents", "distances"],
+            )
+            if results and results["documents"] and results["distances"]:
+                docs = results["documents"][0]
+                distances = results["distances"][0]
+                return list(zip(docs, distances))
+            return []
+        except Exception as e:
+            log.error("RAG query_with_scores failed", error=str(e))
+            return []
+
     async def ingest_conversation(self, messages: list[dict[str, Any]], user_id: str = "", channel_id: str = ""):
         """
         Ingest a list of conversation messages into long-term memory.

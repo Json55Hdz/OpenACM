@@ -15,6 +15,7 @@ class ToolDefinition:
     handler: Callable[..., Coroutine]
     risk_level: str = "low"  # low, medium, high
     needs_sandbox: bool = False
+    category: str = "general"  # general, system, file, web, ai, media, google, meta
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function calling format."""
@@ -38,6 +39,7 @@ def tool(
     parameters: dict[str, Any],
     risk_level: str = "low",
     needs_sandbox: bool = False,
+    category: str = "general",
 ):
     """
     Decorator to register an async function as a tool.
@@ -66,6 +68,7 @@ def tool(
             handler=func,
             risk_level=risk_level,
             needs_sandbox=needs_sandbox,
+            category=category,
         )
         _registered_tools.append(tool_def)
         func._tool_definition = tool_def

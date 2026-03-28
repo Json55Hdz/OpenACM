@@ -118,6 +118,7 @@ async def _get_google_service(service_name: str, version: str):
         "required": [],
     },
     risk_level="medium",
+    category="google",
 )
 async def gmail_read(query: str = "", max_results: int = 10, **kwargs) -> str:
     """Read emails from Gmail."""
@@ -195,6 +196,7 @@ async def gmail_read(query: str = "", max_results: int = 10, **kwargs) -> str:
         "required": ["to", "subject", "body"],
     },
     risk_level="high",
+    category="google",
 )
 async def gmail_send(to: str, subject: str, body: str, **kwargs) -> str:
     """Send an email via Gmail."""
@@ -249,6 +251,7 @@ async def gmail_send(to: str, subject: str, body: str, **kwargs) -> str:
         "required": [],
     },
     risk_level="low",
+    category="google",
 )
 async def calendar_list(max_results: int = 10, days_ahead: int = 7, **kwargs) -> str:
     """List upcoming calendar events."""
@@ -327,6 +330,7 @@ async def calendar_list(max_results: int = 10, days_ahead: int = 7, **kwargs) ->
         "required": ["summary", "start_time", "end_time"],
     },
     risk_level="medium",
+    category="google",
 )
 async def calendar_create(
     summary: str,
@@ -389,6 +393,7 @@ async def calendar_create(
         "required": [],
     },
     risk_level="low",
+    category="google",
 )
 async def drive_list(query: str = "", max_results: int = 20, **kwargs) -> str:
     """List files in Google Drive."""
@@ -438,6 +443,7 @@ async def drive_list(query: str = "", max_results: int = 20, **kwargs) -> str:
         "required": ["name"],
     },
     risk_level="low",
+    category="google",
 )
 async def drive_search(name: str, **kwargs) -> str:
     """Search files by name."""
@@ -468,6 +474,7 @@ async def drive_search(name: str, **kwargs) -> str:
         "required": ["query"],
     },
     risk_level="low",
+    category="google",
 )
 async def youtube_search(query: str, max_results: int = 5, **kwargs) -> str:
     """Search YouTube videos."""

@@ -114,6 +114,7 @@ async def stop_browser():
         "required": ["action"],
     },
     risk_level="high",
+    category="web",
 )
 async def browser_agent(
     action: str, url: str = "", selector: str = "", value: str = "", **kwargs

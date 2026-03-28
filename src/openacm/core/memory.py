@@ -5,6 +5,7 @@ Stores, retrieves, and manages conversation history for each
 user/channel combination, with automatic truncation.
 """
 
+import json
 from typing import Any
 from datetime import datetime, timezone
 
@@ -14,6 +15,9 @@ from openacm.core.config import AssistantConfig
 from openacm.storage.database import Database
 
 log = structlog.get_logger()
+
+# Maximum estimated tokens for conversation context
+MAX_CONTEXT_TOKENS = 16000
 
 
 class MemoryManager:
@@ -28,6 +32,25 @@ class MemoryManager:
     def _key(self, user_id: str, channel_id: str) -> str:
         """Generate a unique key for a user/channel pair."""
         return f"{channel_id}:{user_id}"
+
+    @staticmethod
+    def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+        """Rough token estimate: 1 token ~ 4 characters."""
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                total += len(content) // 4
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        total += len(part.get("text", "")) // 4
+            if m.get("tool_calls"):
+                try:
+                    total += len(json.dumps(m["tool_calls"])) // 4
+                except (TypeError, ValueError):
+                    total += 50  # fallback estimate per tool call
+        return total
 
     async def add_message(
         self,
@@ -81,6 +104,26 @@ class MemoryManager:
                         )
                 except Exception:
                     pass  # RAG is optional
+
+        # Token-based truncation: keep total estimated tokens under budget
+        while (
+            self._estimate_tokens(self._cache[key]) > MAX_CONTEXT_TOKENS
+            and len(self._cache[key]) > 3
+        ):
+            if self._cache[key][0]["role"] == "system":
+                removed = self._cache[key].pop(1)
+            else:
+                removed = self._cache[key].pop(0)
+            # Feed removed message to RAG
+            try:
+                from openacm.core.rag import _rag_engine
+                if _rag_engine and _rag_engine.is_ready:
+                    import asyncio
+                    asyncio.create_task(
+                        _rag_engine.ingest_conversation([removed], user_id, channel_id)
+                    )
+            except Exception:
+                pass
         
         # Persist to database (stringified for non-text objects)
         db_content = str(content) if not isinstance(content, str) else content
@@ -102,14 +145,25 @@ class MemoryManager:
     ) -> list[dict[str, Any]]:
         """
         Get existing conversation or create a new one with system prompt.
+
+        On existing conversations the system prompt (messages[0]) is always
+        refreshed so that context optimizations (short prompt, tool
+        enforcement hints, etc.) take effect on every request.
         """
         key = self._key(user_id, channel_id)
-        
+
         if key not in self._cache or not self._cache[key]:
             self._cache[key] = [
                 {"role": "system", "content": system_prompt}
             ]
-        
+        else:
+            # Refresh system prompt on every call
+            if self._cache[key] and self._cache[key][0]["role"] == "system":
+                self._cache[key][0]["content"] = system_prompt
+            else:
+                # Edge case: no system message at index 0 — prepend one
+                self._cache[key].insert(0, {"role": "system", "content": system_prompt})
+
         return self._cache[key]
 
     async def clear(self, user_id: str, channel_id: str):

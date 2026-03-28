@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
+from openacm.core.commands import CommandProcessor
 from openacm.core.config import TelegramConfig
 from openacm.core.events import (
     EventBus,
@@ -33,13 +34,14 @@ log = structlog.get_logger()
 class TelegramChannel(BaseChannel):
     """Telegram bot channel."""
 
-    def __init__(self, config: TelegramConfig, brain: Brain, event_bus: EventBus):
+    def __init__(self, config: TelegramConfig, brain: Brain, event_bus: EventBus, database=None):
         self.config = config
         self.brain = brain
         self.event_bus = event_bus
         self._connected = False
         self._app: Application | None = None
         self._tool_messages: dict[str, int] = {}  # { "chat_id-tool_name": message_id }
+        self._cmd = CommandProcessor(brain, database)
 
     @property
     def name(self) -> str:
@@ -72,7 +74,10 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("start", self._cmd_start))
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("clear", self._cmd_clear))
+        self._app.add_handler(CommandHandler("new", self._cmd_clear))
         self._app.add_handler(CommandHandler("model", self._cmd_model))
+        self._app.add_handler(CommandHandler("stats", self._cmd_stats))
+        self._app.add_handler(CommandHandler("export", self._cmd_export))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
         # Register EventBus listeners for tool tracking
@@ -353,41 +358,57 @@ class TelegramChannel(BaseChannel):
         """Handle /help command."""
         if not update.message:
             return
-        await update.message.reply_text(
-            "🤖 **ACM — Ayuda**\n\n"
-            "Simplemente escríbeme un mensaje y te responderé.\n\n"
-            "Puedo:\n"
-            "• Responder preguntas\n"
-            "• Ejecutar comandos del sistema\n"
-            "• Leer y escribir archivos\n"
-            "• Buscar en internet\n"
-            "• Ver info del sistema\n\n"
-            "Comandos:\n"
-            "/clear — Limpiar historial\n"
-            "/model — Cambiar modelo\n"
-            "/help — Esta ayuda",
-            parse_mode="Markdown",
-        )
+        result = await self._cmd.handle("/help", "", "", "")
+        await update.message.reply_text(result.text)
 
     async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /clear command."""
+        """Handle /clear and /new commands."""
         if not update.message or not update.effective_user:
             return
         if not self._is_allowed(update.effective_user.id):
             return
-
-        await self.brain.memory.clear(
-            str(update.effective_user.id),
-            str(update.message.chat_id),
-        )
-        await update.message.reply_text("✅ Conversación limpiada.")
+        user_id = str(update.effective_user.id)
+        channel_id = str(update.message.chat_id)
+        result = await self._cmd.handle("/clear", "", user_id, channel_id)
+        await update.message.reply_text(result.text)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /model command."""
         if not update.message:
             return
-        current = self.brain.llm_router.current_model
-        await update.message.reply_text(f"🧠 Modelo actual: `{current}`", parse_mode="Markdown")
+        args = " ".join(context.args) if context.args else ""
+        user_id = str(update.effective_user.id) if update.effective_user else ""
+        channel_id = str(update.message.chat_id)
+        result = await self._cmd.handle("/model", args, user_id, channel_id)
+        await update.message.reply_text(result.text)
+
+    async def _cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /stats command."""
+        if not update.message:
+            return
+        result = await self._cmd.handle("/stats", "", "", "")
+        await update.message.reply_text(result.text)
+
+    async def _cmd_export(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /export command — sends conversation as a text file."""
+        if not update.message or not update.effective_user:
+            return
+        if not self._is_allowed(update.effective_user.id):
+            return
+        user_id = str(update.effective_user.id)
+        channel_id = str(update.message.chat_id)
+        result = await self._cmd.handle("/export", "", user_id, channel_id)
+
+        if result.data and result.data.get("export"):
+            import io
+            export_bytes = result.data["export"].encode("utf-8")
+            doc = io.BytesIO(export_bytes)
+            doc.name = "conversation.txt"
+            await self._app.bot.send_document(
+                chat_id=int(channel_id), document=doc, caption=result.text
+            )
+        else:
+            await update.message.reply_text(result.text)
 
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages."""

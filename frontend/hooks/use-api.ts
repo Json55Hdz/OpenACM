@@ -249,3 +249,59 @@ export function useConversationHistory(channelId: string, userId: string) {
     enabled: isAuthenticated && !!channelId && !!userId,
   });
 }
+
+export function useChatCommand() {
+  const { fetchAPI } = useAPI();
+
+  return useMutation({
+    mutationFn: async ({
+      command,
+      userId = 'web',
+      channelId = 'web',
+    }: {
+      command: string;
+      userId?: string;
+      channelId?: string;
+    }) => {
+      return fetchAPI('/api/chat/command', {
+        method: 'POST',
+        body: JSON.stringify({ command, user_id: userId, channel_id: channelId }),
+      });
+    },
+  });
+}
+
+export function useClearConversation() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      channelId,
+      userId,
+    }: {
+      channelId: string;
+      userId: string;
+    }) => {
+      return fetchAPI(`/api/conversations/${channelId}/${userId}`, {
+        method: 'DELETE',
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversation-history'] });
+    },
+  });
+}
+
+export function useCurrentModel() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['config-model'],
+    queryFn: async () => fetchAPI('/api/config/model'),
+    enabled: isAuthenticated,
+    refetchInterval: 30000,
+  });
+}

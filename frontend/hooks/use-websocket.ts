@@ -66,6 +66,11 @@ export function useWebSocket() {
           content: data.content || '',
           role: 'assistant',
         });
+      } else if (data.type === 'command') {
+        storeRef.current.addMessage({
+          content: data.content || '',
+          role: 'system',
+        });
       } else if (data.type === 'error') {
         storeRef.current.addMessage({
           content: data.content || 'Unknown error',

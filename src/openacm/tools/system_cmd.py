@@ -34,6 +34,7 @@ from openacm.tools.base import tool
     },
     risk_level="high",
     needs_sandbox=True,
+    category="general",
 )
 async def run_command(
     command: str,

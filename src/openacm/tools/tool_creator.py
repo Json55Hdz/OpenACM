@@ -69,6 +69,7 @@ def sanitize_filename(name: str) -> str:
     },
     risk_level="high",
     needs_sandbox=False,
+    category="meta",
 )
 async def create_tool(
     name: str,
@@ -194,6 +195,7 @@ Esto es una medida de seguridad para evitar ejecución de código no verificado.
     },
     risk_level="high",
     needs_sandbox=False,
+    category="meta",
 )
 async def edit_tool(
     name: str,
@@ -266,6 +268,7 @@ async def edit_tool(
     },
     risk_level="high",
     needs_sandbox=False,
+    category="meta",
 )
 async def delete_tool(
     name: str,
@@ -304,6 +307,7 @@ async def delete_tool(
     },
     risk_level="low",
     needs_sandbox=False,
+    category="meta",
 )
 async def list_tools(**kwargs) -> str:
     """List all tools in the tools directory."""

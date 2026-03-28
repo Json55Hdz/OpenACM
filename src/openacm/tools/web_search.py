@@ -29,6 +29,7 @@ from openacm.tools.base import tool
         "required": ["query"],
     },
     risk_level="medium",
+    category="web",
 )
 async def web_search(query: str, max_results: int = 5, **kwargs) -> str:
     """Search the web using DuckDuckGo."""
@@ -85,6 +86,7 @@ async def web_search(query: str, max_results: int = 5, **kwargs) -> str:
         "required": ["url"],
     },
     risk_level="medium",
+    category="web",
 )
 async def get_webpage(url: str, max_length: int = 5000, **kwargs) -> str:
     """Fetch and read a webpage."""

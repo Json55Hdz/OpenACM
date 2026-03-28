@@ -32,6 +32,7 @@ from openacm.tools.base import tool
         "required": [],
     },
     risk_level="low",
+    category="system",
 )
 async def system_info(detail: str = "summary", **kwargs) -> str:
     """Get system information."""

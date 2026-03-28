@@ -29,6 +29,7 @@ from openacm.security.crypto import save_encrypted
         "required": [],
     },
     risk_level="medium",
+    category="media",
 )
 async def take_screenshot(monitor: int = 0, **kwargs) -> str:
     """Takes a screenshot of the system."""

@@ -29,6 +29,7 @@ import json
 
 from openacm.core.config import AppConfig
 from openacm.core.brain import Brain
+from openacm.core.commands import CommandProcessor
 from openacm.core.events import EventBus
 from openacm.storage.database import Database
 from openacm.tools.registry import ToolRegistry
@@ -44,6 +45,7 @@ _database: Database | None = None
 _event_bus: EventBus | None = None
 _tool_registry: ToolRegistry | None = None
 _config: AppConfig | None = None
+_command_processor: CommandProcessor | None = None
 
 
 def create_app() -> FastAPI:
@@ -433,6 +435,10 @@ def create_app() -> FastAPI:
         provider = data.get("provider", None)
         if model and _brain:
             _brain.llm_router.set_model(model, provider=provider)
+            # Persist model choice to database
+            if _database:
+                await _database.set_setting("llm.current_model", _brain.llm_router.current_model)
+                await _database.set_setting("llm.current_provider", _brain.llm_router._current_provider)
             return {
                 "status": "ok",
                 "model": _brain.llm_router.current_model,
@@ -457,6 +463,38 @@ def create_app() -> FastAPI:
         if not _database:
             return []
         return await _database.get_conversation(user_id, channel_id, limit)
+
+    @app.delete("/api/conversations/{channel_id}/{user_id}")
+    async def delete_conversation(channel_id: str, user_id: str):
+        """Clear conversation history for a user/channel pair."""
+        if not _brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        await _brain.memory.clear(user_id, channel_id)
+        return {"status": "ok"}
+
+    # ─── API: Commands ────────────────────────────────────────
+
+    @app.post("/api/chat/command")
+    async def run_command(request: Request):
+        """Execute a slash command via REST (used by dashboard buttons)."""
+        if not _command_processor:
+            raise HTTPException(status_code=503, detail="Command processor not available")
+        data = await request.json()
+        command = data.get("command", "").strip()
+        user_id = data.get("user_id", "web")
+        channel_id = data.get("channel_id", "web")
+
+        if not command:
+            raise HTTPException(status_code=400, detail="No command provided")
+
+        parts = command.split(maxsplit=1)
+        cmd = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+
+        result = await _command_processor.handle(cmd, args, user_id, channel_id)
+        if not result.handled:
+            return {"text": f"Unknown command: {cmd}", "data": None}
+        return {"text": result.text, "data": result.data}
 
     # ─── WebSocket: Chat ──────────────────────────────────────
 
@@ -487,6 +525,22 @@ def create_app() -> FastAPI:
 
                 if not content and not attachments:
                     continue
+
+                # Intercept slash commands before sending to brain
+                if content.startswith("/") and _command_processor:
+                    parts = content.split(maxsplit=1)
+                    cmd = parts[0]
+                    args = parts[1] if len(parts) > 1 else ""
+                    result = await _command_processor.handle(
+                        cmd, args, target_user, target_channel
+                    )
+                    if result.handled:
+                        await websocket.send_json({
+                            "type": "command",
+                            "content": result.text,
+                            "data": result.data,
+                        })
+                        continue
 
                 if _brain:
                     try:
@@ -673,12 +727,13 @@ async def create_web_server(
     tool_registry: ToolRegistry,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor
     _brain = brain
     _database = database
     _event_bus = event_bus
     _tool_registry = tool_registry
     _config = config
+    _command_processor = CommandProcessor(brain, database)
 
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):

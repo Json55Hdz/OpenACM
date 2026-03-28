@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from openacm.core.config import load_config, AppConfig
+from openacm.core.commands import CommandProcessor
 from openacm.core.events import EventBus
 from openacm.core.llm_router import LLMRouter
 from openacm.core.brain import Brain
@@ -52,6 +53,7 @@ class OpenACM:
         self.skill_manager: SkillManager | None = None
         self.sandbox: Sandbox | None = None
         self.security_policy: SecurityPolicy | None = None
+        self.command_processor: CommandProcessor | None = None
         self._channels: list = []
         self._web_server = None
         self._shutdown_event = asyncio.Event()
@@ -147,6 +149,9 @@ class OpenACM:
             f"  [green]✓[/green] Skill manager ready ({active_count}/{skill_count} active)"
         )
 
+        # LLM Router — restore persisted model preference
+        await self.llm_router.load_persisted_model(self.database)
+
         # Brain
         self.brain = Brain(
             config=self.config.assistant,
@@ -156,6 +161,9 @@ class OpenACM:
             tool_registry=None,  # set after tools init
             skill_manager=self.skill_manager,
         )
+
+        # Central command processor
+        self.command_processor = CommandProcessor(self.brain, self.database)
 
     async def _init_tools(self):
         """Register all tools."""
@@ -209,7 +217,9 @@ class OpenACM:
             try:
                 from openacm.channels.telegram_channel import TelegramChannel
 
-                channel = TelegramChannel(self.config.channels.telegram, self.brain, self.event_bus)
+                channel = TelegramChannel(
+                    self.config.channels.telegram, self.brain, self.event_bus, self.database
+                )
                 self._channels.append(channel)
                 asyncio.create_task(channel.start())
                 console.print("  [green]✓[/green] Telegram channel started")
@@ -294,54 +304,21 @@ class OpenACM:
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
+        # Console-only commands handled locally
         match cmd:
-            case "/help":
-                console.print(
-                    Panel(
-                        "/model <provider/model>  — Switch LLM model\n"
-                        "/models                  — List available models\n"
-                        "/clear                   — Clear conversation history\n"
-                        "/stats                   — Show usage statistics\n"
-                        "/config                  — Show current configuration\n"
-                        "/tools                   — List available tools\n"
-                        "/quit                    — Exit OpenACM",
-                        title="[bold]Commands[/bold]",
-                        border_style="blue",
-                    )
-                )
-            case "/model":
-                if args:
-                    self.llm_router.set_model(args)
-                    console.print(f"[green]✓ Model set to: {args}[/green]")
-                else:
-                    current = self.llm_router.current_model
-                    console.print(f"Current model: [cyan]{current}[/cyan]")
             case "/models":
                 models = self.llm_router.list_models()
                 for provider, model_list in models.items():
                     console.print(f"\n[bold]{provider}[/bold]:")
                     for m in model_list:
                         console.print(f"  • {m}")
-            case "/clear":
-                await self.memory.clear("console", "console")
-                console.print("[green]✓ Conversation cleared[/green]")
-            case "/stats":
-                stats = await self.database.get_stats()
-                console.print(
-                    Panel(
-                        f"Messages: {stats.get('total_messages', 0)}\n"
-                        f"Tokens used: {stats.get('total_tokens', 0)}\n"
-                        f"Tool executions: {stats.get('total_tool_calls', 0)}\n"
-                        f"Active conversations: {stats.get('active_conversations', 0)}",
-                        title="[bold]Usage Stats[/bold]",
-                        border_style="cyan",
-                    )
-                )
+                return
             case "/tools":
                 for name, tool in self.tool_registry.tools.items():
                     risk = tool.risk_level
                     color = {"low": "green", "medium": "yellow", "high": "red"}.get(risk, "white")
                     console.print(f"  [{color}]●[/{color}] {name} — {tool.description}")
+                return
             case "/config":
                 console.print(f"Provider: [cyan]{self.config.llm.default_provider}[/cyan]")
                 console.print(f"Model: [cyan]{self._get_default_model()}[/cyan]")
@@ -349,8 +326,14 @@ class OpenACM:
                 console.print(
                     f"Web: [cyan]http://{self.config.web.host}:{self.config.web.port}[/cyan]"
                 )
-            case _:
-                console.print(f"[red]Unknown command: {cmd}[/red]. Type /help for commands.")
+                return
+
+        # Delegate shared commands to the central CommandProcessor
+        result = await self.command_processor.handle(cmd, args, "console", "console")
+        if result.handled:
+            console.print(result.text)
+        else:
+            console.print(f"[red]Unknown command: {cmd}[/red]. Type /help for commands.")
 
     async def _shutdown(self):
         """Gracefully shutdown all subsystems."""

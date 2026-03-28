@@ -83,6 +83,7 @@ async def stop_kernel():
         "required": ["code"],
     },
     risk_level="high",  # Arbitrary Python execution is high risk
+    category="general",
 )
 async def run_python(code: str, reset: bool = False, **kwargs) -> str:
     """Execute Python code interactively."""

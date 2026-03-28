@@ -46,9 +46,73 @@ class ToolRegistry:
                 tool_def: ToolDefinition = attr._tool_definition
                 self.register(tool_def)
 
+    # Keyword-to-category mapping for intent-based tool filtering
+    INTENT_KEYWORDS: dict[str, list[str]] = {
+        "system": [
+            "run", "execute", "command", "terminal", "bash", "shell", "install",
+            "system", "proceso", "ejecuta", "ejecutar", "pip", "npm",
+        ],
+        "file": [
+            "file", "read", "write", "save", "directory", "folder",
+            "archivo", "carpeta", "leer", "escribir", "guardar", "lista",
+        ],
+        "web": [
+            "search", "browse", "url", "website", "navigate", "click",
+            "busca", "buscar", "web", "página", "página web",
+        ],
+        "ai": [
+            "remember", "memory", "recall", "search_memory",
+            "recuerda", "memoria", "olvida", "recordar",
+        ],
+        "media": [
+            "screenshot", "image", "photo", "capture", "pdf", "send_file",
+            "captura", "pantalla", "foto", "imagen", "enviar archivo",
+        ],
+        "google": [
+            "gmail", "email", "correo", "calendar", "calendario",
+            "event", "evento", "drive", "youtube", "google",
+        ],
+        "meta": [
+            "skill", "tool", "herramienta", "habilidad",
+            "create_skill", "create_tool",
+        ],
+    }
+
     def get_tools_schema(self) -> list[dict[str, Any]]:
         """Get all tools in OpenAI function calling format."""
         return [tool.to_openai_schema() for tool in self.tools.values()]
+
+    def get_tools_by_intent(self, message: str) -> list[dict[str, Any]]:
+        """Return only tools relevant to the user's message + always-available core tools.
+
+        Category 'general' tools are always included when filtering is active.
+        If no specific intent is detected, all tools are sent as a safety fallback.
+        """
+        msg_lower = message.lower()
+        matched_categories: set[str] = {"general"}  # always include general
+
+        for cat, keywords in self.INTENT_KEYWORDS.items():
+            if any(kw in msg_lower for kw in keywords):
+                matched_categories.add(cat)
+
+        # Safety fallback: if no specific intent detected, send all tools
+        if matched_categories == {"general"}:
+            return self.get_tools_schema()
+
+        filtered = [
+            t.to_openai_schema()
+            for t in self.tools.values()
+            if t.category in matched_categories or t.category == "general"
+        ]
+
+        log.debug(
+            "Tool filtering applied",
+            categories=sorted(matched_categories),
+            total_tools=len(self.tools),
+            filtered_tools=len(filtered),
+        )
+
+        return filtered
 
     async def execute(
         self,

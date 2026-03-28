@@ -7,6 +7,7 @@ Handles model switching, streaming, retries, and token tracking.
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import litellm
@@ -15,6 +16,16 @@ import os
 
 from openacm.core.config import LLMConfig
 from openacm.core.events import EventBus, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
+
+
+@dataclass
+class ProviderProfile:
+    """Capability profile for a given LLM provider."""
+
+    name: str
+    needs_tool_enforcement: bool
+    tool_choice_mode: str  # "auto", "required", "none"
+    max_tools_per_call: int | None  # None = no limit
 
 log = structlog.get_logger()
 
@@ -34,6 +45,7 @@ class LLMRouter:
         self._total_tokens = 0
         self._total_cost = 0.0
         self._total_requests = 0
+        self._database: Any = None  # Set later for persistence
 
         # Configure LiteLLM with provider settings
         self._configure_providers()
@@ -56,6 +68,50 @@ class LLMRouter:
             return self.config.providers[provider].get("default_model", "unknown")
         return "unknown"
 
+    @property
+    def current_provider(self) -> str:
+        """Expose the current provider name."""
+        return self._current_provider
+
+    def get_provider_profile(self) -> ProviderProfile:
+        """Return a capability profile for the current provider."""
+        provider = self._current_provider.lower()
+        if provider in ("openai", "anthropic"):
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=False,
+                tool_choice_mode="auto",
+                max_tools_per_call=None,
+            )
+        if provider == "gemini":
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=True,
+                tool_choice_mode="auto",
+                max_tools_per_call=15,
+            )
+        if provider == "ollama":
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=True,
+                tool_choice_mode="auto",
+                max_tools_per_call=10,
+            )
+        if provider == "openrouter":
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=True,
+                tool_choice_mode="auto",
+                max_tools_per_call=15,
+            )
+        # Unknown / custom — conservative defaults
+        return ProviderProfile(
+            name=provider,
+            needs_tool_enforcement=True,
+            tool_choice_mode="auto",
+            max_tools_per_call=15,
+        )
+
     def set_model(self, model: str, provider: str | None = None):
         """
         Set the current model and optionally the provider.
@@ -74,6 +130,22 @@ class LLMRouter:
         else:
             self._current_model = model
         log.info("Model changed", model=self.current_model, provider=self._current_provider)
+
+    async def load_persisted_model(self, database: Any) -> None:
+        """Load persisted model/provider from the database on startup."""
+        self._database = database
+        try:
+            model = await database.get_setting("llm.current_model")
+            provider = await database.get_setting("llm.current_provider")
+            if model:
+                self.set_model(model, provider=provider)
+                log.info(
+                    "Loaded persisted model",
+                    model=self.current_model,
+                    provider=self._current_provider,
+                )
+        except Exception as e:
+            log.warning("Could not load persisted model", error=str(e))
 
     def _build_model_string(self) -> str:
         """Build the LiteLLM model string."""
@@ -135,6 +207,7 @@ class LLMRouter:
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.7,
         max_tokens: int | None = None,
+        tool_choice_override: str | None = None,
     ) -> dict[str, Any]:
         """Direct httpx call for custom OpenAI-compatible providers."""
         import httpx
@@ -153,6 +226,8 @@ class LLMRouter:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        effective_tc = tool_choice_override or self.get_provider_profile().tool_choice_mode
+
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -160,7 +235,7 @@ class LLMRouter:
         }
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = effective_tc
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
@@ -209,11 +284,13 @@ class LLMRouter:
         max_tokens: int | None = None,
         stream: bool = False,
         max_retries: int = 3,
+        tool_choice: str | None = None,
     ) -> dict[str, Any]:
         """
         Send a chat completion request with automatic retries on server errors.
 
         Returns dict with: content, tool_calls, usage (tokens), model, etc.
+        ``tool_choice`` overrides the provider-profile default when set.
         """
         model = self._build_model_string()
         api_base = self._get_api_base()
@@ -235,7 +312,8 @@ class LLMRouter:
         for attempt in range(max_retries):
             try:
                 return await self._chat_attempt(
-                    messages, tools, temperature, max_tokens, model, api_base, start_time
+                    messages, tools, temperature, max_tokens, model, api_base, start_time,
+                    tool_choice_override=tool_choice,
                 )
             except Exception as e:
                 last_error = e
@@ -273,12 +351,19 @@ class LLMRouter:
         model: str,
         api_base: str | None,
         start_time: float,
+        tool_choice_override: str | None = None,
     ) -> dict[str, Any]:
         """Single chat attempt."""
+        profile = self.get_provider_profile()
+        effective_tool_choice = tool_choice_override or profile.tool_choice_mode
+
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
             if self._is_custom_provider():
-                result = await self._custom_chat(messages, tools, temperature, max_tokens)
+                result = await self._custom_chat(
+                    messages, tools, temperature, max_tokens,
+                    tool_choice_override=effective_tool_choice,
+                )
                 result["elapsed"] = time.time() - start_time
                 result["model"] = model
             else:
@@ -299,7 +384,7 @@ class LLMRouter:
 
                 if tools:
                     kwargs["tools"] = tools
-                    kwargs["tool_choice"] = "auto"
+                    kwargs["tool_choice"] = effective_tool_choice
                 if max_tokens:
                     kwargs["max_tokens"] = max_tokens
 
