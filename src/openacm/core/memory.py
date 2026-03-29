@@ -85,16 +85,28 @@ class MemoryManager:
         
         self._cache[key].append(message)
         
-        # Truncate if needed
+        # Truncate if needed — keep tool call pairs intact
         max_messages = self.config.max_context_messages
         if len(self._cache[key]) > max_messages:
-            # Keep the system prompt (first message) and trim the oldest after that
-            if self._cache[key][0]["role"] == "system":
-                discarded = self._cache[key][1:-(max_messages - 1)]
-                self._cache[key] = [self._cache[key][0]] + self._cache[key][-(max_messages - 1):]
-            else:
-                discarded = self._cache[key][:-max_messages]
-                self._cache[key] = self._cache[key][-max_messages:]
+            has_system = self._cache[key][0]["role"] == "system"
+            system_msg = [self._cache[key][0]] if has_system else []
+            rest = self._cache[key][1:] if has_system else self._cache[key][:]
+
+            # Trim from the front but never split an assistant(tool_calls)+tool pair
+            target = max_messages - len(system_msg)
+            while len(rest) > target:
+                # If the first message to drop is an assistant with tool_calls,
+                # also drop all consecutive tool messages that follow it.
+                if rest[0].get("role") == "assistant" and rest[0].get("tool_calls"):
+                    rest.pop(0)
+                    while rest and rest[0].get("role") == "tool":
+                        rest.pop(0)
+                else:
+                    rest.pop(0)
+
+            discarded_count = len(self._cache[key]) - len(system_msg) - len(rest)
+            discarded = (self._cache[key][1:] if has_system else self._cache[key])[:discarded_count]
+            self._cache[key] = system_msg + rest
             
             # Ingest discarded messages into RAG for long-term memory
             if discarded:

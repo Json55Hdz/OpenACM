@@ -242,6 +242,14 @@ class LLMRouter:
             if not (msg.get("role") == "tool" and not msg.get("tool_call_id"))
         ]
 
+        # Pass 0b: drop leading tool messages — no assistant precedes them, Anthropic rejects them
+        first_assistant = next((i for i, m in enumerate(messages) if m.get("role") == "assistant"), None)
+        if first_assistant is not None:
+            messages = [
+                m for i, m in enumerate(messages)
+                if m.get("role") != "tool" or i > first_assistant
+            ]
+
         # Pass 1: collect all tool_call_ids that already have a response
         responded_ids: set[str] = set()
         for msg in messages:
@@ -257,7 +265,8 @@ class LLMRouter:
                     cid = tc.get("id", "")
                     if not cid:
                         cid = f"call_{_uuid_norm.uuid4().hex[:12]}"
-                        tc = {**tc, "id": cid}
+                    # Ensure required OpenAI spec field so litellm can build tool_use for Anthropic
+                    tc = {**tc, "id": cid, "type": "function"}
                     clean_tool_calls.append(tc)
                 msg = {**msg, "tool_calls": clean_tool_calls}
 
@@ -465,6 +474,7 @@ class LLMRouter:
             tc_id = tc["id"] or f"call_{_uuid.uuid4().hex[:12]}"
             assembled_tool_calls.append({
                 "id": tc_id,
+                "type": "function",
                 "function": {
                     "name": tc["name"],
                     "arguments": tc["arguments"],
@@ -637,6 +647,7 @@ class LLMRouter:
                     result["tool_calls"] = [
                         {
                             "id": tc.id,
+                            "type": "function",  # required by OpenAI spec; litellm uses this to build tool_use blocks for Anthropic
                             "function": {
                                 "name": tc.function.name,
                                 "arguments": tc.function.arguments,
