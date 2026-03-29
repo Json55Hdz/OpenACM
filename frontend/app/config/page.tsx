@@ -108,8 +108,26 @@ export default function ConfigPage() {
   const [routerStats, setRouterStats] = useState<Record<string, unknown> | null>(null);
   const [routerLoading, setRouterLoading] = useState(false);
 
-  // Load router config on mount
-  useState(() => {
+  const toggleDebugMode = async (next: boolean) => {
+    setIsVerbose(next);
+    try {
+      await fetch('/api/config/debug_mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+    } catch {
+      setIsVerbose(!next); // revert on error
+    }
+  };
+
+  // Load router config + debug mode on mount
+  useEffect(() => {
+    fetch('/api/config/debug_mode')
+      .then(r => r.json())
+      .then(d => setIsVerbose(d.enabled ?? false))
+      .catch(() => {});
+
     fetch('/api/config/local_router')
       .then(r => r.json())
       .then(d => {
@@ -119,7 +137,7 @@ export default function ConfigPage() {
         setRouterStats(d);
       })
       .catch(() => {});
-  });
+  }, []);
 
   const handleRouterToggle = async (field: 'enabled' | 'observation_mode', value: boolean) => {
     setRouterLoading(true);
@@ -663,19 +681,28 @@ export default function ConfigPage() {
 
               <div className="pt-4 border-t border-slate-800">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-300">Debug Mode</span>
+                  <div>
+                    <span className="text-sm text-slate-300">Debug Mode</span>
+                    {isVerbose && (
+                      <span className="ml-2 text-xs bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded px-1.5 py-0.5">
+                        Tools blocked
+                      </span>
+                    )}
+                  </div>
                   <button
-                    onClick={() => setIsVerbose(!isVerbose)}
+                    onClick={() => toggleDebugMode(!isVerbose)}
                     className={cn(
                       'p-1 rounded transition-colors',
-                      isVerbose ? 'text-blue-400' : 'text-slate-500'
+                      isVerbose ? 'text-amber-400' : 'text-slate-500'
                     )}
                   >
                     {isVerbose ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
                   </button>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  Enable detailed logs for debugging
+                  {isVerbose
+                    ? 'All tool calls are blocked — AI can converse but cannot execute actions.'
+                    : 'Block all tool execution to prevent autonomous actions (e.g. while away).'}
                 </p>
               </div>
             </div>

@@ -154,11 +154,19 @@ class Sandbox:
                 _read_stream(process.stdout, stdout_parts),
                 _read_stream(process.stderr, stderr_parts, is_stderr=True),
             )
-            if timeout:
-                await asyncio.wait_for(coro, timeout=timeout)
-            else:
-                await coro  # no timeout — wait until the command finishes
-            await process.wait()
+            try:
+                if timeout:
+                    await asyncio.wait_for(coro, timeout=timeout)
+                else:
+                    await coro  # no timeout — wait until the command finishes
+                await process.wait()
+            except asyncio.CancelledError:
+                # User cancelled — kill the subprocess and propagate
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                raise
 
             stdout = "".join(stdout_parts)
             stderr = "".join(stderr_parts)

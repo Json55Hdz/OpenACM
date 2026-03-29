@@ -230,6 +230,13 @@ class OpenACM:
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(blender_tool)
 
+        # IoT tools (optional — skipped gracefully if dependencies missing)
+        try:
+            from openacm.tools.iot import iot_tool
+            self.tool_registry.register_module(iot_tool)
+        except Exception as _iot_err:
+            console.print(f"  [yellow]~[/yellow] IoT tools skipped: {_iot_err}")
+
         # Give brain access to tools
         self.brain.tool_registry = self.tool_registry
 

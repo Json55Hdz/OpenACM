@@ -27,6 +27,7 @@ class SkillManager:
         self.database = database
         self._skills_cache: dict[str, dict[str, Any]] = {}
         self._active_skills: list[dict[str, Any]] = []
+        self.last_matched_skill_names: list[str] = []
 
     async def initialize(self):
         """Initialize skills - sync files to DB and load defaults if needed."""
@@ -219,7 +220,10 @@ created: "{datetime.now().isoformat()}"
                 relevant_skills.append(skill)
 
         if not relevant_skills:
+            self.last_matched_skill_names = []
             return ""  # No agregar skills si ninguna es relevante
+
+        self.last_matched_skill_names = [s["name"] for s in relevant_skills]
 
         # Build prompt with only relevant skills
         prompts = ["\n# Contexto Especializado (solo para esta consulta):"]

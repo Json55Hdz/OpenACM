@@ -15,11 +15,13 @@ _bg_processes: dict[int, asyncio.subprocess.Process] = {}
     description=(
         "[OpenACM Tool] Execute commands directly in the operating system terminal. "
         "ALWAYS AVAILABLE. Use for: ls, dir, git, python, pip, npm run dev, servers, tunnels, etc. "
-        "Command runs in a secure sandbox. "
-        "Use background=true for long-running processes (dev servers, tunnels, watch tasks) "
-        "— captures startup output for ~6 seconds then detaches, returning the PID. "
+        "Command runs in a secure sandbox. Default timeout is 60s. "
+        "IMPORTANT: Use background=true for ANY long-running or blocking process — "
+        "servers, proxies, watchers, tunnels, mitmproxy, mitmweb, ngrok, etc. "
+        "If background=false and the command never exits, the entire agent will hang forever. "
+        "— background mode captures startup output for ~6 seconds then detaches, returning the PID. "
         "EXAMPLES: 'dir', 'ls -la', 'git status', 'python script.py', "
-        "'npm run dev' (background=true), 'npx lt --port 3000' (background=true)"
+        "'npm run dev' (background=true), 'mitmweb --listen-port 8888' (background=true)"
     ),
     parameters={
         "type": "object",

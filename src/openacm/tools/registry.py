@@ -92,6 +92,22 @@ class ToolRegistry:
             "skill", "tool", "herramienta", "habilidad",
             "create_skill", "create_tool",
         ],
+        "iot": [
+            "light", "lights", "luz", "luces", "lamp", "lampara", "bulb",
+            "curtain", "curtains", "blind", "blinds", "persiana", "persianas",
+            "cortina", "cortinas", "cover", "shutter",
+            "tv", "television", "tele", "lg", "webos",
+            "vacuum", "aspiradora", "robot", "xiaomi", "roborock",
+            "switch", "enchufe", "plug", "outlet",
+            "iot", "smart home", "domótica", "domotica",
+            "tuya", "smartlife", "miio",
+            "turn on", "turn off", "enciende", "apaga", "encender", "apagar",
+            "dim", "brightness", "brillo", "color", "temperatura de color",
+            "open", "close", "abre", "cierra", "abrir", "cerrar",
+            "volume", "volumen", "channel", "canal", "mute", "silencio",
+            "netflix", "youtube", "hdmi",
+            "scan devices", "escanear dispositivos",
+        ],
     }
 
     def get_tools_schema(self) -> list[dict[str, Any]]:
@@ -148,6 +164,16 @@ class ToolRegistry:
         """
         if tool_name not in self.tools:
             return f"Error: Tool '{tool_name}' not found"
+
+        # Debug mode: block all tool execution
+        import os as _os
+        if _os.environ.get("OPENACM_DEBUG_MODE") == "true":
+            log.warning("Tool blocked — debug mode active", tool=tool_name)
+            return (
+                f"[DEBUG MODE] Tool '{tool_name}' was not executed. "
+                "Debug mode is currently ON — all tool calls are blocked. "
+                "Disable it in Settings → Security to allow tool execution."
+            )
 
         tool = self.tools[tool_name]
         start_time = time.time()

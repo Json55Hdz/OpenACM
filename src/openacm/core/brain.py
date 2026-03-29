@@ -20,6 +20,7 @@ from openacm.core.events import (
     EVENT_TOOL_CALLED,
     EVENT_TOOL_RESULT,
     EVENT_ROUTER_LEARNED,
+    EVENT_SKILL_ACTIVE,
     EventBus,
 )
 from openacm.core.llm_router import LLMRouter
@@ -62,6 +63,8 @@ class Brain:
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
         self.terminal_history: list[dict] = []
+        # Tracks the active processing task per channel — used for interruption
+        self._channel_tasks: dict[str, asyncio.Task] = {}
         _lr = getattr(config, "local_router", None)
         self.local_router = LocalRouter(
             confidence_threshold=_lr.confidence_threshold if _lr else 0.88,
@@ -324,15 +327,37 @@ class Brain:
         attachments: list[str] | None = None,
     ) -> str:
         """
-        Process an incoming message and return the assistant's response.
-
-        This is the main entry point. It:
-        1. Adds the user message to memory
-        2. Builds the context (system prompt + history)
-        3. Calls the LLM
-        4. If the LLM wants to call tools, executes them and loops
-        5. Returns the final text response
+        Public entry point — wraps _run() in a dedicated cancellable task.
+        When a new message arrives, any previous task for that channel is cancelled.
         """
+        _task_key = f"{channel_type}:{channel_id}"
+
+        # Cancel previous task for this channel if still running
+        _prev = self._channel_tasks.pop(_task_key, None)
+        if _prev and not _prev.done():
+            _prev.cancel()
+            await asyncio.sleep(0)  # yield so CancelledError reaches the old task
+
+        # Create a fresh dedicated task for this message
+        task = asyncio.create_task(
+            self._run(content, user_id, channel_id, channel_type, attachments)
+        )
+        self._channel_tasks[_task_key] = task
+
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return "⏹ Cancelado."
+
+    async def _run(
+        self,
+        content: str,
+        user_id: str,
+        channel_id: str,
+        channel_type: str = "console",
+        attachments: list[str] | None = None,
+    ) -> str:
+        """Core message processing — runs inside a cancellable task."""
         await self.event_bus.emit(
             EVENT_MESSAGE_RECEIVED,
             {
@@ -396,6 +421,13 @@ class Brain:
             skills_prompt = await self.skill_manager.get_active_skills_prompt(content)
             if skills_prompt:
                 system_prompt = f"{system_prompt}\n\n{skills_prompt}"
+                matched = self.skill_manager.last_matched_skill_names
+                if matched:
+                    await self.event_bus.emit(EVENT_SKILL_ACTIVE, {
+                        "skills": matched,
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                    })
 
         # Get or create conversation with system prompt
         messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
@@ -633,16 +665,11 @@ class Brain:
 
                 # Verificar que tenemos contenido real
                 if not assistant_content or not assistant_content.strip():
-                    # Si el contenido está vacío, hacer una última llamada pidiendo el resumen
+                    # Empty content — model finished tool calls but returned no text.
+                    # Break out and let the post-loop summary call handle it with tools=None
+                    # (looping just injects duplicate "resume" messages and never helps).
                     log.warning("LLM returned empty content after tools, requesting summary")
-                    await self.memory.add_message(
-                        user_id,
-                        channel_id,
-                        "user",
-                        "Por favor, resume los resultados obtenidos y proporciona la información solicitada.",
-                    )
-                    messages = await self.memory.get_messages(user_id, channel_id)
-                    continue  # Volver al inicio del loop para hacer otra llamada
+                    break
 
                 await self.memory.add_message(user_id, channel_id, "assistant", assistant_content)
 
@@ -756,6 +783,9 @@ class Brain:
                     else:
                         result = f"Error: Tool '{tool_name}' not found"
 
+                except asyncio.CancelledError:
+                    log.info("Tool execution cancelled by new message", tool=tool_name)
+                    return "⏹ Cancelado — ¿en qué más puedo ayudarte?"
                 except json.JSONDecodeError:
                     result = f"Error: Invalid arguments for tool '{tool_name}'"
                 except Exception as e:
@@ -791,12 +821,18 @@ class Brain:
                 )
                 messages = await self.memory.get_messages(user_id, channel_id)
 
-        # If we hit max iterations, make one final LLM call to get the answer with all results
+        # If we hit max iterations OR the model returned empty content, make one final
+        # LLM call with tools=None to force a plain-text summary of what was done.
         try:
-            log.warning("Max iterations reached, making final LLM call for summary")
+            log.warning("Making final summary LLM call (no tools)")
+            # Inject a one-time summary request so the model knows to write text now
+            summary_messages = list(messages) + [{
+                "role": "user",
+                "content": "Por favor, resume los resultados obtenidos y responde al usuario.",
+            }]
             final_response = await self.llm_router.chat(
-                messages=messages,
-                tools=None,  # No tools in final call
+                messages=summary_messages,
+                tools=None,  # No tools — force text output
             )
 
             final_content = final_response["content"]

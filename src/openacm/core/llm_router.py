@@ -175,7 +175,7 @@ class LLMRouter:
             provider = self._current_provider
             model = self._current_model
             if provider == "ollama":
-                return f"ollama/{model}" if not model.startswith("ollama/") else model
+                return f"openai/{model}"  # route via Ollama's OpenAI-compat /v1 endpoint
             elif provider == "anthropic":
                 return f"anthropic/{model}" if not model.startswith("anthropic/") else model
             elif provider == "gemini":
@@ -193,7 +193,7 @@ class LLMRouter:
             settings = self.config.providers[provider]
             model = settings.get("default_model", "")
             if provider == "ollama":
-                return f"ollama/{model}" if not model.startswith("ollama/") else model
+                return f"openai/{model}"  # route via Ollama's OpenAI-compat /v1 endpoint
             elif provider == "anthropic":
                 return f"anthropic/{model}" if not model.startswith("anthropic/") else model
             elif provider == "gemini":
@@ -205,7 +205,7 @@ class LLMRouter:
                     return f"openai/{model}"
                 return model
 
-        return "ollama/llama3.2"
+        return "openai/llama3.2"  # fallback Ollama OpenAI-compat
 
     def _get_api_base(self) -> str | None:
         """Get API base URL for current provider."""
@@ -600,10 +600,15 @@ class LLMRouter:
 
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
+            _llm_timeout = 120.0  # max seconds to wait for any LLM response
+
             if self._is_custom_provider():
-                result = await self._custom_chat(
-                    messages, tools, temperature, max_tokens,
-                    tool_choice_override=effective_tool_choice,
+                result = await asyncio.wait_for(
+                    self._custom_chat(
+                        messages, tools, temperature, max_tokens,
+                        tool_choice_override=effective_tool_choice,
+                    ),
+                    timeout=_llm_timeout,
                 )
                 result["elapsed"] = time.time() - start_time
                 result["model"] = model
@@ -616,7 +621,12 @@ class LLMRouter:
                 }
 
                 if api_base:
-                    kwargs["api_base"] = api_base
+                    # Ollama: use OpenAI-compatible /v1 endpoint (required for litellm 1.x)
+                    if self._current_provider == "ollama":
+                        kwargs["api_base"] = api_base.rstrip("/") + "/v1"
+                        kwargs["api_key"] = "ollama"  # litellm requires a non-empty key
+                    else:
+                        kwargs["api_base"] = api_base
 
                 # Dynamically inject API key for any custom provider
                 api_key_env = f"{self._current_provider.upper()}_API_KEY"
@@ -629,7 +639,10 @@ class LLMRouter:
                 if max_tokens:
                     kwargs["max_tokens"] = max_tokens
 
-                response = await litellm.acompletion(**kwargs)
+                response = await asyncio.wait_for(
+                    litellm.acompletion(**kwargs),
+                    timeout=_llm_timeout,
+                )
 
                 elapsed = time.time() - start_time
 

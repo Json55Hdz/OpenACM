@@ -554,6 +554,38 @@ def create_app() -> FastAPI:
         os.environ["OPENACM_VERBOSE_CHANNELS"] = "true" if enabled else "false"
         return {"status": "ok", "enabled": enabled}
 
+    @app.get("/api/ollama/status")
+    async def get_ollama_status():
+        """Check if Ollama is running and return installed models."""
+        import httpx
+        base = "http://localhost:11434"
+        if _config:
+            base = _config.llm.providers.get("ollama", {}).get("base_url", base)
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(f"{base}/api/tags")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = [m["name"] for m in data.get("models", [])]
+                    return {"running": True, "models": models}
+        except Exception:
+            pass
+        return {"running": False, "models": []}
+
+    @app.get("/api/config/debug_mode")
+    async def get_debug_mode():
+        """Return current debug mode state."""
+        return {"enabled": os.environ.get("OPENACM_DEBUG_MODE") == "true"}
+
+    @app.post("/api/config/debug_mode")
+    async def set_debug_mode(request: Request):
+        """Toggle debug mode — blocks all tool execution when ON."""
+        data = await request.json()
+        enabled = bool(data.get("enabled", False))
+        os.environ["OPENACM_DEBUG_MODE"] = "true" if enabled else "false"
+        log.info("Debug mode changed", enabled=enabled)
+        return {"status": "ok", "enabled": enabled}
+
     # ─── API: Media & Uploads ─────────────────────────────────
 
     @app.post("/api/chat/upload")

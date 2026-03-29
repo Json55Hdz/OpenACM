@@ -37,6 +37,7 @@ interface ChatState {
   ws: WebSocket | null;
   wsConnected: boolean;
   isRouterLearning: boolean;
+  activeSkillNames: string[];
 
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
@@ -50,6 +51,7 @@ interface ChatState {
   setWs: (ws: WebSocket | null) => void;
   setWsConnected: (connected: boolean) => void;
   setRouterLearning: (learning: boolean) => void;
+  setActiveSkillNames: (names: string[]) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -61,7 +63,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   ws: null,
   wsConnected: false,
   isRouterLearning: false,
-  
+  activeSkillNames: [],
+
   addMessage: (message) => {
     const newMessage: Message = {
       ...message,
@@ -111,4 +114,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
   
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
+  setActiveSkillNames: (names) => set({ activeSkillNames: names }),
 }));

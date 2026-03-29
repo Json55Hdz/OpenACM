@@ -42,6 +42,7 @@ interface WebSocketMessage {
   status?: string;
   partial?: boolean;
   attachments?: string[];
+  skills?: string[];
 }
 
 export function useWebSocket() {
@@ -182,6 +183,10 @@ export function useWebSocket() {
       } else if (data.type === 'router.learned') {
         storeRef.current.setRouterLearning(true);
         setTimeout(() => storeRef.current.setRouterLearning(false), 3000);
+      } else if (data.type === 'skill.active') {
+        const names: string[] = data.skills || [];
+        storeRef.current.setActiveSkillNames(names);
+        setTimeout(() => storeRef.current.setActiveSkillNames([]), 5000);
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
         addMessage({

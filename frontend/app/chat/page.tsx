@@ -57,6 +57,21 @@ function RouterLearningIndicator() {
   );
 }
 
+function SkillActiveIndicator({ names }: { names: string[] }) {
+  const label = names
+    .map((n) => n.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
+    .join(', ');
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-full text-emerald-300 text-xs font-medium shadow-lg backdrop-blur-sm">
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+      </span>
+      <span>Skill: {label}</span>
+    </div>
+  );
+}
+
 function TypingIndicator() {
   return (
     <div className="flex items-center gap-1 px-4 py-3 bg-slate-800 rounded-2xl rounded-tl-sm w-fit">
@@ -212,6 +227,7 @@ export default function ChatPage() {
     showToolLogs,
     setShowToolLogs,
     isRouterLearning,
+    activeSkillNames,
   } = useChatStore();
 
   const { sendMessage } = useWebSocket();
@@ -617,9 +633,10 @@ export default function ChatPage() {
           
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
-            {isRouterLearning && (
-              <div className="sticky top-2 z-10 flex justify-end pointer-events-none">
-                <RouterLearningIndicator />
+            {(isRouterLearning || activeSkillNames.length > 0) && (
+              <div className="sticky top-2 z-10 flex justify-end gap-2 pointer-events-none">
+                {isRouterLearning && <RouterLearningIndicator />}
+                {activeSkillNames.length > 0 && <SkillActiveIndicator names={activeSkillNames} />}
               </div>
             )}
             {messages.length === 0 ? (

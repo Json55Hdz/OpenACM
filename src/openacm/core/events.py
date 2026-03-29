@@ -28,6 +28,7 @@ EVENT_CHANNEL_DISCONNECTED = "channel.disconnected"
 EVENT_TOOL_OUTPUT_STREAM = "tool.output_stream"  # real-time chunk from a running tool
 EVENT_ERROR = "error"
 EVENT_ROUTER_LEARNED = "router.learned"  # LocalRouter saved a new example
+EVENT_SKILL_ACTIVE = "skill.active"  # One or more skills were activated for this message
 
 
 class EventBus:

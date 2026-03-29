@@ -14,6 +14,11 @@ interface ProviderStatus {
   telegram_configured: boolean;
 }
 
+interface OllamaStatus {
+  running: boolean;
+  models: string[];
+}
+
 export function useConfigStatus() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();
@@ -37,6 +42,19 @@ export function useProviderStatus() {
     enabled: isAuthenticated,
     staleTime: 0,
     refetchOnMount: 'always',
+  });
+}
+
+export function useOllamaStatus() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<OllamaStatus>({
+    queryKey: ['ollama-status'],
+    queryFn: () => fetchAPI('/api/ollama/status'),
+    enabled: isAuthenticated,
+    staleTime: 15000,
+    retry: false,
   });
 }
 

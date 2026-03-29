@@ -11,9 +11,15 @@ import {
   ExternalLink,
   Server,
   KeyRound,
+  AlertCircle,
 } from 'lucide-react';
 
 const t = translations.onboarding.providerSetup;
+
+interface OllamaStatus {
+  running: boolean;
+  models: string[];
+}
 
 interface ProviderCardProps {
   provider: ProviderDefinition;
@@ -21,6 +27,7 @@ interface ProviderCardProps {
   onKeyChange: (key: string) => void;
   keyValue: string;
   mode?: 'onboarding' | 'config';
+  ollamaStatus?: OllamaStatus | null;
 }
 
 export function ProviderCard({
@@ -29,15 +36,35 @@ export function ProviderCard({
   onKeyChange,
   keyValue,
   mode = 'onboarding',
+  ollamaStatus,
 }: ProviderCardProps) {
   const [expanded, setExpanded] = useState(false);
   const hasPendingKey = keyValue.trim().length > 0;
 
+  const isOllama = provider.id === 'ollama';
+  const ollamaLoaded = ollamaStatus != null;
+  const ollamaRunning = ollamaStatus?.running ?? false;
+  const isExpandable = provider.needsKey || (isOllama && ollamaLoaded);
+
   const statusBadge = !provider.needsKey ? (
-    <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full">
-      <Server size={12} />
-      {t.noKeyNeeded}
-    </span>
+    isOllama && ollamaLoaded ? (
+      ollamaRunning ? (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">
+          <CheckCircle size={12} />
+          Running
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-red-400 bg-red-500/10 px-2.5 py-1 rounded-full">
+          <AlertCircle size={12} />
+          Not installed
+        </span>
+      )
+    ) : (
+      <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full">
+        <Server size={12} />
+        {t.noKeyNeeded}
+      </span>
+    )
   ) : hasPendingKey ? (
     <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full">
       <KeyRound size={12} />
@@ -55,14 +82,20 @@ export function ProviderCard({
     </span>
   );
 
+  const borderColor = hasPendingKey
+    ? 'border-amber-500/40'
+    : isOllama && ollamaLoaded && !ollamaRunning
+    ? 'border-red-500/30'
+    : 'border-slate-700/50';
+
   return (
-    <div className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-colors ${
-      hasPendingKey ? 'border-amber-500/40' : 'border-slate-700/50'
-    }`}>
+    <div className={`bg-slate-800/50 rounded-xl border overflow-hidden transition-colors ${borderColor}`}>
       <button
         type="button"
-        onClick={() => provider.needsKey && setExpanded(!expanded)}
-        className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-800/80 transition-colors"
+        onClick={() => isExpandable && setExpanded(!expanded)}
+        className={`w-full flex items-center justify-between p-4 text-left transition-colors ${
+          isExpandable ? 'hover:bg-slate-800/80 cursor-pointer' : 'cursor-default'
+        }`}
       >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-slate-700 rounded-lg flex items-center justify-center text-lg font-bold text-slate-300">
@@ -75,7 +108,7 @@ export function ProviderCard({
         </div>
         <div className="flex items-center gap-3">
           {statusBadge}
-          {provider.needsKey && (
+          {isExpandable && (
             <span className="text-slate-500">
               {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </span>
@@ -113,6 +146,56 @@ export function ProviderCard({
             <ExternalLink size={12} />
             {t.getApiKey}
           </a>
+        </div>
+      )}
+
+      {expanded && isOllama && ollamaLoaded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-slate-700/50 pt-3">
+          {ollamaRunning ? (
+            <>
+              <p className="text-xs text-slate-400 font-medium">Installed models:</p>
+              {ollamaStatus!.models.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {ollamaStatus!.models.map((m) => (
+                    <span key={m} className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded font-mono">
+                      {m}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-xs text-amber-400">No models downloaded yet.</p>
+                  <p className="text-xs text-slate-500">
+                    Run in terminal:{' '}
+                    <code className="text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded">ollama pull llama3.2</code>
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-400">Ollama is not installed or not running.</p>
+              <ol className="text-xs text-slate-400 space-y-1.5 list-decimal list-inside">
+                <li>
+                  Download from{' '}
+                  <a
+                    href="https://ollama.com/download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-0.5"
+                  >
+                    ollama.com/download <ExternalLink size={10} />
+                  </a>
+                </li>
+                <li>Install and launch the app</li>
+                <li>
+                  Download a model:{' '}
+                  <code className="text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded">ollama pull llama3.2</code>
+                </li>
+                <li>Refresh this page — Ollama will appear as Running</li>
+              </ol>
+            </div>
+          )}
         </div>
       )}
     </div>

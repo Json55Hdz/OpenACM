@@ -65,7 +65,10 @@ async def stop_kernel():
         "If you generate plots (matplotlib), they are automatically captured. "
         "ALWAYS AVAILABLE. Use for: processing data, generating files, creating PDFs, "
         "doing calculations, any task requiring code. "
-        "RULE: If user asks to 'generate X', 'calculate Y', 'create Z' → USE THIS TOOL"
+        "RULE: If user asks to 'generate X', 'calculate Y', 'create Z' → USE THIS TOOL. "
+        "IMPORTANT: To send a file to the user, NEVER call send_file_to_chat() inside Python code — "
+        "it is not available in the kernel. Instead: (1) save the file to disk in Python, "
+        "then (2) call the send_file_to_chat TOOL as a separate tool call after run_python finishes."
     ),
     parameters={
         "type": "object",
@@ -96,6 +99,17 @@ async def run_python(code: str, reset: bool = False, **kwargs) -> str:
             await stop_kernel()
 
         km, kc = await _get_or_create_kernel()
+
+        # Inject helper stubs on first use so AI gets actionable errors
+        # instead of bare NameErrors for tools that must be called separately.
+        _stub_code = (
+            "def send_file_to_chat(path, **kw):\n"
+            "    raise RuntimeError(\n"
+            "        'send_file_to_chat() cannot be called from inside Python code. '\n"
+            "        'Save the file to disk, then call the send_file_to_chat TOOL as a separate tool call.'\n"
+            "    )\n"
+        )
+        kc.execute(_stub_code, silent=True)
 
         # Execute the code
         msg_id = kc.execute(code)

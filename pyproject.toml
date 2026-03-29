@@ -49,7 +49,12 @@ dependencies = [
     "sentence-transformers>=3.3",
     "playwright>=1.49",
     "jupyter-client>=8.6",
-    "ipykernel>=6.29"
+    "ipykernel>=6.29",
+
+    # IoT
+    "tinytuya>=1.15",
+    "aiowebostv>=0.7",
+    "python-miio>=0.5",
 ]
 
 [project.optional-dependencies]
