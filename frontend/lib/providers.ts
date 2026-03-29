@@ -55,6 +55,20 @@ export const PROVIDERS: ProviderDefinition[] = [
     description: 'Kimi, GLM, and MiniMax models',
   },
   {
+    id: 'xai',
+    name: 'xAI Grok',
+    envVar: 'XAI_API_KEY',
+    needsKey: true,
+    suggestedModels: [
+      'grok-4.20-0309-reasoning',
+      'grok-4.20-0309-non-reasoning',
+      'grok-4-1-fast-reasoning',
+      'grok-4-1-fast-non-reasoning',
+    ],
+    apiKeyUrl: 'https://console.x.ai/',
+    description: 'Grok 4 reasoning and non-reasoning models from xAI',
+  },
+  {
     id: 'ollama',
     name: 'Ollama',
     envVar: '',

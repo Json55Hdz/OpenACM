@@ -144,6 +144,7 @@ _PORT = 7395
 _exec_q: queue.Queue = queue.Queue()
 _res_q: queue.Queue = queue.Queue()
 _server: HTTPServer | None = None
+_session_globals: dict = {}  # persists across blender_exec calls within a session
 
 # ── Pre-defined helpers available in every exec() call ───────────────────────
 
@@ -157,46 +158,234 @@ def clear_scene():
     for m in list(bpy.data.meshes): bpy.data.meshes.remove(m)
     for l in list(bpy.data.lights): bpy.data.lights.remove(l)
 
+def new_primitive(prim_type='cube', name=None, **kwargs):
+    # Add a primitive and RELIABLY return the object.
+    # prim_type: 'cube','uv_sphere','cylinder','cone','torus','plane','circle','ico_sphere','monkey'
+    # Always use this instead of bpy.ops.mesh.primitive_*_add() + context.active_object.
+    before = set(bpy.data.objects)
+    op = getattr(bpy.ops.mesh, f'primitive_{prim_type}_add')
+    op(**kwargs)
+    new_objs = [o for o in bpy.data.objects if o not in before]
+    obj = new_objs[0] if new_objs else bpy.context.active_object
+    if obj is None:
+        raise RuntimeError(f"new_primitive('{prim_type}'): object was not created")
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    if name:
+        obj.name = name
+    return obj
+
+def get_active():
+    # Return the active object, or last mesh as fallback. Raises if no objects exist.
+    obj = bpy.context.active_object
+    if obj is not None:
+        return obj
+    meshes = [o for o in bpy.data.objects if o.type == 'MESH']
+    if meshes:
+        bpy.context.view_layer.objects.active = meshes[-1]
+        return meshes[-1]
+    raise RuntimeError("get_active(): no objects in scene. Call new_primitive() first.")
+
 def setup_camera(location=(7, -7, 5), rotation_deg=(63, 0, 47)):
+    before = set(bpy.data.objects)
     bpy.ops.object.camera_add(location=location)
-    cam = bpy.context.active_object
+    new_objs = [o for o in bpy.data.objects if o not in before]
+    cam = new_objs[0] if new_objs else bpy.context.active_object
+    if cam is None:
+        raise RuntimeError("setup_camera: could not create camera")
     cam.rotation_euler = Euler([math.radians(d) for d in rotation_deg], 'XYZ')
     bpy.context.scene.camera = cam
     return cam
 
 def add_light(light_type='SUN', location=(4, 1, 6), energy=3.0):
+    before = set(bpy.data.objects)
     bpy.ops.object.light_add(type=light_type, location=location)
-    l = bpy.context.active_object
+    new_objs = [o for o in bpy.data.objects if o not in before]
+    l = new_objs[0] if new_objs else bpy.context.active_object
+    if l is None:
+        raise RuntimeError("add_light: could not create light")
     l.data.energy = energy
     return l
+
+def select_only(obj):
+    if obj is None:
+        raise ValueError("select_only: obj is None — use new_primitive() to create objects and keep the returned reference")
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
 
 def apply_smooth_shading(obj=None):
     targets = [obj] if obj else [o for o in bpy.context.scene.objects if o.type == 'MESH']
     for t in targets:
+        if t is None: continue
         bpy.context.view_layer.objects.active = t
         bpy.ops.object.shade_smooth()
 
-def add_material(obj, name="Mat", color=(0.8, 0.5, 0.1, 1.0)):
+def add_material(obj, name="Mat", color=(0.8, 0.5, 0.1, 1.0), roughness=0.5, metallic=0.0):
+    if obj is None:
+        raise ValueError("add_material: obj is None")
     mat = bpy.data.materials.new(name=name)
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     if bsdf:
-        bsdf.inputs["Base Color"].default_value = color
+        def _set(key, val):
+            if key in bsdf.inputs:
+                bsdf.inputs[key].default_value = val
+        _set("Base Color", color)
+        _set("Roughness", roughness)
+        _set("Metallic", metallic)
+        # Blender 4.x renamed "Specular" to "Specular IOR Level"
+        # Don't touch it — defaults are fine for most materials
     if obj.data.materials: obj.data.materials[0] = mat
     else: obj.data.materials.append(mat)
     return mat
 
 def apply_modifier(obj, mod_type, **kw):
-    bpy.context.view_layer.objects.active = obj
+    if obj is None:
+        raise ValueError("apply_modifier: obj is None")
+    select_only(obj)
     mod = obj.modifiers.new(name=mod_type, type=mod_type)
     for k, v in kw.items(): setattr(mod, k, v)
     bpy.ops.object.modifier_apply(modifier=mod.name)
     return obj
 
-def select_only(obj):
+def set_origin_to_center(obj):
+    # Move object origin to geometry center.
+    if obj is None:
+        raise ValueError("set_origin_to_center: obj is None")
+    select_only(obj)
+    bpy.ops.object.origin_set(type='ORIGIN_GEOMETRY', center='BOUNDS')
+
+def join_objects(objects):
+    # Join a list of objects into one. Returns the joined object.
+    if not objects or any(o is None for o in objects):
+        raise ValueError("join_objects: list contains None")
     bpy.ops.object.select_all(action='DESELECT')
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
+    for o in objects:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    bpy.ops.object.join()
+    return bpy.context.active_object
+
+# ── Sculpting helpers ────────────────────────────────────────────────────────
+
+def sculpt_displace(obj, texture_type='STUCCI', noise_scale=0.4, strength=0.3,
+                    noise_basis='BLENDER_ORIGINAL', texture_coords='OBJECT'):
+    # Procedural displacement: STUCCI=bumpy skin, CLOUDS=smooth organic, VORONOI=cells,
+    # WOOD=grain, MARBLE=veins, MUSGRAVE=terrain. Call after SUBSURF for best results.
+    if obj is None:
+        raise ValueError("sculpt_displace: obj is None")
+    tex = bpy.data.textures.new(f'Disp_{texture_type}', texture_type)
+    tex.noise_scale = noise_scale
+    if hasattr(tex, 'noise_basis'):
+        tex.noise_basis = noise_basis
+    disp = obj.modifiers.new('Sculpt_Displace', 'DISPLACE')
+    disp.texture = tex
+    disp.strength = strength
+    disp.texture_coords = texture_coords
+    return disp
+
+def sculpt_multires(obj, levels=4):
+    # Add Multiresolution and subdivide: levels=3→8x, levels=4→16x, levels=5→32x polys.
+    if obj is None:
+        raise ValueError("sculpt_multires: obj is None")
+    select_only(obj)
+    mod = obj.modifiers.new('Multires', 'MULTIRES')
+    for _ in range(levels):
+        bpy.ops.object.multires_subdivide(modifier='Multires', mode='CATMULL_CLARK')
+    return mod
+
+def bmesh_sculpt(obj, fn, mode='OBJECT'):
+    # Apply fn(co, normal)->offset to every vertex. No mode switching needed from caller.
+    # e.g.: bmesh_sculpt(obj, lambda co,n: n*0.1 if co.z>0 else Vector((0,0,0)))
+    import bmesh as _bmesh
+    if obj is None:
+        raise ValueError("bmesh_sculpt: obj is None")
+    select_only(obj)
+    was_edit = (bpy.context.mode == 'EDIT_MESH')
+    if not was_edit:
+        bpy.ops.object.mode_set(mode='EDIT')
+    bm = _bmesh.from_edit_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    for v in bm.verts:
+        offset = fn(v.co.copy(), v.normal.copy())
+        if offset:
+            v.co += Vector(offset) if not isinstance(offset, Vector) else offset
+    _bmesh.update_edit_mesh(obj.data)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return obj
+
+def sculpt_inflate(obj, factor=0.05, mask_fn=None):
+    # Push verts along normals. factor>0=inflate, <0=shrink. mask_fn(co,n)->0..1 optional weight.
+    def _fn(co, n):
+        w = mask_fn(co, n) if mask_fn else 1.0
+        return n * factor * w
+    return bmesh_sculpt(obj, _fn)
+
+def sculpt_twist(obj, axis='Z', angle_per_unit=0.5):
+    # Twist mesh along axis (rope/drill effect). angle_per_unit=radians of rotation per unit.
+    axis_idx = {'X': 0, 'Y': 1, 'Z': 2}.get(axis.upper(), 2)
+    def _fn(co, n):
+        h = co[axis_idx]
+        angle = h * angle_per_unit
+        c, s = math.cos(angle), math.sin(angle)
+        new_co = co.copy()
+        if axis_idx == 2:
+            new_co.x = co.x * c - co.y * s
+            new_co.y = co.x * s + co.y * c
+        elif axis_idx == 0:
+            new_co.y = co.y * c - co.z * s
+            new_co.z = co.y * s + co.z * c
+        else:
+            new_co.x = co.x * c - co.z * s
+            new_co.z = co.x * s + co.z * c
+        return new_co - co
+    return bmesh_sculpt(obj, _fn)
+
+def sculpt_noise_bmesh(obj, scale=8.0, amplitude=0.1, seed=0):
+    # Math-only per-vertex noise. scale=spatial frequency, amplitude=max displacement.
+    import random
+    rng = random.Random(seed)
+    def _fn(co, n):
+        # Simple hash-based noise using sine
+        v = (math.sin(co.x * scale + 1.3) * math.cos(co.y * scale + 2.7) *
+             math.sin(co.z * scale + 0.9))
+        return n * v * amplitude
+    return bmesh_sculpt(obj, _fn)
+
+def sculpt_pinch(obj, center=(0,0,0), radius=1.0, strength=0.3):
+    # Pull verts toward center point. Good for eye sockets, dimples, indentations.
+    c = Vector(center)
+    def _fn(co, n):
+        d = (c - co)
+        dist = d.length
+        if dist < radius:
+            falloff = 1.0 - (dist / radius)
+            return d.normalized() * strength * falloff
+        return Vector((0, 0, 0))
+    return bmesh_sculpt(obj, _fn)
+
+def sculpt_smooth_region(obj, center=(0,0,0), radius=1.0, iterations=3):
+    # Laplacian smooth only near center point. Fixes sharp artifacts from other sculpt ops.
+    import bmesh as _bmesh
+    if obj is None:
+        raise ValueError("sculpt_smooth_region: obj is None")
+    select_only(obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = _bmesh.from_edit_mesh(obj.data)
+    bm.verts.ensure_lookup_table()
+    c = Vector(center)
+    for _ in range(iterations):
+        for v in bm.verts:
+            if (v.co - c).length > radius:
+                continue
+            neighbors = [e.other_vert(v).co for e in v.link_edges]
+            if neighbors:
+                avg = sum(neighbors, Vector()) / len(neighbors)
+                v.co = v.co.lerp(avg, 0.5)
+    _bmesh.update_edit_mesh(obj.data)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return obj
 """
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
@@ -245,9 +434,11 @@ def _tick():
             old_out = sys.stdout
             sys.stdout = _Cap()
             try:
-                g = {}
-                exec(compile(_HELPERS, "<helpers>", "exec"), g)
-                exec(compile(code, "<openacm>", "exec"), g)
+                # Re-inject helpers into the persistent session globals each call
+                # so helper functions are always available, while user-defined
+                # variables (mat_concrete, cube, etc.) survive across calls.
+                exec(compile(_HELPERS, "<helpers>", "exec"), _session_globals)
+                exec(compile(code, "<openacm>", "exec"), _session_globals)
                 sys.stdout = old_out
                 result = {"success": True, "output": "".join(captured)}
             except Exception as e:
@@ -450,10 +641,23 @@ time.sleep(0.5)  # let bridge start
     description=(
         "Execute bpy Python code in the running Blender instance. "
         "blender_start() must be called first. "
-        "Pre-available helpers: clear_scene(), setup_camera(location, rotation_deg), "
+        "Variables defined in one blender_exec call (objects, materials, etc.) persist and are "
+        "available in all subsequent blender_exec calls within the same session — no need to redefine them. "
+        "CRITICAL: always use new_primitive(type, name, **kwargs) to add mesh objects — "
+        "NEVER use bpy.ops.mesh.primitive_*_add() + bpy.context.active_object directly (active_object may be None). "
+        "new_primitive returns the object reliably: cube = new_primitive('cube', name='MyCube', location=(0,0,0)). "
+        "Other helpers: clear_scene(), setup_camera(location, rotation_deg), "
         "add_light(type, location, energy), apply_smooth_shading(obj), "
-        "add_material(obj, name, color_rgba), apply_modifier(obj, type, **kw), "
-        "select_only(obj). "
+        "add_material(obj, name, color_rgba, roughness, metallic), apply_modifier(obj, type, **kw), "
+        "select_only(obj), get_active(), set_origin_to_center(obj), join_objects([objs]). "
+        "Sculpting helpers: sculpt_displace(obj, texture_type, noise_scale, strength) for procedural surface detail; "
+        "sculpt_multires(obj, levels) to add multiresolution; "
+        "bmesh_sculpt(obj, fn) to apply a per-vertex fn(co,normal)->offset; "
+        "sculpt_inflate(obj, factor, mask_fn) to push verts along normals; "
+        "sculpt_noise_bmesh(obj, scale, amplitude) for organic noise; "
+        "sculpt_pinch(obj, center, radius, strength) to attract verts toward a point; "
+        "sculpt_twist(obj, axis, angle_per_unit) for twist/drill effects; "
+        "sculpt_smooth_region(obj, center, radius) for local smoothing. "
         "bpy, math, mathutils, Vector, Euler, Matrix are already imported. "
         "Set screenshot=true to get a rendered viewport image of the result."
     ),

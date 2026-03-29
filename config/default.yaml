@@ -43,6 +43,14 @@ llm:
     openrouter:
       default_model: "openrouter/auto"
       base_url: "https://openrouter.ai/api/v1"
+    xai:
+      default_model: "grok-4.20-0309-non-reasoning"
+      base_url: "https://api.x.ai/v1"
+      # xAI Grok models (OpenAI-compatible):
+      #   grok-4.20-0309-reasoning / non-reasoning
+      #   grok-4-1-fast-reasoning / non-reasoning
+      #   grok-4.20-multi-agent-0309
+      # Use with your API key (XAI_API_KEY in .env)
 
 security:
   execution_mode: "confirmation"  # confirmation | auto | yolo
@@ -116,3 +124,8 @@ storage:
   database_path: "data/openacm.db"
   log_conversations: true
   log_tool_executions: true
+
+local_router:
+  enabled: true            # false = disable completely
+  observation_mode: false  # true = classify but never execute (logs only)
+  confidence_threshold: 0.88  # 0.5-1.0: higher = more conservative

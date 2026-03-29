@@ -42,6 +42,7 @@ class TelegramChannel(BaseChannel):
         self._app: Application | None = None
         self._tool_messages: dict[str, int] = {}  # { "chat_id-tool_name": message_id }
         self._cmd = CommandProcessor(brain, database)
+        self.ready_event = asyncio.Event()
 
     @property
     def name(self) -> str:
@@ -66,6 +67,7 @@ class TelegramChannel(BaseChannel):
         """Start the Telegram bot."""
         if self._is_placeholder_token(self.config.token):
             log.warning("Telegram token not configured or is a placeholder, skipping")
+            self.ready_event.set()
             return
 
         self._app = Application.builder().token(self.config.token).build()
@@ -79,6 +81,10 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("stats", self._cmd_stats))
         self._app.add_handler(CommandHandler("export", self._cmd_export))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+        self._app.add_handler(MessageHandler(
+            (filters.PHOTO | filters.VOICE | filters.AUDIO | filters.Document.ALL) & ~filters.COMMAND,
+            self._handle_message,
+        ))
 
         # Register EventBus listeners for tool tracking
         self.event_bus.on(EVENT_TOOL_CALLED, self._on_tool_called)
@@ -92,10 +98,12 @@ class TelegramChannel(BaseChannel):
         except Exception as e:
             log.error("Telegram bot failed to start", error=str(e))
             self._app = None
+            self.ready_event.set()  # unblock waiters even on failure
             return
 
         self._connected = True
         log.info("Telegram bot started")
+        self.ready_event.set()
         await self.event_bus.emit(EVENT_CHANNEL_CONNECTED, {"channel": "telegram"})
 
     async def stop(self):
@@ -437,19 +445,64 @@ class TelegramChannel(BaseChannel):
         else:
             await update.message.reply_text(result.text)
 
+    async def _save_media(self, data: bytes, ext: str) -> str:
+        """Save raw bytes to media dir, return file_id."""
+        import secrets
+        from openacm.security.crypto import get_media_dir
+        file_id = f"{secrets.token_hex(12)}{ext}"
+        dest = get_media_dir() / file_id
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return file_id
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle incoming text messages."""
+        """Handle incoming messages (text, images, voice, audio, documents)."""
         if not update.message or not update.effective_user:
             return
         if not self._is_allowed(update.effective_user.id):
             return
 
-        content = update.message.text
-        if not content:
-            return
-
         user_id = str(update.effective_user.id)
         channel_id = str(update.message.chat_id)
+
+        content = update.message.text or update.message.caption or ""
+        attachments: list[str] = []
+
+        # ── Photo ──────────────────────────────────────────────────────────
+        if update.message.photo:
+            photo = update.message.photo[-1]  # largest size
+            tg_file = await photo.get_file()
+            raw = await tg_file.download_as_bytearray()
+            file_id = await self._save_media(bytes(raw), ".jpg")
+            attachments.append(file_id)
+            if not content:
+                content = "What's in this image?"
+
+        # ── Voice / Audio ──────────────────────────────────────────────────
+        if update.message.voice or update.message.audio:
+            media = update.message.voice or update.message.audio
+            ext = ".ogg" if update.message.voice else ".mp3"
+            tg_file = await media.get_file()
+            raw = await tg_file.download_as_bytearray()
+            file_id = await self._save_media(bytes(raw), ext)
+            attachments.append(file_id)
+            if not content:
+                content = "Transcribe and respond to this audio message."
+
+        # ── Document (PDF, txt, etc.) ──────────────────────────────────────
+        if update.message.document:
+            doc = update.message.document
+            from pathlib import Path
+            ext = Path(doc.file_name or "file.bin").suffix or ".bin"
+            tg_file = await doc.get_file()
+            raw = await tg_file.download_as_bytearray()
+            file_id = await self._save_media(bytes(raw), ext)
+            attachments.append(file_id)
+            if not content:
+                content = f"Process this file: {doc.file_name}"
+
+        if not content and not attachments:
+            return
 
         # Send "typing" action
         await update.message.chat.send_action("typing")
@@ -462,6 +515,7 @@ class TelegramChannel(BaseChannel):
                     user_id=user_id,
                     channel_id=channel_id,
                     channel_type="telegram",
+                    attachments=attachments if attachments else None,
                 )
             except Exception as e:
                 log.error("Telegram brain processing error", error=str(e))

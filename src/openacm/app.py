@@ -129,6 +129,9 @@ class OpenACM:
             )
         )
 
+        # Start LocalRouter warm-up AFTER the panel so its log appears below it
+        asyncio.create_task(self.brain.local_router.warm_up())
+
         # Phase 6: Interactive console loop
         await self._console_loop()
 
@@ -234,15 +237,16 @@ class OpenACM:
         console.print(f"  [green]✓[/green] {tool_count} tools registered")
 
     async def _init_channels(self):
-        """Initialize messaging channels."""
+        """Initialize messaging channels and wait until each one connects (or fails)."""
+        channel_tasks = []
+
         if self.config.channels.discord.enabled:
             try:
                 from openacm.channels.discord_channel import DiscordChannel
 
                 channel = DiscordChannel(self.config.channels.discord, self.brain, self.event_bus)
                 self._channels.append(channel)
-                asyncio.create_task(channel.start())
-                console.print("  [green]✓[/green] Discord channel started")
+                channel_tasks.append(asyncio.create_task(channel.start()))
             except Exception as e:
                 console.print(f"  [red]✗[/red] Discord failed: {e}")
 
@@ -254,8 +258,7 @@ class OpenACM:
                     self.config.channels.telegram, self.brain, self.event_bus, self.database
                 )
                 self._channels.append(channel)
-                asyncio.create_task(channel.start())
-                console.print("  [green]✓[/green] Telegram channel started")
+                channel_tasks.append(asyncio.create_task(channel.start()))
             except Exception as e:
                 console.print(f"  [red]✗[/red] Telegram failed: {e}")
 
@@ -265,13 +268,26 @@ class OpenACM:
 
                 channel = WhatsAppChannel(self.config.channels.whatsapp, self.brain, self.event_bus)
                 self._channels.append(channel)
-                asyncio.create_task(channel.start())
-                console.print("  [green]✓[/green] WhatsApp channel started")
+                channel_tasks.append(asyncio.create_task(channel.start()))
             except Exception as e:
                 console.print(f"  [red]✗[/red] WhatsApp failed: {e}")
 
         if not self._channels:
             console.print("  [dim]No external channels enabled (edit config/default.yaml)[/dim]")
+            return
+
+        # Wait for every channel to signal readiness (connected OR failed), max 15 s per channel.
+        await asyncio.gather(
+            *[
+                asyncio.wait_for(ch.ready_event.wait(), timeout=15)
+                for ch in self._channels
+            ],
+            return_exceptions=True,
+        )
+
+        for ch in self._channels:
+            status = "[green]✓[/green]" if ch.is_connected else "[yellow]~[/yellow]"
+            console.print(f"  {status} {ch.name.capitalize()} channel ready")
 
     async def _init_web(self):
         """Start the web dashboard."""

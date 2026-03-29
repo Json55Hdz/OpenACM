@@ -19,6 +19,7 @@ interface Attachment {
   id: string;
   name: string;
   type: string;
+  previewUrl?: string;  // blob URL for local image preview
 }
 
 interface ChatTarget {
@@ -35,6 +36,7 @@ interface ChatState {
   showToolLogs: boolean;
   ws: WebSocket | null;
   wsConnected: boolean;
+  isRouterLearning: boolean;
 
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
@@ -47,6 +49,7 @@ interface ChatState {
   setShowToolLogs: (show: boolean) => void;
   setWs: (ws: WebSocket | null) => void;
   setWsConnected: (connected: boolean) => void;
+  setRouterLearning: (learning: boolean) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -57,6 +60,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   showToolLogs: true,
   ws: null,
   wsConnected: false,
+  isRouterLearning: false,
   
   addMessage: (message) => {
     const newMessage: Message = {
@@ -106,4 +110,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setWs: (ws) => set({ ws }),
   
   setWsConnected: (connected) => set({ wsConnected: connected }),
+  setRouterLearning: (learning) => set({ isRouterLearning: learning }),
 }));

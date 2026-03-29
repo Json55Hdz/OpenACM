@@ -31,6 +31,7 @@ class WhatsAppChannel(BaseChannel):
         self._ws = None
         self._http_client: httpx.AsyncClient | None = None
         self._listen_task: asyncio.Task | None = None
+        self.ready_event = asyncio.Event()
 
     @property
     def name(self) -> str:
@@ -57,6 +58,7 @@ class WhatsAppChannel(BaseChannel):
                 log.info("WhatsApp bridge status", status=status)
             else:
                 log.warning("WhatsApp bridge not responding")
+                self.ready_event.set()
                 return
         except httpx.ConnectError:
             log.warning(
@@ -64,11 +66,13 @@ class WhatsAppChannel(BaseChannel):
                 url=self.config.bridge_url,
                 hint="Start the bridge with: cd bridges/whatsapp && npm start",
             )
+            self.ready_event.set()
             return
 
         # Start listening for incoming messages via WebSocket
         self._listen_task = asyncio.create_task(self._listen_loop())
 
+        self.ready_event.set()
         if self._connected:
             await self.event_bus.emit(EVENT_CHANNEL_CONNECTED, {"channel": "whatsapp"})
 

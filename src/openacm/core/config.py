@@ -97,6 +97,14 @@ class StorageConfig(BaseModel):
     log_tool_executions: bool = True
 
 
+class LocalRouterConfig(BaseModel):
+    """Local intent router configuration."""
+
+    enabled: bool = True
+    observation_mode: bool = False  # False = fast-path active; True = classify only, no execution
+    confidence_threshold: float = 0.88
+
+
 class AppConfig(BaseModel):
     """Root application configuration."""
 
@@ -106,6 +114,7 @@ class AppConfig(BaseModel):
     web: WebConfig = Field(default_factory=WebConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    local_router: LocalRouterConfig = Field(default_factory=LocalRouterConfig)
 
 
 # ─── Config Loading ──────────────────────────────────────────
@@ -188,6 +197,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config_data["channels"] = channels_data
     if "storage" in data:
         config_data["storage"] = data["storage"]
+    if "local_router" in data:
+        config_data["local_router"] = data["local_router"]
 
     # Make paths absolute relative to project root
     config = AppConfig(**config_data)

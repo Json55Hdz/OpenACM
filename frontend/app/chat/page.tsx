@@ -22,6 +22,11 @@ import {
   Download,
   SquareTerminal,
   RotateCcw,
+  Sparkles,
+  Mic,
+  MicOff,
+  FileText,
+  Music,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -41,6 +46,15 @@ interface Conversation {
   last_message: string;
   last_timestamp: string;
   message_count: number;
+}
+
+function RouterLearningIndicator() {
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-950/80 border border-violet-500/40 rounded-full text-violet-300 text-xs font-medium shadow-lg backdrop-blur-sm animate-pulse">
+      <Sparkles size={12} className="text-violet-400" />
+      <span>Aprendiendo...</span>
+    </div>
+  );
 }
 
 function TypingIndicator() {
@@ -197,6 +211,7 @@ export default function ChatPage() {
     clearAttachments,
     showToolLogs,
     setShowToolLogs,
+    isRouterLearning,
   } = useChatStore();
 
   const { sendMessage } = useWebSocket();
@@ -212,8 +227,12 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   // Track which conversation we last loaded history for
   const loadedKeyRef = useRef('');
 
@@ -235,10 +254,25 @@ export default function ChatPage() {
             if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
             return true;
           })
-          .map((msg: { role: string; content: string }) => ({
-            content: msg.content,
-            role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
-          }));
+          .map((msg: { role: string; content: string }) => {
+            // Parse [IMAGE:filename] markers back into attachment objects
+            const attachments: Array<{ id: string; name: string; type: string }> = [];
+            const content = msg.content.replace(/\[IMAGE:([^\]]+)\]/g, (_, fileId) => {
+              const ext = fileId.split('.').pop()?.toLowerCase() ?? '';
+              const imgExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+              attachments.push({
+                id: fileId,
+                name: fileId,
+                type: imgExts.has(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream',
+              });
+              return '';
+            }).trim();
+            return {
+              content,
+              role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+              ...(attachments.length > 0 ? { attachments } : {}),
+            };
+          });
         setMessages(visible);
       }
     }
@@ -344,21 +378,91 @@ export default function ChatPage() {
     }
   };
   
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    
-    Array.from(files).forEach(file => {
-      const attachment = {
-        id: `file-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  const uploadFile = async (file: File): Promise<{ id: string; name: string; type: string; previewUrl?: string } | null> => {
+    const token = useAuthStore.getState().token;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch('/api/chat/upload', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      const data = await res.json();
+      return {
+        id: data.file_id,
         name: file.name,
         type: file.type,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
       };
-      addAttachment(attachment);
-    });
-    
-    // Reset input
+    } catch (err) {
+      toast.error(`Failed to upload ${file.name}`);
+      return null;
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    setIsUploading(true);
+    for (const file of Array.from(files)) {
+      const att = await uploadFile(file);
+      if (att) addAttachment(att);
+    }
+    setIsUploading(false);
     e.target.value = '';
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItem = items.find(i => i.type.startsWith('image/'));
+    if (!imageItem) return;
+    e.preventDefault();
+    const file = imageItem.getAsFile();
+    if (!file) return;
+    const named = new File([file], `paste-${Date.now()}.png`, { type: file.type });
+    setIsUploading(true);
+    const att = await uploadFile(named);
+    if (att) addAttachment(att);
+    setIsUploading(false);
+  };
+
+  const handleMicClick = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+        setIsUploading(true);
+        const att = await uploadFile(file);
+        if (att) {
+          addAttachment(att);
+          toast.success('Voice message ready — press Send');
+        }
+        setIsUploading(false);
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      toast('Recording... press mic again to stop', { icon: '🎤' });
+    } catch {
+      toast.error('Could not access microphone');
+    }
   };
   
   const selectConversation = (conv: Conversation) => {
@@ -512,7 +616,12 @@ export default function ChatPage() {
           </div>
           
           {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
+            {isRouterLearning && (
+              <div className="sticky top-2 z-10 flex justify-end pointer-events-none">
+                <RouterLearningIndicator />
+              </div>
+            )}
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 {isLoadingHistory ? (
@@ -609,57 +718,87 @@ export default function ChatPage() {
 
           {/* Input Area */}
           <div className="p-4 border-t border-slate-800 bg-slate-900/50">
-            {/* Attachments */}
+            {/* Attachments preview */}
             {currentAttachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {currentAttachments.map((att) => (
-                  <div 
+                  <div
                     key={att.id}
-                    className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 rounded-lg text-sm text-slate-300"
+                    className="relative flex items-center gap-2 bg-slate-800 rounded-lg overflow-hidden text-sm text-slate-300"
                   >
-                    <Paperclip size={14} />
-                    <span className="truncate max-w-[150px]">{att.name}</span>
+                    {att.previewUrl ? (
+                      // Image thumbnail
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={att.previewUrl} alt={att.name} className="h-16 w-16 object-cover" />
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 px-3 py-1.5">
+                        {att.type.startsWith('audio/') ? <Music size={14} className="text-violet-400" /> : <FileText size={14} className="text-blue-400" />}
+                        <span className="truncate max-w-[120px]">{att.name}</span>
+                      </div>
+                    )}
                     <button
                       onClick={() => removeAttachment(att.id)}
-                      className="text-slate-500 hover:text-red-400"
+                      className="absolute top-0.5 right-0.5 bg-slate-900/80 rounded-full p-0.5 text-slate-400 hover:text-red-400"
                     >
-                      <X size={14} />
+                      <X size={12} />
                     </button>
                   </div>
                 ))}
               </div>
             )}
-            
+
             <div className="flex items-end gap-2">
+              {/* Attach file */}
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="p-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                disabled={isUploading}
+                className="p-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
+                title="Attach file (image, PDF, audio, text...)"
               >
-                <Paperclip size={20} />
+                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
+                accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.yaml,.yml,.xml,.html,.log"
                 className="hidden"
                 onChange={handleFileSelect}
               />
-              
+
+              {/* Mic button */}
+              <button
+                onClick={handleMicClick}
+                disabled={isUploading}
+                className={cn(
+                  "p-3 rounded-lg transition-colors disabled:opacity-50",
+                  isRecording
+                    ? "bg-red-600 hover:bg-red-700 text-white animate-pulse"
+                    : "text-slate-400 hover:text-white hover:bg-slate-800"
+                )}
+                title={isRecording ? "Stop recording" : "Record voice message"}
+              >
+                {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
+              </button>
+
               <div className="flex-1 relative">
                 <textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Type a message..."
+                  onPaste={handlePaste}
+                  placeholder="Type a message, or paste an image..."
                   rows={1}
                   className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 resize-none focus:outline-none focus:border-blue-500"
                   style={{ minHeight: '48px', maxHeight: '120px' }}
                 />
               </div>
-              
+
               <button
                 onClick={handleSend}
-                disabled={(!inputValue.trim() && currentAttachments.length === 0) || isWaitingResponse}
+                disabled={(!inputValue.trim() && currentAttachments.length === 0) || isWaitingResponse || isUploading}
                 className="p-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
               >
                 {isWaitingResponse ? (
@@ -669,9 +808,11 @@ export default function ChatPage() {
                 )}
               </button>
             </div>
-            
+
             <p className="text-xs text-slate-500 mt-2 text-center">
-              Press Enter to send, Shift + Enter for a new line
+              Enter to send · Shift+Enter new line · Paste images directly
+              <span className="mx-2 text-slate-700">·</span>
+              <span className="text-slate-600">All data stays local — nothing is shared with OpenACM servers</span>
             </p>
           </div>
         </div>

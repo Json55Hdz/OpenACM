@@ -20,6 +20,95 @@ All served from a modern Web Dashboard built with **React + TypeScript + Next.js
 3. **Jupyter Kernel (Interactive Python)**: OpenACM executes stateful code. Variables persist. If it plots something with `matplotlib`, the image is sent right to the chat!
 4. **Multimodality & Files**: It can generate PDFs, Excel files, zips, take screenshots of your own screen, and send them back for download via `/api/media/...`.
 5. **Modern React Dashboard**: Built with React 19, TypeScript, Next.js 16, Tailwind CSS, Zustand, TanStack Query, and Sonner.
+6. **Local Intent Router**: A hybrid local/cloud architecture that classifies simple requests instantly on-device, skipping the cloud LLM entirely to save cost and latency.
+
+---
+
+## Local Intent Router (Hybrid Architecture)
+
+OpenACM uses a **hybrid local/cloud** processing model. Not every message needs to hit a cloud API.
+
+### How it works
+
+When you send a message, a tiny local classifier runs first (~5–40ms, pure CPU):
+
+```
+Your message
+     │
+     ▼
+LocalRouter (sentence-transformers, local CPU)
+     │
+     ├── confidence > 0.88 + simple intent → execute directly (0 tokens spent)
+     │
+     └── confidence < 0.88 or complex task → cloud LLM as usual
+```
+
+### Self-learning
+
+The router learns automatically from usage. When the LLM handles a message and calls a tool (e.g. `run_command("start chrome")`), OpenACM infers the intent was `OPEN_APP` and stores that phrase as a new example — no manual labeling needed.
+
+Learned examples are saved to `data/router_learned.json` and persist across restarts. Hot-reload means no restart is needed when a new example is learned.
+
+```
+First time:   "que tal si me abres el gugel porfa?" → confidence 0.72 → LLM
+              LLM calls run_command("start chrome") → learns OPEN_APP
+Next time:    "que tal si me abres el gugel porfa?" → confidence 0.97 → local ✓
+```
+
+### Supported intents (out of the box)
+
+| Intent | Examples |
+|---|---|
+| `OPEN_APP` | "abre chrome", "open spotify", "can you launch discord" |
+| `PLAY_MEDIA` | "ponme musica en spotify", "play something on youtube" |
+| `SYSTEM_INFO` | "cuánta RAM tengo", "check cpu usage" |
+| `SCREENSHOT` | "toma una captura", "take a screenshot" |
+| `FILE_SIMPLE` | "crea una carpeta", "lista los archivos" |
+| `WEB_SEARCH_SIMPLE` | "busca en google qué es Python" |
+| `COMPLEX_TASK` | "redáctame un correo", "analiza este documento" → always goes to LLM |
+
+The router uses `paraphrase-multilingual-MiniLM-L12-v2` (50+ languages). You don't need to add translations — Spanish, English, Portuguese, etc. all work from the same set of examples.
+
+> **First run note:** The multilingual model (~470MB) downloads automatically on first use and is cached forever. Subsequent startups are instant.
+
+---
+
+## Minimum System Requirements
+
+### Minimum (basic usage, no local AI features)
+
+| Component | Minimum |
+|---|---|
+| OS | Windows 10 / Ubuntu 20.04 / macOS 12 |
+| CPU | 4 cores, 2.0 GHz |
+| RAM | **8 GB** |
+| Storage | 5 GB free (Python env + Node + Playwright browsers) |
+| Internet | Required for cloud LLM APIs |
+| Python | 3.12+ |
+| Node.js | 20+ |
+
+### Recommended (full features including Local Router)
+
+| Component | Recommended |
+|---|---|
+| OS | Windows 11 / Ubuntu 22.04 |
+| CPU | 6+ cores, 3.0 GHz |
+| RAM | **16 GB** |
+| Storage | 10 GB free (adds ~500MB for multilingual NLP model) |
+| Internet | Required for cloud LLMs; Local Router works offline |
+| Python | 3.12+ |
+| Node.js | 20+ |
+
+### For future local AI features (Whisper, Vision, YOLOv8)
+
+| Component | Required |
+|---|---|
+| GPU | NVIDIA RTX 3060+ (8GB VRAM minimum) |
+| RAM | 32 GB |
+| Storage | 50 GB free |
+| CUDA | 12.x |
+
+> **Without a GPU:** OpenACM runs perfectly fine. The Local Router runs on CPU. Cloud LLMs (OpenAI, Gemini, Groq, Anthropic) handle all AI reasoning. A GPU is only needed for planned future modules (Whisper local transcription, local vision models, YOLOv8 object detection).
 
 ---
 
@@ -139,7 +228,7 @@ npm run build
 
 ---
 
-### First Launch
+## First Launch
 
 The first time you run OpenACM, the console will do three things:
 1. **Generate your Token**: You'll see `Dashboard Token: O4KzV-...`. **Copy it**.
@@ -154,6 +243,28 @@ The first time you run OpenACM, the console will do three things:
 - **Playwright (Browser)**: The first time the bot tries to use the browser, there may be a brief pause while Chromium is auto-installed in the background.
 - **LLM Models**: OpenACM supports OpenAI, Anthropic, Gemini, or local models via Ollama (e.g., `llama3.2`). Go to `Configuration` in the Dashboard to add your API Keys or URLs.
 - **Telegram / Channels**: If you complete the configuration from the Web, the bot can also interact through Telegram (with real photos and PDFs uploaded as native files!).
+- **Local Router model**: On first use, `paraphrase-multilingual-MiniLM-L12-v2` (~470MB) downloads automatically in the background. You'll see `LocalRouter: model loaded and ready` in the console when it's done.
+
+---
+
+## Privacy & Data
+
+OpenACM is **100% self-hosted**. No data ever leaves your machine to any OpenACM server, because there are no OpenACM servers.
+
+| What | Where it lives | Shared with OpenACM? |
+|---|---|---|
+| API keys (OpenAI, Anthropic, etc.) | `config/.env` — local file only | Never |
+| Conversations & history | `data/openacm.db` — local SQLite | Never |
+| Uploaded files & media | `data/media/` — local folder | Never |
+| Long-term memory (RAG) | `data/chroma/` — local ChromaDB | Never |
+| Learned intent examples | `data/router_learned.json` — local file | Never |
+
+**The only outbound traffic is the requests you explicitly trigger:**
+- Messages sent to whichever cloud LLM you configure (OpenAI, Anthropic, Gemini, xAI, etc.)
+- Telegram / Discord / WhatsApp messages, if you connect those channels
+- Browser automation via Playwright, when you ask it to visit a website
+
+If you use Ollama with a local model, **no message ever leaves your machine at all**.
 
 ---
 
@@ -169,10 +280,18 @@ OpenACM/
 │   ├── package.json            # npm dependencies
 │   └── next.config.ts          # Next.js config
 ├── src/openacm/
+│   ├── core/
+│   │   ├── brain.py            # Central AI engine + agentic loop
+│   │   ├── local_router.py     # Local intent classifier (hybrid architecture)
+│   │   ├── llm_router.py       # Cloud LLM interface (LiteLLM)
+│   │   ├── memory.py           # Conversation memory
+│   │   └── rag.py              # Long-term vector memory (ChromaDB)
 │   └── web/
 │       └── static/             # Frontend build (copied from frontend/dist)
+├── data/
+│   ├── openacm.db              # SQLite database
+│   └── router_learned.json     # Auto-learned intent examples (grows with use)
 ├── config/                     # Configuration (.env)
-├── data/                       # Database and files
 ├── build-frontend.bat          # Script to build frontend
 ├── setup.bat                   # Automatic setup
 └── run.bat                     # Start OpenACM

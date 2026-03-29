@@ -114,6 +114,14 @@ class LLMRouter:
                 tool_choice_mode="auto",
                 max_tools_per_call=15,
             )
+        if provider == "xai":
+            # xAI Grok — OpenAI-compatible API, full tool support
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=False,
+                tool_choice_mode="auto",
+                max_tools_per_call=None,
+            )
         # Unknown / custom — conservative defaults
         return ProviderProfile(
             name=provider,

@@ -5,18 +5,21 @@ Receives messages, builds context, calls the LLM, processes tool calls,
 and returns responses. Handles the full agentic loop with safety limits.
 """
 
+import asyncio
 import json
 from typing import Any
 
 import structlog
 
 from openacm.core.config import AssistantConfig
+from openacm.core.local_router import LocalRouter
 from openacm.core.events import (
     EVENT_MESSAGE_RECEIVED,
     EVENT_MESSAGE_SENT,
     EVENT_THINKING,
     EVENT_TOOL_CALLED,
     EVENT_TOOL_RESULT,
+    EVENT_ROUTER_LEARNED,
     EventBus,
 )
 from openacm.core.llm_router import LLMRouter
@@ -59,6 +62,222 @@ class Brain:
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
         self.terminal_history: list[dict] = []
+        _lr = getattr(config, "local_router", None)
+        self.local_router = LocalRouter(
+            confidence_threshold=_lr.confidence_threshold if _lr else 0.88,
+            observation_mode=not _lr.enabled if _lr else False,
+        )
+
+    async def _execute_fast_path(
+        self,
+        intent: str,
+        message: str,
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+    ) -> str | None:
+        """
+        Execute a simple intent directly without calling the LLM.
+        Dispatches to the handler registered in fast_path.py for this intent.
+        Returns the response string, or None to fall through to the LLM.
+        """
+        from openacm.core.fast_path import dispatch
+
+        response = await dispatch(intent, self, message, user_id, channel_id, channel_type)
+        if response is None:
+            return None
+
+        await self.memory.add_message(user_id, channel_id, "assistant", response)
+        await self.event_bus.emit(EVENT_MESSAGE_SENT, {
+            "content": response,
+            "user_id": user_id,
+            "channel_id": channel_id,
+            "channel_type": channel_type,
+            "tokens": 0,
+        })
+        await self.event_bus.emit(EVENT_THINKING, {
+            "status": "done",
+            "user_id": user_id,
+            "channel_id": channel_id,
+            "channel_type": channel_type,
+        })
+        log.info("Fast-path executed", intent=intent)
+        return response
+
+    async def _maybe_learn_from_tools(
+        self,
+        original_message: str,
+        tool_calls: list[dict],
+        router_task: asyncio.Task,
+    ) -> None:
+        """
+        Passive learning: infer the user's intent from what tools the LLM called
+        and teach the LocalRouter — so next time it can skip the LLM entirely.
+
+        Only learns when:
+        - The LLM called exactly one tool (unambiguous intent signal)
+        - The router was uncertain (confidence below threshold)
+        - We can map that tool to a known intent
+        """
+        from openacm.core.local_router import TOOL_TO_INTENT, RUN_COMMAND_HINTS
+
+        if len(tool_calls) != 1:
+            return  # ambiguous — multiple tools called
+
+        try:
+            router_result = await asyncio.wait_for(asyncio.shield(router_task), timeout=2.0)
+        except Exception:
+            router_result = None
+
+        # Only learn if the router was uncertain (below threshold)
+        if router_result and router_result.is_fast_path_eligible:
+            return  # already confident, no need to learn
+
+        tool_name = tool_calls[0]["function"]["name"]
+        tool_args = tool_calls[0]["function"]["arguments"]
+
+        # Direct tool → intent mapping
+        inferred_intent = TOOL_TO_INTENT.get(tool_name)
+
+        # run_command: check arguments for app/media hints
+        if not inferred_intent and tool_name == "run_command":
+            args_lower = tool_args.lower()
+            for hint, intent in RUN_COMMAND_HINTS.items():
+                if hint in args_lower:
+                    inferred_intent = intent
+                    break
+
+        if not inferred_intent:
+            return  # can't infer intent from this tool call
+
+        # If the router already guessed right, still learn to boost confidence
+        if router_result and router_result.intent != inferred_intent:
+            return  # router was wrong — don't reinforce a bad pattern
+
+        learned = await self.local_router.learn(original_message, inferred_intent)
+        if learned:
+            await self.event_bus.emit(EVENT_ROUTER_LEARNED, {
+                "intent": inferred_intent,
+                "message": original_message,
+            })
+
+        # Also learn the concrete action so fast_path can replay it later
+        await self._maybe_learn_action(original_message, tool_name, tool_args, inferred_intent)
+
+    async def _maybe_learn_action(
+        self,
+        phrase: str,
+        tool_name: str,
+        tool_args_str: str,
+        intent: str,
+    ) -> None:
+        """
+        Store a phrase → concrete tool call for direct fast-path replay.
+
+        Safety rules (by design):
+        - open_url: always learnable — opening a URL is safe and deterministic
+        - run_command: only when intent == OPEN_APP — avoids learning arbitrary shell commands
+        - All other tools: ignored
+        """
+        try:
+            args = json.loads(tool_args_str) if isinstance(tool_args_str, str) else tool_args_str
+        except Exception:
+            return
+
+        if tool_name == "open_url":
+            url = args.get("url", "")
+            if not url:
+                return
+            # Extract a readable label from the URL for the response message
+            from urllib.parse import urlparse
+            label = urlparse(url).netloc or url
+            await self.local_router.learn_action(
+                phrase, tool_name, args, intent, f"Abriendo {label}..."
+            )
+
+        elif tool_name == "run_command" and intent == "OPEN_APP":
+            command = args.get("command", "")
+            if not command:
+                return
+            # Use the last token of the command as the app name (e.g. "start blender" → "Blender")
+            app_name = command.strip().split()[-1].title()
+            await self.local_router.learn_action(
+                phrase, tool_name, args, intent, f"Abriendo {app_name}..."
+            )
+
+    # ── Multimodal helpers ────────────────────────────────────────────────
+
+    def _extract_pdf_text(self, raw_bytes: bytes) -> str:
+        """Extract text from a PDF using pypdf."""
+        import io
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n\n".join(p for p in pages if p.strip())
+            return text[:12000] or "[PDF has no extractable text]"
+        except ImportError:
+            return "[pypdf not installed — install with: pip install pypdf]"
+        except Exception as e:
+            log.warning("PDF extraction failed", error=str(e))
+            return f"[PDF extraction error: {e}]"
+
+    async def _transcribe_audio(self, raw_bytes: bytes, ext: str) -> str | None:
+        """
+        Transcribe audio bytes to text.
+        Priority: OpenAI Whisper API → faster-whisper local → None.
+        """
+        import os
+
+        # ── 1. OpenAI Whisper API ──────────────────────────────────────────
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if api_key:
+            try:
+                import httpx
+                mime_map = {
+                    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg",
+                    ".m4a": "audio/mp4", ".webm": "audio/webm", ".flac": "audio/flac",
+                }
+                mime = mime_map.get(ext, "audio/mpeg")
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        files={"file": (f"audio{ext}", raw_bytes, mime)},
+                        data={"model": "whisper-1"},
+                        timeout=60.0,
+                    )
+                    if resp.status_code == 200:
+                        return resp.json().get("text", "")
+                    log.warning("Whisper API error", status=resp.status_code)
+            except Exception as e:
+                log.warning("OpenAI Whisper transcription failed", error=str(e))
+
+        # ── 2. Local faster-whisper ────────────────────────────────────────
+        try:
+            import tempfile, os as _os
+            from faster_whisper import WhisperModel
+
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(raw_bytes)
+                tmp_path = f.name
+            try:
+                loop = asyncio.get_event_loop()
+
+                def _run():
+                    model = WhisperModel("base", device="cpu", compute_type="int8")
+                    segments, _ = model.transcribe(tmp_path, beam_size=5)
+                    return " ".join(seg.text for seg in segments).strip()
+
+                return await loop.run_in_executor(None, _run)
+            finally:
+                _os.unlink(tmp_path)
+        except ImportError:
+            pass
+        except Exception as e:
+            log.warning("Local Whisper transcription failed", error=str(e))
+
+        return None
 
     def _prepare_messages_for_llm(
         self,
@@ -136,6 +355,9 @@ class Brain:
                 "channel_type": channel_type,
             },
         )
+
+        # LocalRouter: classify intent for observation + passive learning
+        _router_task = asyncio.create_task(self.local_router.observe(content))
 
         # Build system prompt with OpenACM context FIRST, then skills
         system_prompt = self.config.system_prompt
@@ -242,23 +464,44 @@ class Brain:
                         elif ext in [".webp"]:
                             mime = "image/webp"
 
-                        # Only append as image if it's an image
                         if mime.startswith("image/"):
-                            structured_content.append(
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                }
-                            )
-                        else:
-                            # Not an image. LiteLLM vision spec only natively supports images for now.
-                            # We append a note
-                            structured_content.append(
-                                {
+                            structured_content.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                "_file_id": att_id,  # preserved for DB serialization
+                            })
+                        elif ext == ".pdf":
+                            text = self._extract_pdf_text(raw_bytes)
+                            structured_content.append({
+                                "type": "text",
+                                "text": f"[PDF — {file_path.name}]:\n{text}",
+                            })
+                        elif ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac"):
+                            transcript = await self._transcribe_audio(raw_bytes, ext)
+                            if transcript:
+                                structured_content.append({
                                     "type": "text",
-                                    "text": f"\n[The user attached a file named {att_id} but it's not an image format supported by Vision API directly.]",
-                                }
-                            )
+                                    "text": f"[Audio transcript]:\n{transcript}",
+                                })
+                            else:
+                                structured_content.append({
+                                    "type": "text",
+                                    "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",
+                                })
+                        elif ext in (".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".xml", ".html"):
+                            try:
+                                text = raw_bytes.decode("utf-8", errors="replace")
+                                structured_content.append({
+                                    "type": "text",
+                                    "text": f"[File — {file_path.name}]:\n{text[:12000]}",
+                                })
+                            except Exception:
+                                pass
+                        else:
+                            structured_content.append({
+                                "type": "text",
+                                "text": f"[File attached: {file_path.name} ({ext})]",
+                            })
                     except Exception as e:
                         log.error("Failed to load attachment", error=str(e), file_id=att_id)
 
@@ -289,6 +532,23 @@ class Brain:
                     cap=profile.max_tools_per_call,
                 )
                 tools = tools[: profile.max_tools_per_call]
+
+        # Fast-path: if the LocalRouter is confident, skip the LLM entirely
+        if not self.local_router.observation_mode:
+            try:
+                _router_result = await asyncio.wait_for(
+                    asyncio.shield(_router_task), timeout=0.15
+                )
+                if _router_result and _router_result.is_fast_path_eligible:
+                    fast_response = await self._execute_fast_path(
+                        _router_result.intent, content, user_id, channel_id, channel_type
+                    )
+                    if fast_response is not None:
+                        return fast_response
+            except asyncio.TimeoutError:
+                pass  # Router still classifying — continue to LLM
+            except Exception as e:
+                log.warning("Fast-path error, falling back to LLM", error=str(e))
 
         # Agentic loop: LLM may call tools multiple times
         iterations = 0
@@ -437,6 +697,13 @@ class Brain:
                         "partial": True,  # signals: more tool calls may follow
                     },
                 )
+
+            # Passive learning: on the first iteration, infer intent from tool calls
+            # and teach the LocalRouter so it can fast-path next time.
+            if iterations == 1 and response["tool_calls"]:
+                asyncio.create_task(self._maybe_learn_from_tools(
+                    content, response["tool_calls"], _router_task
+                ))
 
             # Execute each tool call
             for tool_call in response["tool_calls"]:

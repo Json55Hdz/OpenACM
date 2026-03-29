@@ -34,6 +34,34 @@ class MemoryManager:
         return f"{channel_id}:{user_id}"
 
     @staticmethod
+    def _content_for_db(content: Any) -> str:
+        """Serialize message content to a clean, human-readable DB string.
+
+        Multimodal lists (text + image_url parts) are flattened:
+        - text parts → kept as-is
+        - image_url parts → replaced with [IMAGE:file_id] markers
+          (file_id is stored in the optional '_file_id' field added by brain.py)
+        This prevents raw base64 blobs from ending up in history display.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                t = part.get("type")
+                if t == "text":
+                    txt = part.get("text", "").strip()
+                    if txt:
+                        parts.append(txt)
+                elif t == "image_url":
+                    file_id = part.get("_file_id", "")
+                    parts.append(f"[IMAGE:{file_id}]" if file_id else "[📎 image]")
+            return "\n".join(parts)
+        return str(content)
+
+    @staticmethod
     def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
         """Rough token estimate: 1 token ~ 4 characters."""
         total = 0
@@ -140,8 +168,8 @@ class MemoryManager:
             except Exception:
                 pass
         
-        # Persist to database (stringified for non-text objects)
-        db_content = str(content) if not isinstance(content, str) else content
+        # Persist to database — serialize multimodal content to readable text
+        db_content = self._content_for_db(content)
         await self.database.log_message(
             user_id=user_id,
             channel_id=channel_id,

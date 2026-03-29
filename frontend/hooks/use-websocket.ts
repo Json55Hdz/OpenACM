@@ -179,6 +179,9 @@ export function useWebSocket() {
             attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
           });
         }
+      } else if (data.type === 'router.learned') {
+        storeRef.current.setRouterLearning(true);
+        setTimeout(() => storeRef.current.setRouterLearning(false), 3000);
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
         addMessage({

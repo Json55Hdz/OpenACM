@@ -254,6 +254,22 @@ def create_app() -> FastAPI:
             "provider": _brain.llm_router._current_provider,
         }
 
+    # Providers that don't need an API key
+    _NO_KEY_PROVIDERS = {"ollama"}
+
+    def _get_provider_status() -> dict[str, bool]:
+        """Derive provider status dynamically from config, using {ID}_API_KEY convention."""
+        if not _config:
+            return {}
+        result: dict[str, bool] = {}
+        for provider_id in _config.llm.providers:
+            if provider_id in _NO_KEY_PROVIDERS:
+                result[provider_id] = True
+            else:
+                env_var = f"{provider_id.upper()}_API_KEY"
+                result[provider_id] = _is_real_key(env_var)
+        return result
+
     def _is_real_key(env_var: str) -> bool:
         """Check if an env var has a real value (not empty or placeholder)."""
         val = os.environ.get(env_var, "").strip()
@@ -279,18 +295,9 @@ def create_app() -> FastAPI:
         """Check if essential configuration is missing (e.g. LLM API Key)."""
         if not _config or not _brain:
             return {"needs_setup": True}
-        # Check if ANY provider has a real key configured
-        known_key_vars = [
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY",
-            "OPENROUTER_API_KEY",
-            "OPENCODE_GO_API_KEY",
-        ]
-        any_configured = any(_is_real_key(k) for k in known_key_vars)
-        # Ollama doesn't need a key, check if it's the selected provider
-        if not any_configured and _brain.llm_router._current_provider == "ollama":
-            any_configured = True
+        # Check if ANY provider has a real key configured (derived dynamically from config)
+        provider_statuses = _get_provider_status()
+        any_configured = any(provider_statuses.values())
         if not any_configured:
             return {"needs_setup": True, "provider": _brain.llm_router._current_provider}
         return {"needs_setup": False}
@@ -458,14 +465,7 @@ def create_app() -> FastAPI:
     @app.get("/api/config/providers")
     async def get_provider_status():
         """Return boolean status for each LLM provider (no keys exposed)."""
-        providers = {
-            "openai": _is_real_key("OPENAI_API_KEY"),
-            "anthropic": _is_real_key("ANTHROPIC_API_KEY"),
-            "gemini": _is_real_key("GEMINI_API_KEY"),
-            "openrouter": _is_real_key("OPENROUTER_API_KEY"),
-            "opencode_go": _is_real_key("OPENCODE_GO_API_KEY"),
-            "ollama": True,  # Ollama is local, no key needed
-        }
+        providers = _get_provider_status()
         telegram_configured = _is_real_key("TELEGRAM_TOKEN")
         return {"providers": providers, "telegram_configured": telegram_configured}
 
@@ -514,6 +514,37 @@ def create_app() -> FastAPI:
                 log.info("Telegram bot (re)created with updated token")
 
         return {"status": "ok", "updated": updated}
+
+    @app.get("/api/config/local_router")
+    async def get_local_router_config():
+        """Get LocalRouter configuration and live stats."""
+        if not _brain:
+            return {"enabled": False}
+        stats = _brain.local_router.get_stats()
+        return {
+            "enabled": not _brain.local_router.observation_mode,
+            "observation_mode": _brain.local_router.observation_mode,
+            "confidence_threshold": _brain.local_router.confidence_threshold,
+            **stats,
+        }
+
+    @app.post("/api/config/local_router")
+    async def set_local_router_config(request: Request):
+        """Update LocalRouter settings at runtime (no restart needed)."""
+        if not _brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        data = await request.json()
+        if "enabled" in data:
+            _brain.local_router.observation_mode = not bool(data["enabled"])
+        if "confidence_threshold" in data:
+            val = float(data["confidence_threshold"])
+            if 0.5 <= val <= 1.0:
+                _brain.local_router.confidence_threshold = val
+        return {
+            "status": "ok",
+            "enabled": not _brain.local_router.observation_mode,
+            "confidence_threshold": _brain.local_router.confidence_threshold,
+        }
 
     @app.post("/api/config/verbose_channels")
     async def set_verbose_channels(request: Request):
@@ -1144,6 +1175,7 @@ async def create_web_server(
         EVENT_TOOL_RESULT,
         EVENT_LLM_REQUEST,
         EVENT_LLM_RESPONSE,
+        EVENT_ROUTER_LEARNED,
     )
 
     for evt in [
@@ -1154,6 +1186,7 @@ async def create_web_server(
         EVENT_TOOL_RESULT,
         EVENT_LLM_REQUEST,
         EVENT_LLM_RESPONSE,
+        EVENT_ROUTER_LEARNED,
     ]:
         event_bus.on(evt, on_event)
 

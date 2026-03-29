@@ -27,6 +27,7 @@ EVENT_CHANNEL_CONNECTED = "channel.connected"
 EVENT_CHANNEL_DISCONNECTED = "channel.disconnected"
 EVENT_TOOL_OUTPUT_STREAM = "tool.output_stream"  # real-time chunk from a running tool
 EVENT_ERROR = "error"
+EVENT_ROUTER_LEARNED = "router.learned"  # LocalRouter saved a new example
 
 
 class EventBus:

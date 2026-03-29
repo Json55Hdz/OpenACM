@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig } from '@/hooks/use-api';
 import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
@@ -25,6 +25,8 @@ import {
   Send,
   Globe2,
   Trash2,
+  Sparkles,
+  Zap,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -100,12 +102,88 @@ export default function ConfigPage() {
   const setModelMut = useSetModel();
   const saveSetup = useSaveSetup();
   const [isVerbose, setIsVerbose] = useState(false);
+  const [routerEnabled, setRouterEnabled] = useState(true);
+  const [routerObservation, setRouterObservation] = useState(false);
+  const [routerThreshold, setRouterThreshold] = useState(0.88);
+  const [routerStats, setRouterStats] = useState<Record<string, unknown> | null>(null);
+  const [routerLoading, setRouterLoading] = useState(false);
+
+  // Load router config on mount
+  useState(() => {
+    fetch('/api/config/local_router')
+      .then(r => r.json())
+      .then(d => {
+        setRouterEnabled(d.enabled ?? true);
+        setRouterObservation(d.observation_mode ?? false);
+        setRouterThreshold(d.confidence_threshold ?? 0.88);
+        setRouterStats(d);
+      })
+      .catch(() => {});
+  });
+
+  const handleRouterToggle = async (field: 'enabled' | 'observation_mode', value: boolean) => {
+    setRouterLoading(true);
+    try {
+      const body = field === 'enabled' ? { enabled: value } : { enabled: routerEnabled, observation_mode: value };
+      const res = await fetch('/api/config/local_router', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setRouterEnabled(data.enabled);
+      toast.success(field === 'enabled'
+        ? (value ? 'Local Router enabled' : 'Local Router disabled')
+        : (value ? 'Observation mode ON — router classifies but does not execute' : 'Fast-path active — router bypasses LLM for simple intents'));
+    } catch {
+      toast.error('Failed to update router config');
+    } finally {
+      setRouterLoading(false);
+    }
+  };
+
+  const handleThresholdChange = async (val: number) => {
+    setRouterThreshold(val);
+    try {
+      await fetch('/api/config/local_router', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confidence_threshold: val }),
+      });
+    } catch { /* silent */ }
+  };
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [telegramToken, setTelegramToken] = useState('');
   const [customModel, setCustomModel] = useState('');
   const [customProvider, setCustomProvider] = useState('');
+  const [savedCustomModels, setSavedCustomModels] = useState<Record<string, string[]>>({});
   const [googleCredJson, setGoogleCredJson] = useState('');
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('openacm_custom_models');
+      if (stored) setSavedCustomModels(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const persistCustomModel = (modelName: string, providerId: string) => {
+    setSavedCustomModels(prev => {
+      const list = prev[providerId] ?? [];
+      if (list.includes(modelName)) return prev;
+      const updated = { ...prev, [providerId]: [...list, modelName] };
+      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const removeCustomModel = (modelName: string, providerId: string) => {
+    setSavedCustomModels(prev => {
+      const updated = { ...prev, [providerId]: (prev[providerId] ?? []).filter(m => m !== modelName) };
+      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
+      return updated;
+    });
+  };
   const { data: providerStatus } = useProviderStatus();
   const { data: googleStatus } = useGoogleStatus();
   const saveGoogleCreds = useSaveGoogleCredentials();
@@ -140,12 +218,20 @@ export default function ConfigPage() {
 
   const handleSetModel = (modelName: string, providerId: string) => {
     setModelMut.mutate({ model: modelName, provider: providerId });
+  };
+
+  const handleSetCustomModel = () => {
+    const m = customModel.trim();
+    if (!m || !customProvider) return;
+    handleSetModel(m, customProvider);
+    persistCustomModel(m, customProvider);
     setCustomModel('');
   };
 
-  const configuredProviders = PROVIDERS.filter(
-    (p) => providerStatus?.providers?.[p.id]
-  );
+  // Build provider list from API response, falling back to static metadata where available
+  const configuredProviders = Object.entries(providerStatus?.providers ?? {})
+    .filter(([, enabled]) => enabled)
+    .map(([id]) => getProviderById(id) ?? { id, name: id, envVar: '', needsKey: true, suggestedModels: [], apiKeyUrl: '', description: '' });
   const activeProviderId = model?.provider || '';
 
   const handleTelegramSave = async () => {
@@ -208,7 +294,8 @@ export default function ConfigPage() {
                       {configuredProviders.map((prov) => {
                         const isActive = activeProviderId === prov.id;
                         const provDef = getProviderById(prov.id);
-                        const models = provDef?.suggestedModels ?? [];
+                        const suggestedModels = provDef?.suggestedModels ?? [];
+                        const customSaved = (savedCustomModels[prov.id] ?? []).filter(m => !suggestedModels.includes(m));
 
                         return (
                           <div key={prov.id} className={`rounded-lg border transition-colors ${
@@ -226,7 +313,7 @@ export default function ConfigPage() {
                               )}
                             </div>
                             <div className="px-3 pb-2 flex flex-wrap gap-1.5">
-                              {models.map((m) => {
+                              {suggestedModels.map((m) => {
                                 const isCurrent = model?.model === m && isActive;
                                 return (
                                   <button
@@ -241,6 +328,31 @@ export default function ConfigPage() {
                                   >
                                     {m}
                                   </button>
+                                );
+                              })}
+                              {customSaved.map((m) => {
+                                const isCurrent = model?.model === m && isActive;
+                                return (
+                                  <div key={m} className="relative group/cm flex items-center">
+                                    <button
+                                      onClick={() => handleSetModel(m, prov.id)}
+                                      disabled={setModelMut.isPending}
+                                      className={`pl-2.5 pr-6 py-1 rounded text-xs font-mono transition-colors ${
+                                        isCurrent
+                                          ? 'bg-violet-600 text-white'
+                                          : 'bg-slate-700/60 text-violet-300 hover:bg-slate-600 hover:text-white border border-violet-700/40'
+                                      } disabled:opacity-50`}
+                                    >
+                                      {m}
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); removeCustomModel(m, prov.id); }}
+                                      className="absolute right-1 text-slate-500 hover:text-red-400 transition-colors opacity-0 group-hover/cm:opacity-100"
+                                      title="Remove"
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
                                 );
                               })}
                             </div>
@@ -273,12 +385,7 @@ export default function ConfigPage() {
                       className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     />
                     <button
-                      onClick={() => {
-                        if (customModel.trim() && customProvider) {
-                          handleSetModel(customModel.trim(), customProvider);
-                          setCustomModel('');
-                        }
-                      }}
+                      onClick={handleSetCustomModel}
                       disabled={!customModel.trim() || !customProvider || setModelMut.isPending}
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                     >
@@ -468,6 +575,77 @@ export default function ConfigPage() {
                     </button>
                   </div>
                 </details>
+              )}
+            </div>
+          </ConfigSection>
+
+          {/* Local Router */}
+          <ConfigSection title="Local Intent Router" subtitle="Hybrid local/cloud processing — bypasses the LLM for simple requests" icon={Zap}>
+            <div className="space-y-4">
+              {/* Enable/disable */}
+              <div className="flex items-center justify-between py-3 border-b border-slate-800">
+                <div>
+                  <span className="text-sm text-slate-300">Enable Local Router</span>
+                  <p className="text-xs text-slate-500 mt-0.5">Classify intents locally using sentence-transformers</p>
+                </div>
+                <button
+                  onClick={() => { setRouterEnabled(!routerEnabled); handleRouterToggle('enabled', !routerEnabled); }}
+                  disabled={routerLoading}
+                  className={cn('p-1 rounded transition-colors', routerEnabled ? 'text-violet-400' : 'text-slate-500')}
+                >
+                  {routerEnabled ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                </button>
+              </div>
+
+              {/* Observation mode */}
+              <div className="flex items-center justify-between py-3 border-b border-slate-800">
+                <div>
+                  <span className="text-sm text-slate-300">Observation Mode</span>
+                  <p className="text-xs text-slate-500 mt-0.5">ON = classify only, log stats, never execute. OFF = fast-path active</p>
+                </div>
+                <button
+                  onClick={() => { setRouterObservation(!routerObservation); handleRouterToggle('observation_mode', !routerObservation); }}
+                  disabled={routerLoading || !routerEnabled}
+                  className={cn('p-1 rounded transition-colors', routerObservation ? 'text-amber-400' : 'text-slate-500', !routerEnabled && 'opacity-40')}
+                >
+                  {routerObservation ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
+                </button>
+              </div>
+
+              {/* Confidence threshold */}
+              <div className="py-3 border-b border-slate-800">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-slate-300">Confidence Threshold</span>
+                  <span className="text-sm font-mono text-violet-400">{routerThreshold.toFixed(2)}</span>
+                </div>
+                <input
+                  type="range" min="0.50" max="1.00" step="0.01"
+                  value={routerThreshold}
+                  onChange={e => setRouterThreshold(parseFloat(e.target.value))}
+                  onMouseUp={e => handleThresholdChange(parseFloat((e.target as HTMLInputElement).value))}
+                  disabled={!routerEnabled}
+                  className="w-full accent-violet-500 disabled:opacity-40"
+                />
+                <div className="flex justify-between text-xs text-slate-600 mt-1">
+                  <span>0.50 — aggressive</span>
+                  <span>1.00 — conservative</span>
+                </div>
+              </div>
+
+              {/* Live stats */}
+              {routerStats && (
+                <div className="grid grid-cols-3 gap-3 pt-2">
+                  {[
+                    { label: 'Classified', value: String(routerStats.total_classified ?? 0) },
+                    { label: 'Fast-path', value: String(routerStats.fast_path_eligible ?? 0) },
+                    { label: 'Savings', value: `${routerStats.potential_savings_pct ?? 0}%` },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="bg-slate-800/50 rounded-lg p-3 text-center">
+                      <div className="text-lg font-bold text-violet-400">{value}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </ConfigSection>

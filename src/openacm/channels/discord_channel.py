@@ -26,6 +26,7 @@ class DiscordChannel(BaseChannel):
         self.brain = brain
         self.event_bus = event_bus
         self._connected = False
+        self.ready_event = asyncio.Event()
 
         # Set up intents
         intents = discord.Intents.default()
@@ -49,6 +50,7 @@ class DiscordChannel(BaseChannel):
         @self._client.event
         async def on_ready():
             self._connected = True
+            self.ready_event.set()
             log.info("Discord connected", user=str(self._client.user))
             await self.event_bus.emit(EVENT_CHANNEL_CONNECTED, {
                 "channel": "discord",
@@ -167,6 +169,7 @@ class DiscordChannel(BaseChannel):
         """Start the Discord bot."""
         if self._is_placeholder_token(self.config.token):
             log.warning("Discord token not configured or is a placeholder, skipping")
+            self.ready_event.set()
             return
 
         try:
@@ -174,6 +177,7 @@ class DiscordChannel(BaseChannel):
         except Exception as e:
             log.error("Discord connection failed", error=str(e))
             self._connected = False
+            self.ready_event.set()  # unblock waiters even on failure
             await self.event_bus.emit(EVENT_CHANNEL_DISCONNECTED, {
                 "channel": "discord",
                 "error": str(e),

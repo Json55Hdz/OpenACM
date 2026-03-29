@@ -51,6 +51,11 @@ class ToolRegistry:
         "system": [
             "run", "execute", "command", "terminal", "bash", "shell", "install",
             "system", "proceso", "ejecuta", "ejecutar", "pip", "npm",
+            # System info keywords
+            "stats", "stat", "cpu", "ram", "memoria", "memory", "disco", "disk",
+            "gpu", "temperatura", "temperature", "bateria", "battery", "proceso",
+            "rendimiento", "performance", "uso", "usage", "recursos", "resources",
+            "info del pc", "info pc", "como esta el pc", "estado del pc",
         ],
         "file": [
             "file", "read", "write", "save", "directory", "folder",
@@ -67,8 +72,9 @@ class ToolRegistry:
             "recuerda", "memoria", "olvida", "recordar",
         ],
         "media": [
-            "screenshot", "image", "photo", "capture", "pdf", "send_file",
-            "captura", "pantalla", "foto", "imagen", "enviar archivo",
+            "screenshot", "screen", "image", "photo", "capture", "pdf", "send_file",
+            "captura", "pantalla", "panta", "foto", "imagen", "enviar archivo",
+            "toma un", "toma una", "hazme un", "dame una captura", "graba",
         ],
         "blender": [
             "blender", "3d", "model", "modelar", "modela", "mesh", "malla",

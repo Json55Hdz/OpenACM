@@ -5,7 +5,7 @@ import { PROVIDERS } from '@/lib/providers';
 import { ProviderCard } from '@/components/setup/provider-card';
 import { useProviderStatus, useSaveSetup } from '@/hooks/use-setup';
 import { translations } from '@/lib/translations';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 
 const t = translations.onboarding.providerSetup;
@@ -83,6 +83,17 @@ export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderS
             mode={mode}
           />
         ))}
+      </div>
+
+      {/* Privacy notice */}
+      <div className="flex items-start gap-2.5 p-3 bg-green-500/5 border border-green-500/20 rounded-lg">
+        <ShieldCheck size={15} className="text-green-400 mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          <span className="text-green-400 font-medium">Your data stays local.</span>{' '}
+          API keys are stored only in your local <code className="text-slate-300">.env</code> file.
+          OpenACM does not collect, transmit, or share any keys, conversations, or files with third parties.
+          All traffic goes directly from your machine to the provider you choose.
+        </p>
       </div>
 
       <div className="pt-2">

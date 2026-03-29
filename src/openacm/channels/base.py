@@ -2,12 +2,18 @@
 Abstract base class for all messaging channels.
 """
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
 
 class BaseChannel(ABC):
     """Base class for all messaging channels."""
+
+    # Subclasses must create this in __init__:
+    #   self.ready_event = asyncio.Event()
+    # and set() it once connected (or on failure, so callers don't hang).
+    ready_event: asyncio.Event
 
     @property
     @abstractmethod
