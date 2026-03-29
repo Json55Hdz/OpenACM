@@ -12,6 +12,7 @@ import sys
 import structlog
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 from rich.text import Text
 
 from openacm.core.config import load_config, AppConfig
@@ -62,30 +63,55 @@ class OpenACM:
         """Start OpenACM."""
         self._print_banner()
 
-        # Phase 1: Load config
-        console.print("[dim]Loading configuration...[/dim]")
-        self.config = load_config()
+        steps = [
+            "Loading configuration",
+            "Initializing database",
+            "Loading AI & memory",
+            "Registering tools",
+            "Starting channels",
+            "Starting web dashboard",
+        ]
+        total = len(steps)
 
-        # Phase 2: Initialize core systems
-        console.print("[dim]Initializing core systems...[/dim]")
-        await self._init_core()
+        with Progress(
+            SpinnerColumn(),
+            BarColumn(bar_width=28),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("•"),
+            TextColumn("[bold cyan]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(steps[0], total=total)
 
-        # Phase 3: Register tools
-        console.print("[dim]Registering tools...[/dim]")
-        await self._init_tools()
+            # Phase 1: Load config
+            progress.update(task, description=steps[0])
+            self.config = load_config()
+            progress.advance(task)
 
-        # Phase 4: Start channels
-        console.print("[dim]Starting channels...[/dim]")
-        await self._init_channels()
+            # Phase 2-3: Initialize core systems
+            progress.update(task, description=steps[1])
+            await self._init_core(progress, task, steps)
 
-        # Phase 5: Generate dashboard token
-        from openacm.security.crypto import get_or_create_dashboard_token
+            # Phase 4: Register tools
+            progress.update(task, description=steps[3])
+            await self._init_tools()
+            progress.advance(task)
 
-        dashboard_token = get_or_create_dashboard_token()
+            # Phase 5: Start channels
+            progress.update(task, description=steps[4])
+            await self._init_channels()
+            progress.advance(task)
 
-        # Phase 5.1: Start web dashboard
-        console.print("[dim]Starting web dashboard...[/dim]")
-        await self._init_web()
+            # Generate dashboard token
+            from openacm.security.crypto import get_or_create_dashboard_token
+            dashboard_token = get_or_create_dashboard_token()
+
+            # Phase 6: Start web dashboard
+            progress.update(task, description=steps[5])
+            await self._init_web()
+            progress.advance(task)
 
         console.print(
             Panel(
@@ -106,11 +132,14 @@ class OpenACM:
         # Phase 6: Interactive console loop
         await self._console_loop()
 
-    async def _init_core(self):
+    async def _init_core(self, progress=None, task=None, steps=None):
         """Initialize core subsystems."""
-        # Create workspace dir and expose it as an env var so all subprocesses inherit it
         import os
         from pathlib import Path
+
+        def _step(desc):
+            if progress and task is not None:
+                progress.update(task, description=desc)
 
         workspace = Path(self.config.storage.workspace_path)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -121,42 +150,35 @@ class OpenACM:
         self.event_bus = EventBus()
 
         # Database
+        _step("Initializing database")
         self.database = Database(self.config.storage.database_path)
         await self.database.initialize()
+        if progress and task is not None:
+            progress.advance(task)
 
-        # Security
+        # Security + LLM Router + Memory
+        _step("Loading AI & memory")
         self.security_policy = SecurityPolicy(self.config.security)
         self.sandbox = Sandbox(self.security_policy, self.event_bus)
-
-        # LLM Router
         self.llm_router = LLMRouter(self.config.llm, self.event_bus)
-
-        # Memory
         self.memory = MemoryManager(self.database, self.config.assistant)
 
         # RAG Engine
         try:
             import chromadb
             from openacm.core import rag
-
             rag._rag_engine = rag.RAGEngine()
             await rag._rag_engine.initialize()
-            console.print("  [green]✓[/green] Optional RAG engine ready")
         except ImportError:
-            console.print(
-                "  [yellow]⚠[/yellow] RAG engine dependencies missing (chromadb/sentence-transformers)"
-            )
-        except Exception as e:
-            console.print(f"  [yellow]⚠[/yellow] RAG engine initialization failed: {e}")
+            pass
+        except Exception:
+            pass
 
         # Skill Manager
         self.skill_manager = SkillManager(self.database)
         await self.skill_manager.initialize()
-        skill_count = len(await self.skill_manager.get_all_skills())
-        active_count = len(self.skill_manager._active_skills)
-        console.print(
-            f"  [green]✓[/green] Skill manager ready ({active_count}/{skill_count} active)"
-        )
+        if progress and task is not None:
+            progress.advance(task)
 
         # LLM Router — restore persisted model preference
         await self.llm_router.load_persisted_model(self.database)
