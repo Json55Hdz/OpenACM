@@ -11,6 +11,18 @@ log = structlog.get_logger()
 ENV_FILE = Path("config/.env")
 
 
+def get_media_dir() -> Path:
+    """Return the absolute path to data/media/, creating it if needed.
+
+    Uses OPENACM_PROJECT_ROOT (set by app.py) so the path is always
+    correct regardless of the process working directory.
+    """
+    root = os.environ.get("OPENACM_PROJECT_ROOT", str(Path.cwd()))
+    media = Path(root) / "data" / "media"
+    media.mkdir(parents=True, exist_ok=True)
+    return media
+
+
 def get_or_create_key() -> bytes:
     """Retrieve the encryption key from .env or generate a new one if missing."""
     load_dotenv(ENV_FILE)
@@ -54,20 +66,27 @@ def encrypt_file(file_path: Path):
 
 
 def decrypt_file(file_path: Path) -> bytes:
-    """Read an encrypted file from disk and return its decrypted byte content."""
-    cipher = get_cipher()
+    """Read a media file from disk.
+
+    Encryption has been removed. This function tries a plain read first;
+    if the data looks like a Fernet token (legacy encrypted files), it
+    decrypts transparently so old files still work.
+    """
     with open(file_path, "rb") as f:
-        encrypted_data = f.read()
-    return cipher.decrypt(encrypted_data)
+        data = f.read()
+    # Legacy Fernet tokens start with 'gAAAAA' (base64-encoded header)
+    if data[:6] == b"gAAAAA":
+        try:
+            return get_cipher().decrypt(data)
+        except Exception:
+            pass
+    return data
 
 
 def save_encrypted(data: bytes, dest_path: Path):
-    """Save raw bytes to an encrypted file on disk."""
-    cipher = get_cipher()
-    encrypted = cipher.encrypt(data)
+    """Save bytes to disk (plain, encryption removed)."""
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest_path, "wb") as f:
-        f.write(encrypted)
+    dest_path.write_bytes(data)
 
 
 def get_or_create_dashboard_token() -> str:

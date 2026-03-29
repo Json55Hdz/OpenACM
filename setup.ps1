@@ -24,7 +24,10 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "[*] Installing 'uv' (fast Python package manager)..." -ForegroundColor Yellow
     try {
         Invoke-RestMethod -Uri "https://astral.sh/uv/install.ps1" | Invoke-Expression
-        $env:Path += ";$HOME\.cargo\bin"
+        # uv installs to .local\bin on newer versions, .cargo\bin on older — add both
+        foreach ($p in @("$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin", "$HOME\.local\bin", "$HOME\.cargo\bin")) {
+            if (Test-Path $p) { $env:Path = "$p;$env:Path" }
+        }
         Write-Host "[OK] 'uv' installed successfully." -ForegroundColor Green
     } catch {
         Write-Host "[ERROR] Failed to install uv. Install it manually from https://docs.astral.sh/uv/" -ForegroundColor Red

@@ -28,6 +28,7 @@ import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 import { TerminalPanel } from '@/components/terminal/terminal-panel';
 import { useTerminalStore } from '@/stores/terminal-store';
+import { useAuthStore } from '@/stores/auth-store';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -52,17 +53,17 @@ function TypingIndicator() {
   );
 }
 
-function MessageBubble({ 
-  content, 
-  role, 
-  badge, 
+function MessageBubble({
+  content,
+  role,
+  badge,
   attachments,
   toolCall
-}: { 
-  content: string; 
-  role: 'user' | 'assistant' | 'error' | 'system'; 
+}: {
+  content: string;
+  role: 'user' | 'assistant' | 'error' | 'system';
   badge?: string;
-  attachments?: Array<{ name: string; type: string }>;
+  attachments?: Array<{ id?: string; name: string; type: string }>;
   toolCall?: {
     tool: string;
     arguments: string;
@@ -73,6 +74,7 @@ function MessageBubble({
   const isUser = role === 'user';
   const isError = role === 'error';
   const isSystem = role === 'system';
+  const token = useAuthStore((s) => s.token);
   
   // System/tool messages have different styling
   if (isSystem && toolCall) {
@@ -143,13 +145,36 @@ function MessageBubble({
           <p className="whitespace-pre-wrap">{content}</p>
           
           {attachments && attachments.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {attachments.map((att, idx) => (
-                <div key={idx} className="flex items-center gap-2 text-xs bg-slate-700/50 px-2 py-1 rounded">
-                  <Paperclip size={12} />
-                  <span className="truncate">{att.name}</span>
-                </div>
-              ))}
+            <div className="mt-3 space-y-2">
+              {attachments.map((att, idx) => {
+                const fileId = att.id || att.name;
+                const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
+                const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
+                const previewUrl = `/api/media/${fileId}?token=${token}`;
+                return (
+                  <div key={idx} className="rounded-lg overflow-hidden border border-slate-600">
+                    {isMedia && (
+                      <img
+                        src={previewUrl}
+                        alt={att.name}
+                        className="max-w-xs max-h-48 object-contain bg-slate-900"
+                      />
+                    )}
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 text-xs">
+                      <Paperclip size={12} className="text-slate-400 flex-shrink-0" />
+                      <span className="truncate text-slate-300 flex-1">{att.name}</span>
+                      <a
+                        href={downloadUrl}
+                        download={att.name}
+                        className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors flex-shrink-0"
+                      >
+                        <Download size={11} />
+                        Download
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

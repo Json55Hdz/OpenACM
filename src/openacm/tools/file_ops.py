@@ -223,7 +223,7 @@ async def search_files(directory: str, pattern: str, max_results: int = 50, **kw
     description=(
         "[CRITICAL TOOL] Upload a local file so the user can download it from the chat. "
         "MUST USE THIS when you generate any file for the user (PDF, Excel, Word, images, ZIP, etc.). "
-        "This tool encrypts the file and returns a secure download link that you must include in your response. "
+        "This tool saves the file and returns a download link that you must include in your response. "
         "EXAMPLE: After generating a PDF with run_python, call this tool with the PDF path to make it downloadable."
     ),
     parameters={
@@ -237,7 +237,7 @@ async def search_files(directory: str, pattern: str, max_results: int = 50, **kw
         "required": ["path"],
     },
     risk_level="low",
-    category="media",
+    category="general",
 )
 async def send_file_to_chat(path: str, **kwargs) -> str:
     """Send a local file to the secure media storage and get a link."""
@@ -252,7 +252,7 @@ async def send_file_to_chat(path: str, **kwargs) -> str:
             return f"Error: Not a file: {path}"
 
         import secrets
-        from openacm.security.crypto import save_encrypted
+        from openacm.security.crypto import save_encrypted, get_media_dir
 
         file_bytes = file_path.read_bytes()
         ext = "".join(file_path.suffixes)
@@ -261,16 +261,17 @@ async def send_file_to_chat(path: str, **kwargs) -> str:
 
         file_id = secrets.token_hex(16)
         file_name = f"upload_{file_id}{ext}"
-        dest_path = Path("data/media") / file_name
+        dest_path = get_media_dir() / file_name
 
         save_encrypted(file_bytes, dest_path)
 
-        # Return in a format that brain can easily detect
-        # ATTACHMENT: prefix helps brain identify this
+        # ATTACHMENT: prefix tells brain to show a download button in the chat UI.
+        # Do NOT tell the user to include the URL in text — the frontend handles it.
         return (
             f"ATTACHMENT:{file_name}\n"
-            f"✅ File ready: {file_path.name}\n"
-            f"📎 Download link (write this EXACTLY as shown, no backticks): /api/media/{file_name}"
+            f"✅ File '{file_path.name}' is ready. "
+            f"A download button will appear automatically in the chat. "
+            f"Just tell the user the file is ready — do NOT include the /api/media/ URL in your reply."
         )
     except PermissionError:
         return f"Error: Permission denied reading {path}"

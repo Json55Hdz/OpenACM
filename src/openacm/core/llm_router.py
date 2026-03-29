@@ -224,7 +224,17 @@ class LLMRouter:
         """
         import uuid as _uuid_norm
 
-        is_kimi = "kimi" in self._current_provider.lower() or "moonshot" in self._current_provider.lower()
+        _provider_lower = self._current_provider.lower()
+        # Use explicit model if set; fall back to config default (e.g. on fresh install)
+        _model_lower = (self._current_model or "").lower()
+        if not _model_lower and self._current_provider in self.config.providers:
+            _model_lower = self.config.providers[self._current_provider].get("default_model", "").lower()
+        is_kimi = (
+            "kimi" in _provider_lower
+            or "moonshot" in _provider_lower
+            or "kimi" in _model_lower
+            or "moonshot" in _model_lower
+        )
 
         # Pass 0: strip tool messages with empty tool_call_id
         messages = [
@@ -333,8 +343,8 @@ class LLMRouter:
 
         effective_tc = tool_choice_override or self.get_provider_profile().tool_choice_mode
 
-        # Normalize messages (fix orphaned tool calls/responses, strip unknown fields)
-        final = self._normalize_messages(messages)
+        # Messages already normalized by the caller (_chat_attempt); use as-is
+        final = messages
 
         payload: dict[str, Any] = {
             "model": model,

@@ -103,14 +103,49 @@ class DiscordChannel(BaseChannel):
                         channel_type="discord",
                     )
 
-                    # Split long messages (Discord limit: 2000 chars)
-                    if len(response) <= 2000:
-                        await message.reply(response)
+                    # Extract ATTACHMENT: lines and build discord.File list
+                    import io
+                    import os as _os
+                    from pathlib import Path
+                    from openacm.security.crypto import decrypt_file
+
+                    _project_root = _os.environ.get("OPENACM_PROJECT_ROOT", ".")
+                    _media_dir = Path(_project_root) / "data" / "media"
+
+                    lines = response.splitlines()
+                    attachment_names = [
+                        l[len("ATTACHMENT:"):].strip()
+                        for l in lines if l.startswith("ATTACHMENT:")
+                    ]
+                    clean_text = "\n".join(
+                        l for l in lines if not l.startswith("ATTACHMENT:")
+                    ).strip()
+
+                    discord_files = []
+                    for fname in attachment_names:
+                        fpath = _media_dir / fname
+                        if fpath.exists():
+                            try:
+                                raw = decrypt_file(fpath)
+                                discord_files.append(discord.File(io.BytesIO(raw), filename=fname))
+                            except Exception as fe:
+                                log.warning("Discord attachment read failed", file=fname, error=str(fe))
+
+                    # Send with files if any
+                    send_kwargs: dict[str, Any] = {}
+                    if discord_files:
+                        send_kwargs["files"] = discord_files
+
+                    if not clean_text and discord_files:
+                        await message.reply(**send_kwargs)
+                    elif len(clean_text) <= 2000:
+                        await message.reply(clean_text or "\u200b", **send_kwargs)
                     else:
-                        chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
+                        chunks = [clean_text[i:i+1990] for i in range(0, len(clean_text), 1990)]
                         for i, chunk in enumerate(chunks):
+                            kw = send_kwargs if i == 0 else {}
                             if i == 0:
-                                await message.reply(chunk)
+                                await message.reply(chunk, **kw)
                             else:
                                 await message.channel.send(chunk)
 

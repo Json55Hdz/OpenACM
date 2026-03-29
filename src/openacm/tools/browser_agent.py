@@ -172,18 +172,17 @@ async def browser_agent(
             return f"✅ Filled element '{selector}' with value '{value}'."
 
         elif action == "screenshot":
-            from openacm.security.crypto import save_encrypted
-
+            from openacm.security.crypto import save_encrypted, get_media_dir
             file_id = secrets.token_hex(16)
             file_name = f"browser_{file_id}.png"
-            dest_path = Path("data/media") / file_name
+            dest_path = get_media_dir() / file_name
 
             screenshot_bytes = await page.screenshot(full_page=False)
             save_encrypted(screenshot_bytes, dest_path)
 
             return (
-                f"✅ Browser screenshot successfully taken! Tell the user they can view the screenshot "
-                f"by returning this exact URL in your message: /api/media/{file_name}"
+                f"ATTACHMENT:{file_name}\n"
+                f"✅ Browser screenshot taken. A preview will appear automatically in the chat."
             )
 
         elif action == "extract_html":

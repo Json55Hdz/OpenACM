@@ -41,6 +41,7 @@ interface WebSocketMessage {
   message?: string;
   status?: string;
   partial?: boolean;
+  attachments?: string[];
 }
 
 export function useWebSocket() {
@@ -88,6 +89,7 @@ export function useWebSocket() {
         storeRef.current.addMessage({
           content: data.content || '',
           role: 'assistant',
+          attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
         });
       } else if (data.type === 'command') {
         storeRef.current.addMessage({
@@ -160,7 +162,11 @@ export function useWebSocket() {
         if (data.channel_type === 'web') {
           // Partial messages (AI text emitted before tool calls) — show immediately
           if (data.partial && data.channel_id === currentTarget.channel) {
-            addMessage({ content: data.content || '', role: 'assistant' });
+            addMessage({
+              content: data.content || '',
+              role: 'assistant',
+              attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
+            });
           }
           // Non-partial web responses come through /ws/chat directly — skip the echo
           return;
@@ -170,9 +176,11 @@ export function useWebSocket() {
             content: data.content || '',
             role: 'assistant',
             badge: `Reply to ${data.channel_type}`,
+            attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
           });
         }
       } else if (data.type === 'tool.called') {
+        if (data.channel_id !== currentTarget.channel) return;
         addMessage({
           content: `Executing: ${data.tool || 'tool'}`,
           role: 'system',
@@ -183,9 +191,9 @@ export function useWebSocket() {
             status: 'running',
           },
         });
-        // Mirror terminal tools to the terminal panel
         _mirrorToolToTerminal('called', data.tool || '', data.arguments || '');
       } else if (data.type === 'tool.result') {
+        if (data.channel_id !== currentTarget.channel) return;
         addMessage({
           content: `${data.tool || 'Tool'} completed`,
           role: 'system',
@@ -197,7 +205,6 @@ export function useWebSocket() {
             status: 'completed',
           },
         });
-        // Mirror terminal tools to the terminal panel (final result summary)
         _mirrorToolToTerminal('result', data.tool || '', data.result || '');
       }
     };

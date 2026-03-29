@@ -55,6 +55,8 @@ class ToolRegistry:
         "file": [
             "file", "read", "write", "save", "directory", "folder",
             "archivo", "carpeta", "leer", "escribir", "guardar", "lista",
+            "pdf", "excel", "word", "pptx", "powerpoint", "xlsx", "docx",
+            "csv", "zip", "download", "descargar", "adjunto", "adjuntar",
         ],
         "web": [
             "search", "browse", "url", "website", "navigate", "click",
@@ -103,9 +105,11 @@ class ToolRegistry:
             if any(kw in msg_lower for kw in keywords):
                 matched_categories.add(cat)
 
-        # Safety fallback: if no specific intent detected, send all tools
+        # No specific intent detected → send only general-category tools.
+        # Specialized tools (google, blender, etc.) are expensive and should
+        # only appear when the user's message explicitly asks for them.
         if matched_categories == {"general"}:
-            return self.get_tools_schema()
+            return [t.to_openai_schema() for t in self.tools.values() if t.category == "general"]
 
         filtered = [
             t.to_openai_schema()

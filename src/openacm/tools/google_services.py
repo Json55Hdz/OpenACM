@@ -450,6 +450,63 @@ async def drive_search(name: str, **kwargs) -> str:
     return await drive_list(query=f'name contains "{name}"')
 
 
+@tool(
+    name="drive_upload",
+    description="Upload a local file to Google Drive.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "file_path": {
+                "type": "string",
+                "description": "Absolute or relative path to the local file to upload.",
+            },
+            "folder_id": {
+                "type": "string",
+                "description": "Google Drive folder ID to upload into. Leave empty for root.",
+                "default": "",
+            },
+        },
+        "required": ["file_path"],
+    },
+    risk_level="medium",
+    category="google",
+)
+async def drive_upload(file_path: str, folder_id: str = "", **kwargs) -> str:
+    """Upload a local file to Google Drive."""
+    import mimetypes
+    from pathlib import Path
+    from googleapiclient.http import MediaFileUpload
+
+    path = Path(file_path)
+    if not path.exists():
+        return f"Error: archivo no encontrado: {file_path}"
+
+    try:
+        service = await _get_google_service("drive", "v3")
+
+        mime_type, _ = mimetypes.guess_type(str(path))
+        mime_type = mime_type or "application/octet-stream"
+
+        metadata: dict = {"name": path.name}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        media = MediaFileUpload(str(path), mimetype=mime_type, resumable=True)
+        result = service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id, name, webViewLink",
+        ).execute()
+
+        name = result.get("name", path.name)
+        link = result.get("webViewLink", "")
+        file_id = result.get("id", "")
+        return f"✅ '{name}' subido a Drive.\nID: {file_id}\nEnlace: {link}"
+
+    except Exception as e:
+        return f"Error subiendo a Drive: {str(e)}"
+
+
 # ═══════════════════════════════════════════════════════
 #  YOUTUBE TOOLS
 # ═══════════════════════════════════════════════════════

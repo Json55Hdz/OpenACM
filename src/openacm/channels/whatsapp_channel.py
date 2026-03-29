@@ -134,6 +134,42 @@ class WhatsAppChannel(BaseChannel):
                 channel_id=chat_id,
                 channel_type="whatsapp",
             )
-            await self.send_message(chat_id, response)
+
+            # Extract ATTACHMENT: lines and send files via bridge
+            import base64
+            import os as _os
+            from pathlib import Path
+            from openacm.security.crypto import decrypt_file
+
+            _project_root = _os.environ.get("OPENACM_PROJECT_ROOT", ".")
+            _media_dir = Path(_project_root) / "data" / "media"
+
+            lines = response.splitlines()
+            attachment_names = [
+                l[len("ATTACHMENT:"):].strip()
+                for l in lines if l.startswith("ATTACHMENT:")
+            ]
+            clean_text = "\n".join(
+                l for l in lines if not l.startswith("ATTACHMENT:")
+            ).strip()
+
+            for fname in attachment_names:
+                fpath = _media_dir / fname
+                if fpath.exists() and self._http_client:
+                    try:
+                        raw = decrypt_file(fpath)
+                        b64 = base64.b64encode(raw).decode()
+                        await self._http_client.post("/send-file", json={
+                            "to": chat_id,
+                            "filename": fname,
+                            "data": b64,
+                            "caption": clean_text if clean_text else "",
+                        })
+                        clean_text = ""  # Caption already sent with the file
+                    except Exception as fe:
+                        log.warning("WhatsApp file send failed", file=fname, error=str(fe))
+
+            if clean_text:
+                await self.send_message(chat_id, clean_text)
         except Exception as e:
             log.error("WhatsApp message processing error", error=str(e))

@@ -218,14 +218,14 @@ class Brain:
         if attachments:
             import base64
             from pathlib import Path
-            from openacm.security.crypto import decrypt_file
+            from openacm.security.crypto import decrypt_file, get_media_dir
 
             structured_content = []
             if content:
                 structured_content.append({"type": "text", "text": content})
 
             for att_id in attachments:
-                file_path = Path("data/media") / att_id
+                file_path = get_media_dir() / att_id
                 if file_path.exists():
                     try:
                         raw_bytes = decrypt_file(file_path)
@@ -402,12 +402,10 @@ class Brain:
 
                 await self.event_bus.emit(EVENT_MESSAGE_SENT, message_data)
 
-                # Also update the response to show attachment links clearly
+                # Prefix ATTACHMENT: lines so server.py extracts them as structured attachments
                 if generated_attachments:
-                    attachment_links = "\n\n".join(
-                        [f"📎 /api/media/{att}" for att in generated_attachments]
-                    )
-                    return f"{assistant_content}\n\n{attachment_links}"
+                    prefix = "\n".join(f"ATTACHMENT:{att}" for att in generated_attachments)
+                    return f"{prefix}\n{assistant_content}"
 
                 return assistant_content
 
@@ -481,16 +479,13 @@ class Brain:
                             tool_name, tool_args, user_id, channel_id, _brain=self
                         )
 
-                        # Check if this is send_file_to_chat and extract attachment
-                        if tool_name == "send_file_to_chat" and result.startswith("ATTACHMENT:"):
-                            # Extract filename from ATTACHMENT:filename format
-                            lines = result.split("\n")
-                            if lines and lines[0].startswith("ATTACHMENT:"):
-                                filename = lines[0].replace("ATTACHMENT:", "").strip()
+                        # Any tool can return ATTACHMENT:filename on the first line
+                        if result.startswith("ATTACHMENT:"):
+                            first_line = result.split("\n")[0]
+                            filename = first_line.replace("ATTACHMENT:", "").strip()
+                            if filename:
                                 generated_attachments.append(filename)
-                                log.info(
-                                    "File attachment detected", filename=filename, tool=tool_name
-                                )
+                                log.info("File attachment detected", filename=filename, tool=tool_name)
                     else:
                         result = f"Error: Tool '{tool_name}' not found"
 
@@ -559,12 +554,10 @@ class Brain:
 
                 await self.event_bus.emit(EVENT_MESSAGE_SENT, message_data)
 
-                # Also update the response to show attachment links clearly
+                # Prefix ATTACHMENT: lines so server.py extracts them as structured attachments
                 if generated_attachments:
-                    attachment_links = "\n\n".join(
-                        [f"📎 /api/media/{att}" for att in generated_attachments]
-                    )
-                    return f"{final_content}\n\n{attachment_links}"
+                    prefix = "\n".join(f"ATTACHMENT:{att}" for att in generated_attachments)
+                    return f"{prefix}\n{final_content}"
 
                 return final_content
             else:

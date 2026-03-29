@@ -8,7 +8,7 @@ import secrets
 from pathlib import Path
 
 from openacm.tools.base import tool
-from openacm.security.crypto import save_encrypted
+from openacm.security.crypto import save_encrypted, get_media_dir
 
 @tool(
     name="take_screenshot",
@@ -37,11 +37,7 @@ async def take_screenshot(monitor: int = 0, **kwargs) -> str:
     from PIL import Image
     import io
 
-    # Create media directory if it doesn't exist
-    media_dir = Path("data/media")
-    if not media_dir.exists():
-        media_dir.mkdir(parents=True, exist_ok=True)
-    
+    media_dir = get_media_dir()
     file_id = f"screenshot_{int(time.time())}_{secrets.token_hex(4)}.png"
     dest_path = media_dir / file_id
     

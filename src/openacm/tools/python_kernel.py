@@ -148,9 +148,10 @@ async def run_python(code: str, reset: bool = False, **kwargs) -> str:
                         # SECURITY: POR DISEÑO - Decodifica imágenes matplotlib del kernel
                         raw_bytes = base64.b64decode(png_b64)
 
+                        from openacm.security.crypto import get_media_dir
                         file_id = secrets.token_hex(16)
                         file_name = f"plot_{file_id}.png"
-                        dest_path = Path("data/media") / file_name
+                        dest_path = get_media_dir() / file_name
 
                         save_encrypted(raw_bytes, dest_path)
                         media_files.append(file_name)

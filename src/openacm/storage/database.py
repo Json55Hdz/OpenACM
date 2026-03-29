@@ -103,7 +103,96 @@ class Database:
             );
         """)
         await self._db.commit()
+
+        await self._run_migrations()
         log.info("Database initialized", path=self.db_path)
+
+    # ─── Migrations ───────────────────────────────────────────
+
+    # Bump this number every time you add a new migration below.
+    _SCHEMA_VERSION = 2
+
+    async def _run_migrations(self):
+        """Apply incremental schema/data migrations on startup.
+
+        Each migration is identified by a version number stored in the
+        settings table.  Migrations run in order and are idempotent —
+        safe to apply multiple times even though they're guarded by the
+        version check.
+
+        HOW TO ADD A NEW MIGRATION
+        ─────────────────────────
+        1. Increment _SCHEMA_VERSION above.
+        2. Add an `if current < N:` block at the end of this method.
+        3. Put your ALTER TABLE / UPDATE / cleanup logic inside.
+        """
+        # Read current version (0 = brand new DB or pre-migration install)
+        row = await self._db.execute(
+            "SELECT value FROM settings WHERE key = 'schema_version'"
+        )
+        rec = await row.fetchone()
+        current = int(rec["value"]) if rec else 0
+
+        if current >= self._SCHEMA_VERSION:
+            return
+
+        log.info("Running database migrations", from_version=current, to_version=self._SCHEMA_VERSION)
+
+        # ── Migration 1: add tool_calls / extra_data column to messages ──
+        # Previously tool_calls were serialised *inside* content as JSON.
+        # Now we keep them there but add an extra_data column for future use.
+        if current < 1:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE messages ADD COLUMN extra_data TEXT DEFAULT NULL"
+                )
+            except Exception:
+                pass  # column already exists on some installs
+
+        # ── Migration 2: strip orphaned reasoning_content from messages ──
+        # Kimi K2 stores reasoning_content inside the JSON content of
+        # assistant messages.  When switching providers (e.g. Gemini),
+        # those messages were sent as-is and caused 400 errors.
+        # _normalize_messages() now strips it at runtime, but old rows can
+        # also hold malformed tool_call JSON — clean them up here so
+        # historical views don't show garbage.
+        if current < 2:
+            import json as _json
+            cursor = await self._db.execute(
+                "SELECT id, content FROM messages WHERE role = 'assistant'"
+            )
+            rows = await cursor.fetchall()
+            updates = []
+            for row in rows:
+                try:
+                    data = _json.loads(row["content"])
+                    changed = False
+                    # Ensure tool_calls list items have an 'id' field
+                    for tc in data.get("tool_calls") or []:
+                        if not tc.get("id"):
+                            import uuid as _uuid
+                            tc["id"] = f"call_{_uuid.uuid4().hex[:12]}"
+                            changed = True
+                    if changed:
+                        updates.append((row["id"], _json.dumps(data)))
+                except Exception:
+                    pass
+            for row_id, new_content in updates:
+                await self._db.execute(
+                    "UPDATE messages SET content = ? WHERE id = ?",
+                    (new_content, row_id),
+                )
+            if updates:
+                log.info("Migration 2: fixed tool_call ids", count=len(updates))
+
+        # Save new version
+        await self._db.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(self._SCHEMA_VERSION),),
+        )
+        await self._db.commit()
+        log.info("Migrations complete", version=self._SCHEMA_VERSION)
 
     async def close(self):
         """Close the database connection."""

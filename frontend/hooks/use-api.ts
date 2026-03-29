@@ -305,3 +305,18 @@ export function useCurrentModel() {
     refetchInterval: 30000,
   });
 }
+
+export function useMediaFiles() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['media-files'],
+    queryFn: async () => {
+      const data = await fetchAPI('/api/media');
+      return (data || []) as Array<{ name: string; size: number; modified: string; ext: string }>;
+    },
+    enabled: isAuthenticated,
+    refetchInterval: 10000,
+  });
+}

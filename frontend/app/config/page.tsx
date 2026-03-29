@@ -392,16 +392,26 @@ export default function ConfigPage() {
                     <p className="font-medium text-blue-200 mb-1">Step 2 — Authorize OpenACM</p>
                     <p>A new tab will open with Google's login page. Sign in and click <strong>Allow</strong>. OpenACM will detect authorization automatically.</p>
                   </div>
-                  <button
-                    onClick={() => startGoogleAuth.mutate()}
-                    disabled={startGoogleAuth.isPending}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
-                  >
-                    {startGoogleAuth.isPending
-                      ? <Loader2 size={14} className="animate-spin" />
-                      : <Globe2 size={14} />}
-                    Connect with Google
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => startGoogleAuth.mutate()}
+                      disabled={startGoogleAuth.isPending}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                    >
+                      {startGoogleAuth.isPending
+                        ? <Loader2 size={14} className="animate-spin" />
+                        : <Globe2 size={14} />}
+                      Connect with Google
+                    </button>
+                    <button
+                      onClick={() => deleteGoogleCreds.mutate()}
+                      disabled={deleteGoogleCreds.isPending}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-red-900/40 hover:bg-red-800/50 text-red-400 border border-red-700/40 rounded-lg text-sm transition-colors"
+                      title="Remove credentials"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                   {startGoogleAuth.isSuccess && (
                     <p className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
                       <Loader2 size={12} className="animate-spin" /> Waiting for authorization...

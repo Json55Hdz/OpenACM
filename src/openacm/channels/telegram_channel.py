@@ -221,7 +221,14 @@ class TelegramChannel(BaseChannel):
 
         channel_id = data.get("channel_id")
         content = data.get("content", "")
-        if not channel_id or not content:
+        attachments = data.get("attachments", [])
+
+        # Strip any stray ATTACHMENT: lines that may have leaked into content
+        content = "\n".join(
+            line for line in content.splitlines() if not line.startswith("ATTACHMENT:")
+        ).strip()
+
+        if not channel_id or (not content and not attachments):
             return
 
         # Verificar que el channel_id sea numérico (chat de Telegram)
@@ -237,17 +244,20 @@ class TelegramChannel(BaseChannel):
             from pathlib import Path
             from openacm.security.crypto import decrypt_file
 
+            # Use absolute path via env var set by app.py to avoid CWD ambiguity
+            project_root = os.environ.get("OPENACM_PROJECT_ROOT", ".")
+            media_dir = Path(project_root) / "data" / "media"
+
             IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
             sent_files: set[str] = set()  # Track already-sent filenames
 
             # ── 1. Send files from the attachments list (proper mechanism) ──
-            attachments = data.get("attachments", [])
             sent_attachment_as_caption = False
 
             for file_name in attachments:
-                file_path = Path("data/media") / file_name
+                file_path = media_dir / file_name
                 if not file_path.exists():
-                    log.warning("Attachment file not found", file=file_name)
+                    log.warning("Attachment file not found", file=file_name, path=str(file_path))
                     continue
                 try:
                     raw_bytes = decrypt_file(file_path)
@@ -257,32 +267,27 @@ class TelegramChannel(BaseChannel):
 
                     # Clean the /api/media/ link from the text for a nicer caption
                     caption_text = content.replace(f"/api/media/{file_name}", "").strip()
-                    # Also clean the 📎 prefix line if present
                     caption_text = re.sub(
                         r"📎\s*/api/media/" + re.escape(file_name), "", caption_text
                     ).strip()
 
-                    # Pick a caption for the first file only
+                    # Pick a caption for the first file only (set flag AFTER successful send)
                     caption = None
-                    if (
-                        not sent_attachment_as_caption
-                        and caption_text
-                        and len(caption_text) <= 1024
-                    ):
+                    if not sent_attachment_as_caption and caption_text and len(caption_text) <= 1024:
                         caption = caption_text
-                        sent_attachment_as_caption = True
 
                     if ext in IMAGE_EXTENSIONS:
                         await self._app.bot.send_photo(
                             chat_id=chat_id, photo=file_io, caption=caption
                         )
                     else:
-                        # PDF, Excel, Word, ZIP, etc. → send as document
                         await self._app.bot.send_document(
                             chat_id=chat_id, document=file_io, caption=caption
                         )
 
                     sent_files.add(file_name)
+                    if caption:
+                        sent_attachment_as_caption = True  # only after successful send
                 except Exception as e:
                     log.error("Telegram attachment send failed", file=file_name, error=str(e))
 
@@ -297,7 +302,7 @@ class TelegramChannel(BaseChannel):
             for file_name in media_links:
                 if file_name in sent_files:
                     continue  # Already sent via attachments list
-                file_path = Path("data/media") / file_name
+                file_path = media_dir / file_name
                 if not file_path.exists():
                     continue
                 try:
@@ -315,7 +320,6 @@ class TelegramChannel(BaseChannel):
                         and len(caption_text) <= 1024
                     ):
                         caption = caption_text
-                        sent_inline_as_caption = True
 
                     if ext in IMAGE_EXTENSIONS:
                         await self._app.bot.send_photo(
@@ -327,6 +331,8 @@ class TelegramChannel(BaseChannel):
                         )
 
                     sent_files.add(file_name)
+                    if caption:
+                        sent_inline_as_caption = True
                 except Exception as e:
                     log.error("Telegram inline media send failed", file=file_name, error=str(e))
 

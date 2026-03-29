@@ -527,21 +527,15 @@ def create_app() -> FastAPI:
 
     @app.post("/api/chat/upload")
     async def upload_media(file: UploadFile = File(...)):
-        """Upload and encrypt a media file."""
-        from openacm.security.crypto import save_encrypted
-
+        """Upload a media file (plain, no encryption)."""
         file_bytes = await file.read()
 
-        # Keep extension
-        ext = "".join(Path(file.filename).suffixes)
-        if not ext:
-            ext = ".bin"
-
+        from openacm.security.crypto import get_media_dir
+        ext = "".join(Path(file.filename).suffixes) or ".bin"
         file_id = secrets.token_hex(16)
         file_name = f"{file_id}{ext}"
-        dest_path = Path("data/media") / file_name
-
-        save_encrypted(file_bytes, dest_path)
+        dest_path = get_media_dir() / file_name
+        dest_path.write_bytes(file_bytes)
 
         return {
             "file_id": file_name,
@@ -550,47 +544,63 @@ def create_app() -> FastAPI:
             "content_type": file.content_type,
         }
 
-    @app.get("/api/media/{file_name}")
-    async def get_media(file_name: str):
-        """Retrieve and decrypt a media file."""
-        from openacm.security.crypto import decrypt_file
+    @app.get("/api/media")
+    async def list_media():
+        """List all files in data/media/ for the dashboard file browser."""
+        import datetime
+        from openacm.security.crypto import get_media_dir
+        media_dir = get_media_dir()
+        files = []
+        for f in sorted(media_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if f.is_file():
+                stat = f.stat()
+                files.append({
+                    "name": f.name,
+                    "size": stat.st_size,
+                    "modified": datetime.datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "ext": f.suffix.lower(),
+                })
+        return files
 
-        file_path = Path("data/media") / file_name
+    @app.get("/api/media/{file_name}")
+    async def get_media(file_name: str, download: bool = False):
+        """Retrieve a media file. Handles legacy Fernet-encrypted files transparently."""
+        from openacm.security.crypto import decrypt_file, get_media_dir
+
+        file_path = get_media_dir() / file_name
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Media not found")
 
         try:
-            decrypted_bytes = decrypt_file(file_path)
+            file_bytes = decrypt_file(file_path)
         except Exception:
-            raise HTTPException(status_code=500, detail="Decryption failed")
+            raise HTTPException(status_code=500, detail="Could not read file")
 
-        # Basic MIME inference
         ext = file_path.suffix.lower()
-        content_type = "application/octet-stream"
-        if ext in [".png"]:
-            content_type = "image/png"
-        elif ext in [".jpg", ".jpeg"]:
-            content_type = "image/jpeg"
-        elif ext in [".gif"]:
-            content_type = "image/gif"
-        elif ext in [".webp"]:
-            content_type = "image/webp"
-        elif ext in [".pdf"]:
-            content_type = "application/pdf"
-        elif ext in [".mp3"]:
-            content_type = "audio/mpeg"
-        elif ext in [".glb"]:
-            content_type = "model/gltf-binary"
-        elif ext in [".gltf"]:
-            content_type = "model/gltf+json"
-        elif ext in [".obj"]:
-            content_type = "text/plain"
-        elif ext in [".stl"]:
-            content_type = "model/stl"
-        elif ext in [".blend"]:
-            content_type = "application/octet-stream"
+        mime_map = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".pdf": "application/pdf",
+            ".mp3": "audio/mpeg",
+            ".mp4": "video/mp4",
+            ".glb": "model/gltf-binary",
+            ".gltf": "model/gltf+json",
+            ".obj": "text/plain",
+            ".stl": "model/stl",
+            ".blend": "application/octet-stream",
+            ".txt": "text/plain",
+            ".json": "application/json",
+        }
+        content_type = mime_map.get(ext, "application/octet-stream")
 
-        return Response(content=decrypted_bytes, media_type=content_type)
+        headers = {}
+        if download or ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4"):
+            headers["Content-Disposition"] = f'attachment; filename="{file_name}"'
+
+        return Response(content=file_bytes, media_type=content_type, headers=headers)
 
     @app.get("/api/config/available_models")
     async def get_available_models():
@@ -771,10 +781,24 @@ def create_app() -> FastAPI:
                             channel_type=target_type,
                             attachments=attachments,
                         )
+                        # Strip ATTACHMENT: lines from visible content and send as structured array
+                        resp_lines = response.split("\n")
+                        attachment_names: list[str] = []
+                        clean_lines: list[str] = []
+                        for line in resp_lines:
+                            if line.startswith("ATTACHMENT:"):
+                                fname = line[len("ATTACHMENT:"):].strip()
+                                if fname:
+                                    attachment_names.append(fname)
+                            else:
+                                clean_lines.append(line)
+                        clean_response = "\n".join(clean_lines).strip()
+
                         await websocket.send_json(
                             {
                                 "type": "response",
-                                "content": response,
+                                "content": clean_response,
+                                "attachments": attachment_names,
                             }
                         )
                     except WebSocketDisconnect:
