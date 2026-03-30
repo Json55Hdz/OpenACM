@@ -25,6 +25,47 @@ if command -v apt-get &>/dev/null; then
     sudo apt-get install -y build-essential python3-dev libssl-dev libffi-dev xdotool python3.12-venv
 fi
 
+# ── Node.js 20+ ────────────────────────────────────────────────────────────
+echo -e "\033[1;33m[*] Verificando Node.js...\033[0m"
+NODE_OK=false
+if command -v node &>/dev/null; then
+    NODE_VER=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2>/dev/null)
+    if [ "${NODE_VER:-0}" -ge 20 ] 2>/dev/null; then
+        echo -e "\033[1;32m[OK] Node.js $(node --version) encontrado.\033[0m"
+        NODE_OK=true
+    else
+        echo -e "\033[1;33m[!] Node.js $(node --version) es muy antiguo. Se necesita v20+.\033[0m"
+    fi
+fi
+
+if [ "$NODE_OK" = false ]; then
+    # Try nvm
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+        source "$NVM_DIR/nvm.sh"
+        echo -e "\033[1;33m[*] Instalando Node.js 20 via nvm...\033[0m"
+        nvm install 20 && nvm use 20 && nvm alias default 20
+        NODE_OK=true
+    # Try Homebrew (macOS)
+    elif command -v brew &>/dev/null; then
+        echo -e "\033[1;33m[*] Instalando Node.js 20 via Homebrew...\033[0m"
+        brew install node@20
+        brew link --overwrite --force node@20
+        export PATH="/opt/homebrew/opt/node@20/bin:/usr/local/opt/node@20/bin:$PATH"
+        NODE_OK=true
+    # Try apt (Linux)
+    elif command -v apt-get &>/dev/null; then
+        echo -e "\033[1;33m[*] Instalando Node.js 20 via apt...\033[0m"
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt-get install -y nodejs
+        NODE_OK=true
+    else
+        echo -e "\033[1;31m[!] No se pudo instalar Node.js automáticamente.\033[0m"
+        echo -e "\033[1;37m    Instala Node.js 20+ manualmente desde: https://nodejs.org\033[0m"
+        echo -e "\033[1;37m    O usa nvm: https://github.com/nvm-sh/nvm\033[0m"
+    fi
+fi
+
 # Install Python 3.12 via uv
 echo -e "\033[1;33m[*] Configurando Python 3.12...\033[0m"
 uv python install 3.12 2>/dev/null || echo -e "\033[1;33m[!] No se pudo instalar Python 3.12 via uv, intentando continuar...\033[0m"

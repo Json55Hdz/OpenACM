@@ -30,13 +30,29 @@ echo "[OK] Entorno verificado."
 echo ""
 
 # Build frontend (ensures latest code is always served)
+# Load nvm if available (needed when Node was installed via nvm)
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+# Homebrew Node path (macOS)
+export PATH="/opt/homebrew/opt/node@20/bin:/usr/local/opt/node@20/bin:$PATH"
+
 if command -v node &>/dev/null && [ -d "frontend" ]; then
+    # Check Node version (needs 18.18+ or 20+)
+    NODE_VER=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2>/dev/null)
+    if [ "${NODE_VER:-0}" -lt 18 ] 2>/dev/null; then
+        echo "[ERROR] Node.js $(node --version) es muy antiguo. Necesitas v20+."
+        echo "        Instala Node.js 20+ y vuelve a correr run.sh"
+        echo "        O ejecuta setup.sh para instalarlo automáticamente."
+        exit 1
+    fi
+
     echo "[*] Construyendo el frontend..."
     cd frontend
-    npm install --silent 2>/dev/null
-    npm run build 2>/dev/null
+    npm install --silent
+    npm run build
     if [ $? -ne 0 ]; then
-        echo "[ERROR] El build del frontend falló."
+        echo ""
+        echo "[ERROR] El build del frontend falló. Revisa los errores de arriba."
         exit 1
     fi
     cd ..
