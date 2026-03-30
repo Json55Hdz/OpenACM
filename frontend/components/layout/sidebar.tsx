@@ -3,11 +3,12 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  MessageSquare, 
-  Wrench, 
-  Brain, 
+import {
+  LayoutDashboard,
+  MessageSquare,
+  Wrench,
+  Brain,
+  Bot,
   Settings,
   Menu,
   X
@@ -29,6 +30,7 @@ const navItems = [
   { href: '/chat', label: t.chat, icon: MessageSquare },
   { href: '/tools', label: t.tools, icon: Wrench },
   { href: '/skills', label: t.skills, icon: Brain },
+  { href: '/agents', label: t.agents, icon: Bot },
   { href: '/config', label: t.config, icon: Settings },
 ];
 

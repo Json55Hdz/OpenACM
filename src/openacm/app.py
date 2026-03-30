@@ -230,6 +230,9 @@ class OpenACM:
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(blender_tool)
 
+        from openacm.tools import agent_tool
+        self.tool_registry.register_module(agent_tool)
+
         # IoT tools (optional — skipped gracefully if dependencies missing)
         try:
             from openacm.tools.iot import iot_tool
@@ -301,6 +304,8 @@ class OpenACM:
         try:
             from openacm.web.server import create_web_server
 
+            import os as _os
+            _os.environ["OPENACM_PORT"] = str(self.config.web.port)
             self._web_server = await create_web_server(
                 config=self.config,
                 brain=self.brain,

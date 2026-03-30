@@ -49,7 +49,7 @@ class WebConfig(BaseModel):
     """Web dashboard configuration."""
 
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 47821
     auth_enabled: bool = True
 
 

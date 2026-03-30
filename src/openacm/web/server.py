@@ -382,7 +382,7 @@ def create_app() -> FastAPI:
         if not creds_path.exists():
             raise HTTPException(status_code=400, detail="Upload google_credentials.json first")
 
-        port = _config.web.port if _config else 8080
+        port = _config.web.port if _config else 47821
         redirect_uri = f"http://localhost:{port}/api/config/google/callback"
 
         flow = Flow.from_client_secrets_file(
@@ -1121,6 +1121,240 @@ def create_app() -> FastAPI:
         except Exception as e:
             log.error("Failed to generate skill", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
+
+    # ─── API: Agents ──────────────────────────────────────────
+
+    def _agent_public(agent: dict) -> dict:
+        """Strip webhook_secret from agent dict before sending to frontend."""
+        a = dict(agent)
+        a.pop("webhook_secret", None)
+        return a
+
+    @app.get("/api/agents")
+    async def get_agents():
+        """List all agents."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agents = await _database.get_all_agents()
+        return [_agent_public(a) for a in agents]
+
+    @app.post("/api/agents")
+    async def create_agent(request: Request):
+        """Create a new agent."""
+        import secrets as _secrets
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        if not data.get("name") or not data.get("system_prompt"):
+            raise HTTPException(status_code=400, detail="name and system_prompt required")
+        agent_id = await _database.create_agent(
+            name=data["name"],
+            description=data.get("description", ""),
+            system_prompt=data["system_prompt"],
+            allowed_tools=data.get("allowed_tools", "all"),
+            webhook_secret=_secrets.token_urlsafe(32),
+            telegram_token=data.get("telegram_token", ""),
+        )
+        agent = await _database.get_agent(agent_id)
+        return agent  # include secret on creation so user can copy it
+
+    @app.get("/api/agents/{agent_id}")
+    async def get_agent(agent_id: int):
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return _agent_public(agent)
+
+    @app.put("/api/agents/{agent_id}")
+    async def update_agent(agent_id: int, request: Request):
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        allowed_fields = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
+        kwargs = {k: v for k, v in data.items() if k in allowed_fields}
+        ok = await _database.update_agent(agent_id, **kwargs)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        agent = await _database.get_agent(agent_id)
+        return _agent_public(agent)
+
+    @app.delete("/api/agents/{agent_id}")
+    async def delete_agent(agent_id: int):
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _database.delete_agent(agent_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"status": "ok", "deleted": True}
+
+    @app.get("/api/agents/{agent_id}/secret")
+    async def get_agent_secret(agent_id: int):
+        """Return the webhook secret (used once after creation)."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return {"webhook_secret": agent["webhook_secret"]}
+
+    @app.post("/api/agents/{agent_id}/chat")
+    async def agent_webhook(agent_id: int, request: Request):
+        """
+        Public webhook — send a message to an agent and get a response.
+
+        Required header: X-Agent-Secret: <webhook_secret>
+        Body: { "message": "...", "user_id": "anonymous" }
+        """
+        if not _database or not _brain:
+            raise HTTPException(status_code=503, detail="Service not ready")
+
+        agent = await _database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if not agent.get("is_active"):
+            raise HTTPException(status_code=403, detail="Agent is disabled")
+
+        # Verify secret
+        secret = request.headers.get("X-Agent-Secret", "")
+        if secret != agent["webhook_secret"]:
+            raise HTTPException(status_code=401, detail="Invalid agent secret")
+
+        data = await request.json()
+        message = data.get("message", "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="message required")
+        user_id = data.get("user_id", "webhook_user")
+
+        from openacm.core.agent_runner import AgentRunner
+        runner = AgentRunner(
+            llm_router=_brain.llm_router,
+            tool_registry=_brain.tool_registry,
+            memory=_brain.memory,
+            event_bus=_brain.event_bus,
+        )
+        response = await runner.run(agent=agent, message=message, user_id=user_id)
+        return {"response": response, "agent": agent["name"]}
+
+    @app.post("/api/agents/generate")
+    async def generate_agent(request: Request):
+        """
+        Use the LLM to generate an agent name, description, and system prompt.
+
+        Accepts multipart/form-data:
+          - description: str  (what the agent should do)
+          - file: optional PDF / TXT / MD document for extra context
+        """
+        if not _brain:
+            raise HTTPException(status_code=503, detail="Service not ready")
+
+        from fastapi import Form, UploadFile, File as FastAPIFile
+        import io
+
+        content_type = request.headers.get("content-type", "")
+        description = ""
+        doc_text = ""
+
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            description = str(form.get("description", "")).strip()
+            # Support multiple files: fields named "file", "file0", "file1", … or repeated "file"
+            file_fields = form.getlist("file") if hasattr(form, "getlist") else []
+            if not file_fields:
+                single = form.get("file")
+                if single:
+                    file_fields = [single]
+            doc_parts: list[str] = []
+            for file_field in file_fields:
+                if not (file_field and hasattr(file_field, "read")):
+                    continue
+                raw = await file_field.read()
+                fname = getattr(file_field, "filename", "") or ""
+                ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+                if ext == "pdf":
+                    try:
+                        import pypdf
+                        reader = pypdf.PdfReader(io.BytesIO(raw))
+                        pages = [p.extract_text() or "" for p in reader.pages]
+                        part = "\n\n".join(p for p in pages if p.strip())
+                        doc_parts.append(f"[{fname}]\n{part}")
+                    except Exception as e:
+                        doc_parts.append(f"[{fname} — PDF extraction error: {e}]")
+                elif ext in ("txt", "md", "csv", "yaml", "yml", "json"):
+                    doc_parts.append(f"[{fname}]\n{raw.decode('utf-8', errors='replace')}")
+            if doc_parts:
+                combined = "\n\n---\n\n".join(doc_parts)
+                doc_text = combined[:12000]
+        else:
+            data = await request.json()
+            description = str(data.get("description", "")).strip()
+
+        if not description:
+            raise HTTPException(status_code=400, detail="description required")
+
+        # Build prompt for generation
+        doc_section = (
+            f"\n\nADDITIONAL DOCUMENT CONTEXT:\n{doc_text}" if doc_text else ""
+        )
+        generation_prompt = (
+            f"Generate a configuration for an autonomous AI agent based on this description:\n\n"
+            f"{description}{doc_section}\n\n"
+            f"Return ONLY a valid JSON object with these fields:\n"
+            f"- name: short agent name (2-4 words)\n"
+            f"- description: one-sentence description\n"
+            f"- system_prompt: detailed system prompt with rules, personality, and behavior guidelines "
+            f"(be specific and thorough, use the document context if provided)\n\n"
+            f"JSON only, no markdown, no explanation."
+        )
+
+        try:
+            import json as _json
+            response = await _brain.llm_router.chat(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that generates AI agent configurations. Always respond with valid JSON only."},
+                    {"role": "user", "content": generation_prompt},
+                ],
+                tools=None,
+            )
+            content = response["content"].strip()
+            # Strip markdown code fences if present
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            generated = _json.loads(content)
+            return {
+                "name": generated.get("name", "New Agent"),
+                "description": generated.get("description", ""),
+                "system_prompt": generated.get("system_prompt", ""),
+            }
+        except Exception as e:
+            log.error("Agent generation failed", error=str(e))
+            raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+
+    @app.post("/api/agents/{agent_id}/test")
+    async def test_agent(agent_id: int, request: Request):
+        """Test an agent from the UI (no secret needed, uses dashboard auth)."""
+        if not _database or not _brain:
+            raise HTTPException(status_code=503, detail="Service not ready")
+        agent = await _database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        data = await request.json()
+        message = data.get("message", "").strip()
+        if not message:
+            raise HTTPException(status_code=400, detail="message required")
+
+        from openacm.core.agent_runner import AgentRunner
+        runner = AgentRunner(
+            llm_router=_brain.llm_router,
+            tool_registry=_brain.tool_registry,
+            memory=_brain.memory,
+            event_bus=_brain.event_bus,
+        )
+        response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
+        return {"response": response}
 
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 

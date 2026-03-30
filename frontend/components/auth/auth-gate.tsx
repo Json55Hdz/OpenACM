@@ -34,10 +34,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   // Redirect to onboarding if setup is needed (but not if already there)
   useEffect(() => {
-    if (isAuth && !configLoading && configStatus?.needs_setup && !isOnboardingPage) {
+    if (!isAuth || isOnboardingPage) return;
+    if (configLoading) return;
+    if (configStatus?.needs_setup) {
       router.push('/onboarding');
     }
   }, [isAuth, configStatus, configLoading, router, isOnboardingPage]);
+
+  // Also redirect immediately after login if config already resolved
+  useEffect(() => {
+    if (!isAuth || isOnboardingPage) return;
+    if (!configLoading && configStatus?.needs_setup) {
+      router.push('/onboarding');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuth]); // runs specifically when auth state changes
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -101,6 +101,21 @@ class Database:
                 value TEXT NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS agents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                system_prompt TEXT NOT NULL,
+                allowed_tools TEXT DEFAULT 'all',
+                is_active INTEGER DEFAULT 1,
+                webhook_secret TEXT NOT NULL,
+                telegram_token TEXT DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agents_active ON agents(is_active);
         """)
         await self._db.commit()
 
@@ -531,3 +546,62 @@ class Database:
         cursor = await self._db.execute("SELECT key, value FROM settings")
         rows = await cursor.fetchall()
         return {row["key"]: row["value"] for row in rows}
+
+    # ─── Agents ───────────────────────────────────────────────
+
+    async def create_agent(
+        self,
+        name: str,
+        description: str,
+        system_prompt: str,
+        allowed_tools: str = "all",
+        webhook_secret: str = "",
+        telegram_token: str = "",
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_agent(self, agent_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_agents(self) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute("SELECT * FROM agents ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_agent(self, agent_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(agent_id)
+        await self._db.execute(f"UPDATE agents SET {', '.join(updates)} WHERE id = ?", params)
+        await self._db.commit()
+        return True
+
+    async def delete_agent(self, agent_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0

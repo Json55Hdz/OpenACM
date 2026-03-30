@@ -41,6 +41,7 @@ export const translations = {
     chat: 'Chat',
     tools: 'Tools',
     skills: 'Skills',
+    agents: 'Agents',
     config: 'Configuration',
     logout: 'Log out',
     menu: 'Menu',
