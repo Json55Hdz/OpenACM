@@ -193,13 +193,18 @@ class MCPManager:
 
             log.info("MCP server connected", server=name, tools=len(conn.tools))
 
-        except Exception as e:
-            conn.error = str(e)
+        except BaseException as e:
+            # Catch BaseException so CancelledError (from anyio task groups in
+            # streamablehttp_client) is also captured as a readable error message.
+            err_msg = str(e) or type(e).__name__
+            if "ConnectError" in type(e).__name__ or "connect" in err_msg.lower():
+                err_msg = f"Could not reach server at {cfg.url} — is it running?"
+            conn.error = err_msg
             conn.connected = False
-            log.error("MCP connection failed", server=name, error=str(e))
+            log.error("MCP connection failed", server=name, error=err_msg)
             try:
                 await conn._exit_stack.aclose()
-            except Exception:
+            except BaseException:
                 pass
 
         return conn
