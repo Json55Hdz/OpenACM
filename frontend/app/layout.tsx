@@ -5,7 +5,16 @@ import { AuthGate } from "@/components/auth/auth-gate";
 
 export const metadata: Metadata = {
   title: "OpenACM — Dashboard",
-  description: "OpenACM - Open AI Computer Manager. Monitor, configure, and chat with your autonomous agent.",
+  description: "OpenACM - Open Automated Computer Manager. Monitor, configure, and chat with your autonomous agent.",
+  icons: {
+    icon: "/favicon.png",
+    apple: "/favicon.png",
+  },
+  openGraph: {
+    title: "OpenACM",
+    description: "Open Automated Computer Manager — self-hosted autonomous AI agent",
+    images: [{ url: "/logo.png", width: 512, height: 512 }],
+  },
 };
 
 export default function RootLayout({

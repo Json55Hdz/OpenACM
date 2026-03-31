@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -86,9 +87,9 @@ export function Sidebar() {
         isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         {/* Header */}
-        <div className="p-6 border-b border-slate-800">
+        <div className="p-5 border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <span className="text-3xl">🧠</span>
+            <Image src="/logo-transparent.png" alt="OpenACM" width={40} height={40} className="rounded-lg" />
             <div>
               <h1 className="text-xl font-bold text-white">OpenACM</h1>
               <span className="text-xs text-slate-500">v0.1.0</span>

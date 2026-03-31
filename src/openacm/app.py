@@ -530,4 +530,4 @@ class OpenACM:
         """Print the startup banner."""
         banner_text = Text(BANNER, style="bold cyan")
         console.print(banner_text)
-        console.print("[dim]Open AI Computer Manager - Tier-1 Autonomous Agent[/dim]\n")
+        console.print("[dim]Open Automated Computer Manager - Tier-1 Autonomous Agent[/dim]\n")

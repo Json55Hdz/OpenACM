@@ -299,8 +299,10 @@ def create_app() -> FastAPI:
             return {"needs_setup": True}
         # Check if ANY provider has a real key configured (derived dynamically from config)
         provider_statuses = _get_provider_status()
-        any_configured = any(provider_statuses.values())
-        if not any_configured:
+        keyed_configured = any(
+            ok for pid, ok in provider_statuses.items() if pid not in _NO_KEY_PROVIDERS
+        )
+        if not keyed_configured:
             return {"needs_setup": True, "provider": _brain.llm_router._current_provider}
         return {"needs_setup": False}
 
