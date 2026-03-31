@@ -7,6 +7,7 @@ exposes their tools, and registers them dynamically in the ToolRegistry.
 
 import asyncio
 import json
+import re
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -229,8 +230,13 @@ class MCPManager:
     # ── Dynamic tool registration ─────────────────────────────────────────
 
     @staticmethod
-    def _tool_name(server: str, tool: str) -> str:
-        return f"mcp__{server}__{tool}"
+    def _sanitize(s: str) -> str:
+        """Replace any char that isn't a letter, digit, underscore, or dash with '_'."""
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", s)
+
+    @classmethod
+    def _tool_name(cls, server: str, tool: str) -> str:
+        return f"mcp__{cls._sanitize(server)}__{cls._sanitize(tool)}"
 
     def _register_tools(self, server_name: str, conn: MCPConnection):
         from openacm.tools.base import ToolDefinition
