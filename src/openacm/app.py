@@ -56,6 +56,7 @@ class OpenACM:
         self.security_policy: SecurityPolicy | None = None
         self.command_processor: CommandProcessor | None = None
         self._channels: list = []
+        self._agent_bot_manager = None
         self._web_server = None
         self._shutdown_event = asyncio.Event()
 
@@ -102,6 +103,7 @@ class OpenACM:
             # Phase 5: Start channels
             progress.update(task, description=steps[4])
             await self._init_channels()
+            await self._init_agent_bots()
             progress.advance(task)
 
             # Generate dashboard token
@@ -233,6 +235,13 @@ class OpenACM:
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)
 
+        # Stitch tool (optional — requiere STITCH_API_KEY en config/.env)
+        try:
+            from openacm.tools import stitch_tool
+            self.tool_registry.register_module(stitch_tool)
+        except Exception as _stitch_err:
+            console.print(f"  [yellow]~[/yellow] Stitch tool skipped: {_stitch_err}")
+
         # IoT tools (optional — skipped gracefully if dependencies missing)
         try:
             from openacm.tools.iot import iot_tool
@@ -299,6 +308,31 @@ class OpenACM:
             status = "[green]✓[/green]" if ch.is_connected else "[yellow]~[/yellow]"
             console.print(f"  {status} {ch.name.capitalize()} channel ready")
 
+    async def _init_agent_bots(self):
+        """Start individual Telegram bots for agents that have a telegram_token."""
+        try:
+            from openacm.core.agent_runner import AgentRunner
+            from openacm.channels.agent_telegram_bot import AgentBotManager
+
+            agent_runner = AgentRunner(
+                llm_router=self.llm_router,
+                tool_registry=self.tool_registry,
+                memory=self.memory,
+                event_bus=self.event_bus,
+            )
+            self._agent_bot_manager = AgentBotManager(
+                agent_runner=agent_runner,
+                event_bus=self.event_bus,
+                database=self.database,
+            )
+            await self._agent_bot_manager.start_all()
+
+            active = [b for b in self._agent_bot_manager.get_status() if b["connected"]]
+            if active:
+                console.print(f"  [green]✓[/green] {len(active)} agent Telegram bot(s) running")
+        except Exception as e:
+            console.print(f"  [yellow]~[/yellow] Agent bots skipped: {e}")
+
     async def _init_web(self):
         """Start the web dashboard."""
         try:
@@ -313,6 +347,7 @@ class OpenACM:
                 event_bus=self.event_bus,
                 tool_registry=self.tool_registry,
                 channels=self._channels,
+                agent_bot_manager=self._agent_bot_manager,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "
@@ -406,6 +441,13 @@ class OpenACM:
         for channel in self._channels:
             try:
                 await channel.stop()
+            except Exception:
+                pass
+
+        # Stop agent Telegram bots
+        if self._agent_bot_manager:
+            try:
+                await self._agent_bot_manager.stop_all()
             except Exception:
                 pass
 

@@ -52,12 +52,17 @@ class AgentRunner:
         agent: dict[str, Any],
         message: str,
         user_id: str = "user",
+        channel_id: str | None = None,
+        channel_type: str = "agent",
     ) -> str:
         """
         Process a message through the given agent config.
 
         Uses a dedicated channel namespace so each agent's memory is isolated
         from the main chat and from other agents.
+
+        channel_id / channel_type can be overridden by callers (e.g. Telegram)
+        so that EVENT_MESSAGE_SENT is emitted with the correct routing info.
         """
         from openacm.core.config import AssistantConfig
         from openacm.core.brain import Brain
@@ -68,8 +73,9 @@ class AgentRunner:
             max_tool_iterations=10,
         )
 
-        # Each agent gets its own isolated memory namespace
-        channel_id = f"agent_{agent['id']}"
+        # Use caller-provided channel_id or fall back to isolated namespace
+        if channel_id is None:
+            channel_id = f"agent_{agent['id']}"
 
         brain = Brain(
             config=config,
@@ -103,7 +109,7 @@ class AgentRunner:
                 content=message,
                 user_id=user_id,
                 channel_id=channel_id,
-                channel_type="agent",
+                channel_type=channel_type,
             )
             return response
         except Exception as e:

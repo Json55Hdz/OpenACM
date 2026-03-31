@@ -51,6 +51,7 @@ _tool_registry: ToolRegistry | None = None
 _config: AppConfig | None = None
 _command_processor: CommandProcessor | None = None
 _channels: list = []
+_agent_bot_manager = None
 
 
 def create_app() -> FastAPI:
@@ -467,7 +468,8 @@ def create_app() -> FastAPI:
         """Return boolean status for each LLM provider (no keys exposed)."""
         providers = _get_provider_status()
         telegram_configured = _is_real_key("TELEGRAM_TOKEN")
-        return {"providers": providers, "telegram_configured": telegram_configured}
+        stitch_configured = _is_real_key("STITCH_API_KEY")
+        return {"providers": providers, "telegram_configured": telegram_configured, "stitch_configured": stitch_configured}
 
     @app.post("/api/config/setup")
     async def post_config_setup(request: Request):
@@ -572,18 +574,42 @@ def create_app() -> FastAPI:
             pass
         return {"running": False, "models": []}
 
+    _DEBUG_MODE_FILE = Path("data/debug_mode")
+
+    def _read_debug_mode() -> bool:
+        try:
+            return _DEBUG_MODE_FILE.read_text().strip() == "true"
+        except Exception:
+            return False
+
+    def _write_debug_mode(enabled: bool):
+        _DEBUG_MODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _DEBUG_MODE_FILE.write_text("true" if enabled else "false")
+
+    def _apply_debug_mode(enabled: bool):
+        import logging as _logging
+        level = _logging.DEBUG if enabled else _logging.INFO
+        root = _logging.getLogger()
+        root.setLevel(level)
+        # Must also update all handlers — they filter independently
+        for handler in root.handlers:
+            handler.setLevel(level)
+        for name in ("openacm", "uvicorn", "fastapi"):
+            _logging.getLogger(name).setLevel(level)
+
     @app.get("/api/config/debug_mode")
     async def get_debug_mode():
         """Return current debug mode state."""
-        return {"enabled": os.environ.get("OPENACM_DEBUG_MODE") == "true"}
+        return {"enabled": _read_debug_mode()}
 
     @app.post("/api/config/debug_mode")
     async def set_debug_mode(request: Request):
-        """Toggle debug mode — blocks all tool execution when ON."""
+        """Toggle debug mode — enables DEBUG-level logging when ON."""
         data = await request.json()
         enabled = bool(data.get("enabled", False))
-        os.environ["OPENACM_DEBUG_MODE"] = "true" if enabled else "false"
-        log.info("Debug mode changed", enabled=enabled)
+        _write_debug_mode(enabled)
+        _apply_debug_mode(enabled)
+        log.info("Debug mode changed", enabled=enabled, log_level="DEBUG" if enabled else "INFO")
         return {"status": "ok", "enabled": enabled}
 
     # ─── API: Media & Uploads ─────────────────────────────────
@@ -656,11 +682,20 @@ def create_app() -> FastAPI:
             ".blend": "application/octet-stream",
             ".txt": "text/plain",
             ".json": "application/json",
+            ".html": "text/html",
+            ".htm": "text/html",
+            ".css": "text/css",
+            ".js": "application/javascript",
+            ".jsx": "application/javascript",
+            ".vue": "text/plain",
+            ".svg": "image/svg+xml",
         }
         content_type = mime_map.get(ext, "application/octet-stream")
 
+        # Files that render inline in the browser (no forced download)
+        inline_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".html", ".htm", ".svg"}
         headers = {}
-        if download or ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4"):
+        if download or ext not in inline_exts:
             headers["Content-Disposition"] = f'attachment; filename="{file_name}"'
 
         return Response(content=file_bytes, media_type=content_type, headers=headers)
@@ -743,8 +778,13 @@ def create_app() -> FastAPI:
         """Get recent conversations."""
         if not _database:
             return []
-        # Get distinct user/channel pairs
         stats = await _database.get_channel_stats()
+        # Map DB field names to what the frontend expects
+        for row in stats:
+            if "last_updated" in row and "last_timestamp" not in row:
+                row["last_timestamp"] = row.pop("last_updated")
+            if "title" not in row:
+                row["title"] = f"{row.get('channel_id', '')} - {row.get('user_id', '')}"
         return stats
 
     @app.get("/api/conversations/{channel_id}/{user_id}")
@@ -1017,9 +1057,12 @@ def create_app() -> FastAPI:
 
         try:
             while True:
-                # Keep connection alive
                 await websocket.receive_text()
         except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
             _ws_clients.discard(websocket)
 
     # ─── API: Terminal ─────────────────────────────────────────
@@ -1156,6 +1199,10 @@ def create_app() -> FastAPI:
             telegram_token=data.get("telegram_token", ""),
         )
         agent = await _database.get_agent(agent_id)
+        # Start Telegram bot if token provided
+        if _agent_bot_manager and agent.get("telegram_token", "").strip():
+            import asyncio as _asyncio
+            _asyncio.create_task(_agent_bot_manager.start_bot(agent))
         return agent  # include secret on creation so user can copy it
 
     @app.get("/api/agents/{agent_id}")
@@ -1178,12 +1225,20 @@ def create_app() -> FastAPI:
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
         agent = await _database.get_agent(agent_id)
+        # Restart bot if telegram_token was part of the update
+        if _agent_bot_manager and ("telegram_token" in kwargs or "is_active" in kwargs):
+            import asyncio as _asyncio
+            _asyncio.create_task(_agent_bot_manager.restart_bot(agent_id))
         return _agent_public(agent)
 
     @app.delete("/api/agents/{agent_id}")
     async def delete_agent(agent_id: int):
         if not _database:
             raise HTTPException(status_code=503, detail="Database not available")
+        # Stop bot before deleting
+        if _agent_bot_manager:
+            import asyncio as _asyncio
+            _asyncio.create_task(_agent_bot_manager.stop_bot(agent_id))
         ok = await _database.delete_agent(agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -1418,9 +1473,10 @@ async def create_web_server(
     event_bus: EventBus,
     tool_registry: ToolRegistry,
     channels: list | None = None,
+    agent_bot_manager=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager
     _brain = brain
     _database = database
     _event_bus = event_bus
@@ -1428,6 +1484,7 @@ async def create_web_server(
     _config = config
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
+    _agent_bot_manager = agent_bot_manager
 
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):

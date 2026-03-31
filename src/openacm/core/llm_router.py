@@ -557,13 +557,14 @@ class LLMRouter:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Only retry on server errors (5xx) or timeouts
+                # Only retry on transient server errors (5xx) — NOT on timeouts.
+                # Timeouts mean the server is overloaded/unreachable; retrying just
+                # multiplies the wait time with no benefit.
                 is_retryable = (
                     "500" in str(e)
                     or "502" in str(e)
                     or "503" in str(e)
                     or "504" in str(e)
-                    or "timeout" in error_str
                     or "server error" in error_str
                 )
 
@@ -600,7 +601,7 @@ class LLMRouter:
 
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
-            _llm_timeout = 120.0  # max seconds to wait for any LLM response
+            _llm_timeout = 60.0  # max seconds to wait for any LLM response (no retries on timeout)
 
             if self._is_custom_provider():
                 result = await asyncio.wait_for(
@@ -702,7 +703,8 @@ class LLMRouter:
 
         except Exception as e:
             elapsed = time.time() - start_time
-            log.error("LLM request failed", model=model, error=str(e), elapsed=f"{elapsed:.2f}s")
+            error_msg = str(e) or repr(e) or type(e).__name__
+            log.error("LLM request failed", model=model, error=error_msg, elapsed=f"{elapsed:.2f}s")
             raise
 
     async def chat_stream(

@@ -92,6 +92,13 @@ class ToolRegistry:
             "skill", "tool", "herramienta", "habilidad",
             "create_skill", "create_tool",
         ],
+        "ui": [
+            "ui", "interfaz", "interface", "pantalla", "screen", "dashboard",
+            "formulario", "form", "landing", "página", "component", "componente",
+            "diseño", "design", "frontend", "html", "react", "vue",
+            "stitch", "google stitch", "mockup", "prototipo", "prototype",
+            "layout", "card", "tabla", "table", "botón", "button",
+        ],
         "iot": [
             "light", "lights", "luz", "luces", "lamp", "lampara", "bulb",
             "curtain", "curtains", "blind", "blinds", "persiana", "persianas",
@@ -154,6 +161,7 @@ class ToolRegistry:
         arguments: dict[str, Any],
         user_id: str = "",
         channel_id: str = "",
+        channel_type: str = "web",
         _brain=None,
     ) -> str:
         """
@@ -165,15 +173,6 @@ class ToolRegistry:
         if tool_name not in self.tools:
             return f"Error: Tool '{tool_name}' not found"
 
-        # Debug mode: block all tool execution
-        import os as _os
-        if _os.environ.get("OPENACM_DEBUG_MODE") == "true":
-            log.warning("Tool blocked — debug mode active", tool=tool_name)
-            return (
-                f"[DEBUG MODE] Tool '{tool_name}' was not executed. "
-                "Debug mode is currently ON — all tool calls are blocked. "
-                "Disable it in Settings → Security to allow tool execution."
-            )
 
         tool = self.tools[tool_name]
         start_time = time.time()
@@ -186,6 +185,9 @@ class ToolRegistry:
                 _sandbox=self.sandbox,
                 _event_bus=self.event_bus,
                 _brain=_brain,
+                _user_id=user_id,
+                _channel_id=channel_id,
+                _channel_type=channel_type,
             )
             result_str = str(result)
         except Exception as e:

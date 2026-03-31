@@ -65,6 +65,8 @@ class Brain:
         self.terminal_history: list[dict] = []
         # Tracks the active processing task per channel — used for interruption
         self._channel_tasks: dict[str, asyncio.Task] = {}
+        # Queued message per channel while a task is running (one slot — latest wins)
+        self._channel_queue: dict[str, tuple] = {}
         _lr = getattr(config, "local_router", None)
         self.local_router = LocalRouter(
             confidence_threshold=_lr.confidence_threshold if _lr else 0.88,
@@ -318,6 +320,8 @@ class Brain:
 
         return prepared
 
+    _CANCEL_KEYWORDS = {"cancel", "cancelar", "stop", "detener", "para", "parar", "abort"}
+
     async def process_message(
         self,
         content: str,
@@ -328,19 +332,45 @@ class Brain:
     ) -> str:
         """
         Public entry point — wraps _run() in a dedicated cancellable task.
-        When a new message arrives, any previous task for that channel is cancelled.
+
+        Behaviour when a task is already running for this channel:
+        - Cancel keywords ("cancel", "stop", "cancelar", …) → cancel immediately.
+        - Any other message → queue it (latest wins) and notify the user.
+          The queued message is processed automatically once the current task finishes.
         """
         _task_key = f"{channel_type}:{channel_id}"
+        _prev = self._channel_tasks.get(_task_key)
 
-        # Cancel previous task for this channel if still running
-        _prev = self._channel_tasks.pop(_task_key, None)
         if _prev and not _prev.done():
-            _prev.cancel()
-            await asyncio.sleep(0)  # yield so CancelledError reaches the old task
+            is_cancel = content.strip().lower() in self._CANCEL_KEYWORDS
+            if is_cancel:
+                _prev.cancel()
+                self._channel_tasks.pop(_task_key, None)
+                self._channel_queue.pop(_task_key, None)
+                await asyncio.sleep(0)
+                await self.event_bus.emit(EVENT_THINKING, {
+                    "status": "done",
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                })
+                return "⏹ Cancelado."
+            else:
+                # Queue the message — latest message wins
+                self._channel_queue[_task_key] = (content, user_id, channel_id, channel_type, attachments)
+                await self.event_bus.emit(EVENT_THINKING, {
+                    "status": "queued",
+                    "message": "⏳ Procesando tarea anterior... tu mensaje se enviará al terminar.",
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                })
+                return "⏳ Procesando algo, espera... (escribe «cancelar» para detener)"
 
-        # Create a fresh dedicated task for this message
+        # No active task — run immediately
+        self._channel_queue.pop(_task_key, None)
         task = asyncio.create_task(
-            self._run(content, user_id, channel_id, channel_type, attachments)
+            self._run_then_drain(content, user_id, channel_id, channel_type, attachments, _task_key)
         )
         self._channel_tasks[_task_key] = task
 
@@ -348,6 +378,40 @@ class Brain:
             return await task
         except asyncio.CancelledError:
             return "⏹ Cancelado."
+
+    async def _run_then_drain(
+        self,
+        content: str,
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+        attachments: list[str] | None,
+        task_key: str,
+    ) -> str:
+        """Run _run(), then process any queued message afterwards."""
+        try:
+            result = await self._run(content, user_id, channel_id, channel_type, attachments)
+        finally:
+            self._channel_tasks.pop(task_key, None)
+
+        # Process queued message if any
+        queued = self._channel_queue.pop(task_key, None)
+        if queued:
+            q_content, q_user, q_channel, q_type, q_attach = queued
+            await self.event_bus.emit(EVENT_THINKING, {
+                "status": "start",
+                "message": "▶ Procesando tu mensaje...",
+                "user_id": q_user,
+                "channel_id": q_channel,
+                "channel_type": q_type,
+            })
+            next_task = asyncio.create_task(
+                self._run_then_drain(q_content, q_user, q_channel, q_type, q_attach, task_key)
+            )
+            self._channel_tasks[task_key] = next_task
+            # Don't await — let it run in background
+
+        return result
 
     async def _run(
         self,
@@ -623,15 +687,15 @@ class Brain:
                     tool_choice=tc_override,
                 )
             except Exception as e:
-                error_str = str(e)
+                error_str = str(e) or repr(e) or type(e).__name__
                 if "500" in error_str:
-                    error_msg = "❌ Error: The AI server (OpenCode.ai) is experiencing issues. This is a temporary problem with the service provider, not your installation.\n\nPlease try again in a few moments."
-                elif "timeout" in error_str.lower():
-                    error_msg = "❌ Error: The request timed out. The AI server may be slow or overloaded.\n\nPlease try again."
+                    error_msg = f"❌ LLM server error (500): {error_str}\n\nThis is a temporary problem with the service provider. Please try again."
+                elif "timeout" in error_str.lower() or not str(e):
+                    error_msg = f"❌ Request timed out ({type(e).__name__}): The AI server did not respond in time. Try again or switch model."
                 else:
-                    error_msg = f"❌ Error communicating with LLM: {error_str}"
+                    error_msg = f"❌ LLM error ({type(e).__name__}): {error_str}"
 
-                log.error("LLM error", error=error_str)
+                log.error("LLM error", error=error_str, exc_type=type(e).__name__)
 
                 # Hide thinking indicator
                 await self.event_bus.emit(
@@ -770,7 +834,7 @@ class Brain:
                     # Execute tool
                     if self.tool_registry and tool_name in self.tool_registry.tools:
                         result = await self.tool_registry.execute(
-                            tool_name, tool_args, user_id, channel_id, _brain=self
+                            tool_name, tool_args, user_id, channel_id, channel_type, _brain=self
                         )
 
                         # Any tool can return ATTACHMENT:filename on the first line

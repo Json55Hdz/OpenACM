@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
-import { useConfig } from '@/hooks/use-api';
+import { useConfig, useAPI } from '@/hooks/use-api';
 import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
@@ -27,6 +27,7 @@ import {
   Trash2,
   Sparkles,
   Zap,
+  Paintbrush,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -108,28 +109,29 @@ export default function ConfigPage() {
   const [routerStats, setRouterStats] = useState<Record<string, unknown> | null>(null);
   const [routerLoading, setRouterLoading] = useState(false);
 
+  const { fetchAPI } = useAPI();
+
   const toggleDebugMode = async (next: boolean) => {
     setIsVerbose(next);
+    localStorage.setItem('openacm_debug_mode', next ? 'true' : 'false');
     try {
-      await fetch('/api/config/debug_mode', {
+      await fetchAPI('/api/config/debug_mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
       });
     } catch {
-      setIsVerbose(!next); // revert on error
+      // API call is best-effort — UI state is already saved in localStorage
     }
   };
 
-  // Load router config + debug mode on mount
+  // Load debug mode from localStorage (instant, no auth needed)
+  // Then sync router config from API
   useEffect(() => {
-    fetch('/api/config/debug_mode')
-      .then(r => r.json())
-      .then(d => setIsVerbose(d.enabled ?? false))
-      .catch(() => {});
+    const saved = localStorage.getItem('openacm_debug_mode');
+    if (saved !== null) setIsVerbose(saved === 'true');
 
-    fetch('/api/config/local_router')
-      .then(r => r.json())
+    fetchAPI('/api/config/local_router')
       .then(d => {
         setRouterEnabled(d.enabled ?? true);
         setRouterObservation(d.observation_mode ?? false);
@@ -137,18 +139,18 @@ export default function ConfigPage() {
         setRouterStats(d);
       })
       .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRouterToggle = async (field: 'enabled' | 'observation_mode', value: boolean) => {
     setRouterLoading(true);
     try {
       const body = field === 'enabled' ? { enabled: value } : { enabled: routerEnabled, observation_mode: value };
-      const res = await fetch('/api/config/local_router', {
+      const data = await fetchAPI('/api/config/local_router', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
       setRouterEnabled(data.enabled);
       toast.success(field === 'enabled'
         ? (value ? 'Local Router enabled' : 'Local Router disabled')
@@ -163,7 +165,7 @@ export default function ConfigPage() {
   const handleThresholdChange = async (val: number) => {
     setRouterThreshold(val);
     try {
-      await fetch('/api/config/local_router', {
+      await fetchAPI('/api/config/local_router', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ confidence_threshold: val }),
@@ -177,6 +179,22 @@ export default function ConfigPage() {
   const [customProvider, setCustomProvider] = useState('');
   const [savedCustomModels, setSavedCustomModels] = useState<Record<string, string[]>>({});
   const [googleCredJson, setGoogleCredJson] = useState('');
+  const [stitchKey, setStitchKey] = useState('');
+  const [stitchSaving, setStitchSaving] = useState(false);
+
+  const handleStitchSave = async () => {
+    if (!stitchKey.trim()) return;
+    setStitchSaving(true);
+    try {
+      await saveSetup.mutateAsync({ STITCH_API_KEY: stitchKey.trim() });
+      setStitchKey('');
+      toast.success('Stitch API key saved');
+    } catch {
+      toast.error('Failed to save Stitch API key');
+    } finally {
+      setStitchSaving(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -442,6 +460,49 @@ export default function ConfigPage() {
             </div>
           </ConfigSection>
 
+          {/* Google Stitch */}
+          <ConfigSection
+            title="Google Stitch"
+            subtitle="AI-powered UI generation — creates HTML screens from text descriptions"
+            icon={Paintbrush}
+          >
+            <div className="space-y-4">
+              <div className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
+                providerStatus?.stitch_configured
+                  ? "bg-green-500/10 border-green-500/30 text-green-400"
+                  : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+              )}>
+                {providerStatus?.stitch_configured
+                  ? <><CheckCircle size={14} /> API key configured</>
+                  : <><MinusCircle size={14} /> Not configured — get a key at stitch.withgoogle.com → Profile picture → Settings → API key → Create key</>
+                }
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1.5">
+                  {providerStatus?.stitch_configured ? 'Update API key' : 'API key'}
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={stitchKey}
+                    onChange={(e) => setStitchKey(e.target.value)}
+                    placeholder="Paste your Stitch API key..."
+                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleStitchSave}
+                    disabled={!stitchKey.trim() || stitchSaving}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                  >
+                    {stitchSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            </div>
+          </ConfigSection>
+
           {/* Google Services */}
           <ConfigSection
             title="Google Services"
@@ -685,7 +746,7 @@ export default function ConfigPage() {
                     <span className="text-sm text-slate-300">Debug Mode</span>
                     {isVerbose && (
                       <span className="ml-2 text-xs bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded px-1.5 py-0.5">
-                        Tools blocked
+                        VERBOSE
                       </span>
                     )}
                   </div>
@@ -701,8 +762,8 @@ export default function ConfigPage() {
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
                   {isVerbose
-                    ? 'All tool calls are blocked — AI can converse but cannot execute actions.'
-                    : 'Block all tool execution to prevent autonomous actions (e.g. while away).'}
+                    ? 'DEBUG level active — all internal logs visible in console and log file.'
+                    : 'Enable to show all DEBUG-level logs (LLM requests, tool internals, events).'}
                 </p>
               </div>
             </div>

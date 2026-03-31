@@ -21,7 +21,6 @@ import {
   BarChart3,
   Download,
   SquareTerminal,
-  RotateCcw,
   Sparkles,
   Mic,
   MicOff,
@@ -72,12 +71,15 @@ function SkillActiveIndicator({ names }: { names: string[] }) {
   );
 }
 
-function TypingIndicator() {
+function TypingIndicator({ label }: { label?: string | null }) {
   return (
-    <div className="flex items-center gap-1 px-4 py-3 bg-slate-800 rounded-2xl rounded-tl-sm w-fit">
-      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-      <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="flex items-center gap-2 px-4 py-3 bg-slate-800 rounded-2xl rounded-tl-sm w-fit max-w-xs">
+      <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+      </div>
+      {label && <span className="text-xs text-slate-300 truncate">{label}</span>}
     </div>
   );
 }
@@ -220,6 +222,7 @@ export default function ChatPage() {
     currentTarget,
     setTarget,
     isWaitingResponse,
+    thinkingLabel,
     currentAttachments,
     addAttachment,
     removeAttachment,
@@ -242,7 +245,7 @@ export default function ChatPage() {
 
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [isRestarting, setIsRestarting] = useState(false);
+
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -299,33 +302,6 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaitingResponse]);
   
-  const handleRestart = async () => {
-    setIsRestarting(true);
-    try {
-      await fetchAPI('/api/system/restart', { method: 'POST' });
-    } catch {
-      // Expected — server may close the connection before responding
-    }
-    // Poll /api/ping until the server is back up, then reload
-    const poll = async () => {
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 1000));
-        try {
-          const res = await fetch('/api/ping');
-          if (res.ok) {
-            window.location.reload();
-            return;
-          }
-        } catch {
-          // Server still down, keep polling
-        }
-      }
-      // Timeout after 60s — reload anyway
-      window.location.reload();
-    };
-    poll();
-  };
-
   const executeCommand = async (command: string) => {
     try {
       const result = await chatCommand.mutateAsync({
@@ -507,14 +483,6 @@ export default function ChatPage() {
   
   return (
     <AppLayout>
-      {/* Restarting overlay */}
-      {isRestarting && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-sm">
-          <Loader2 size={48} className="animate-spin text-blue-400 mb-6" />
-          <h2 className="text-2xl font-bold text-white mb-2">Restarting OpenACM...</h2>
-          <p className="text-slate-400">Waiting for the server to come back up</p>
-        </div>
-      )}
       <div className="h-screen flex">
         {/* Sidebar - Conversation List */}
         <div className={cn(
@@ -675,7 +643,7 @@ export default function ChatPage() {
                 ))
             )}
             
-            {isWaitingResponse && <TypingIndicator />}
+            {isWaitingResponse && <TypingIndicator label={thinkingLabel} />}
             <div ref={messagesEndRef} />
           </div>
           
@@ -718,15 +686,6 @@ export default function ChatPage() {
             >
               <Download size={13} />
               Export
-            </button>
-            <button
-              onClick={handleRestart}
-              disabled={isRestarting}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-red-900/40 text-red-400 hover:bg-red-800/50 hover:text-red-300 border border-red-700/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Restart OpenACM — restarts the server process"
-            >
-              <RotateCcw size={13} />
-              Restart
             </button>
           </div>
 

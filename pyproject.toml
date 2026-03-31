@@ -43,6 +43,7 @@ dependencies = [
     "mss>=9.0",
     "Pillow>=10.0",
     "cryptography>=41.0",
+    "pypdf>=4.0",
     
     # Tier-1 Agentic powers
     "chromadb>=0.5",

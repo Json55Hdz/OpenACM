@@ -187,6 +187,19 @@ export function useWebSocket() {
         const names: string[] = data.skills || [];
         storeRef.current.setActiveSkillNames(names);
         setTimeout(() => storeRef.current.setActiveSkillNames([]), 5000);
+      } else if (data.type === 'message.thinking') {
+        const status = data.status;
+        if (status === 'start') {
+          storeRef.current.setWaitingResponse(true);
+          storeRef.current.setThinkingLabel(null);
+        } else if (status === 'tool_running' && data.message) {
+          storeRef.current.setThinkingLabel(data.message);
+        } else if (status === 'queued' && data.message) {
+          storeRef.current.setThinkingLabel(data.message);
+        } else if (status === 'done' || status === 'error') {
+          storeRef.current.setWaitingResponse(false);
+          storeRef.current.setThinkingLabel(null);
+        }
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
         addMessage({

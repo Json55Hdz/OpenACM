@@ -32,6 +32,7 @@ interface ChatState {
   messages: Message[];
   currentTarget: ChatTarget;
   isWaitingResponse: boolean;
+  thinkingLabel: string | null;
   currentAttachments: Attachment[];
   showToolLogs: boolean;
   ws: WebSocket | null;
@@ -44,6 +45,7 @@ interface ChatState {
   clearMessages: () => void;
   setTarget: (target: ChatTarget) => void;
   setWaitingResponse: (waiting: boolean) => void;
+  setThinkingLabel: (label: string | null) => void;
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
@@ -58,6 +60,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   currentTarget: { channel: 'web', user: 'web', title: 'Web Local' },
   isWaitingResponse: false,
+  thinkingLabel: null,
   currentAttachments: [],
   showToolLogs: true,
   ws: null,
@@ -97,6 +100,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   
   setWaitingResponse: (waiting) => set({ isWaitingResponse: waiting }),
+  setThinkingLabel: (label) => set({ thinkingLabel: label }),
   
   addAttachment: (attachment) => 
     set((state) => ({ currentAttachments: [...state.currentAttachments, attachment] })),

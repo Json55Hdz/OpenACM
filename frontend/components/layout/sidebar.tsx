@@ -11,10 +11,13 @@ import {
   Bot,
   Settings,
   Menu,
-  X
+  X,
+  RotateCcw,
+  Loader2,
 } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard-store';
 import { useChatStore } from '@/stores/chat-store';
+import { useAuthStore } from '@/stores/auth-store';
 import { translations } from '@/lib/translations';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -36,8 +39,32 @@ const navItems = [
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const pathname = usePathname();
   const isOnline = useChatStore((state) => state.wsConnected);
+  const token = useAuthStore((s) => s.token);
+
+  const handleRestart = async () => {
+    if (isRestarting) return;
+    setIsRestarting(true);
+    try {
+      await fetch('/api/system/restart', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    } catch { /* server closes connection before responding */ }
+    const poll = async () => {
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const res = await fetch('/api/ping');
+          if (res.ok) { window.location.reload(); return; }
+        } catch { /* still down */ }
+      }
+      window.location.reload();
+    };
+    poll();
+  };
   
   return (
     <>
@@ -92,7 +119,7 @@ export function Sidebar() {
         </ul>
         
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800">
+        <div className="p-4 border-t border-slate-800 space-y-2">
           <div className="flex items-center gap-2 px-4 py-2">
             <span className={cn(
               "w-2 h-2 rounded-full",
@@ -102,6 +129,16 @@ export function Sidebar() {
               {isOnline ? translations.dashboard.connected : translations.dashboard.connecting}
             </span>
           </div>
+          <button
+            onClick={handleRestart}
+            disabled={isRestarting}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-medium bg-red-900/30 hover:bg-red-800/40 text-red-400 border border-red-700/30 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isRestarting
+              ? <><Loader2 size={13} className="animate-spin" /> Restarting...</>
+              : <><RotateCcw size={13} /> Restart OpenACM</>
+            }
+          </button>
         </div>
       </nav>
       
