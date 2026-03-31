@@ -92,6 +92,10 @@ class ToolRegistry:
             "skill", "tool", "herramienta", "habilidad",
             "create_skill", "create_tool",
         ],
+        "mcp": [
+            "mcp", "model context protocol", "mcp server", "mcp tool",
+            "servidor mcp", "herramienta mcp",
+        ],
         "ui": [
             "ui", "interfaz", "interface", "pantalla", "screen", "dashboard",
             "formulario", "form", "landing", "página", "component", "componente",
@@ -128,17 +132,21 @@ class ToolRegistry:
         If no specific intent is detected, all tools are sent as a safety fallback.
         """
         msg_lower = message.lower()
-        matched_categories: set[str] = {"general"}  # always include general
+        # "general" and "mcp" are always included — mcp tools are user-configured
+        # extensions that should always be available to the AI.
+        matched_categories: set[str] = {"general", "mcp"}
 
         for cat, keywords in self.INTENT_KEYWORDS.items():
             if any(kw in msg_lower for kw in keywords):
                 matched_categories.add(cat)
 
-        # No specific intent detected → send only general-category tools.
-        # Specialized tools (google, blender, etc.) are expensive and should
-        # only appear when the user's message explicitly asks for them.
-        if matched_categories == {"general"}:
-            return [t.to_openai_schema() for t in self.tools.values() if t.category == "general"]
+        # No specific intent detected → send general + mcp tools only.
+        if matched_categories == {"general", "mcp"}:
+            return [
+                t.to_openai_schema()
+                for t in self.tools.values()
+                if t.category in ("general", "mcp")
+            ]
 
         filtered = [
             t.to_openai_schema()

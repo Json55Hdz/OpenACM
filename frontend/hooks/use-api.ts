@@ -227,6 +227,99 @@ export function useSkills() {
   };
 }
 
+export function useMCPServers() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  const isAuthenticated = useIsAuthenticated();
+
+  const serversQuery = useQuery({
+    queryKey: ['mcp-servers'],
+    queryFn: async () => fetchAPI('/api/mcp/servers'),
+    enabled: isAuthenticated,
+    refetchInterval: 10000,
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async (data: unknown) =>
+      fetchAPI('/api/mcp/servers', { method: 'POST', body: JSON.stringify(data) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
+      toast.success('Server added');
+    },
+    onError: () => toast.error('Failed to add server'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ name, data }: { name: string; data: unknown }) =>
+      fetchAPI(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
+      toast.success('Server updated');
+    },
+    onError: () => toast.error('Failed to update server'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (name: string) =>
+      fetchAPI(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
+      toast.success('Server removed');
+    },
+    onError: () => toast.error('Failed to remove server'),
+  });
+
+  const connectMutation = useMutation({
+    mutationFn: async (name: string) =>
+      fetchAPI(`/api/mcp/servers/${encodeURIComponent(name)}/connect`, { method: 'POST' }),
+    onSuccess: (_data, name) => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
+      queryClient.invalidateQueries({ queryKey: ['tools'] });
+      toast.success(`Connected to ${name}`);
+    },
+    onError: (_err, name) => toast.error(`Failed to connect to ${name}`),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (name: string) =>
+      fetchAPI(`/api/mcp/servers/${encodeURIComponent(name)}/disconnect`, { method: 'POST' }),
+    onSuccess: (_data, name) => {
+      queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
+      queryClient.invalidateQueries({ queryKey: ['tools'] });
+      toast.success(`Disconnected from ${name}`);
+    },
+    onError: () => toast.error('Failed to disconnect'),
+  });
+
+  return {
+    servers: (serversQuery.data || []) as MCPServer[],
+    isLoading: serversQuery.isLoading,
+    addServer: addMutation.mutate,
+    updateServer: updateMutation.mutate,
+    removeServer: removeMutation.mutate,
+    connectServer: connectMutation.mutate,
+    disconnectServer: disconnectMutation.mutate,
+    isConnecting: connectMutation.isPending,
+    isDisconnecting: disconnectMutation.isPending,
+  };
+}
+
+export interface MCPServer {
+  name: string;
+  transport: 'stdio' | 'sse';
+  command: string;
+  args: string[];
+  url: string;
+  api_key?: string;
+  auto_connect: boolean;
+  connected: boolean;
+  error: string | null;
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
+}
+
 export function useConversations() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();

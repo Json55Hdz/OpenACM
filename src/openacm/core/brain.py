@@ -493,6 +493,30 @@ class Brain:
                         "channel_type": channel_type,
                     })
 
+        # 4. Inyectar tools MCP activas en el system prompt
+        if self.tool_registry:
+            mcp_tools = [
+                t for t in self.tool_registry.tools.values() if t.category == "mcp"
+            ]
+            if mcp_tools:
+                # Group by server name (prefix: mcp__{server}__)
+                servers: dict[str, list[str]] = {}
+                for t in mcp_tools:
+                    parts = t.name.split("__", 2)
+                    server = parts[1] if len(parts) >= 3 else "unknown"
+                    servers.setdefault(server, []).append(
+                        f"  - `{t.name}`: {t.description.split('] ', 1)[-1]}"
+                    )
+                lines = ["## MCP Connected Servers"]
+                lines.append(
+                    "You have access to external tools from MCP servers. "
+                    "Call them directly by their full name when useful."
+                )
+                for srv, tool_lines in servers.items():
+                    lines.append(f"\n### {srv}")
+                    lines.extend(tool_lines)
+                system_prompt = f"{system_prompt}\n\n" + "\n".join(lines)
+
         # Get or create conversation with system prompt
         messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
 

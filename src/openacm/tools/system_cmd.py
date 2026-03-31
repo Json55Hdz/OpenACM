@@ -9,6 +9,50 @@ from openacm.tools.base import tool
 # Registry of background processes: pid -> asyncio.subprocess.Process
 _bg_processes: dict[int, asyncio.subprocess.Process] = {}
 
+# GUI launchers that open a window and never produce stdout/stderr.
+# Matched against the start of the command (case-insensitive).
+# These are launched fire-and-forget so the agent never hangs.
+_GUI_PREFIXES = (
+    "rundll32",
+    "explorer",
+    "mspaint",
+    "notepad",
+    "calc",
+    "control",
+    "msconfig",
+    "mmc",
+    "regedit",
+    "taskmgr",
+    "msinfo32",
+    "dxdiag",
+    "winver",
+    "charmap",
+    "snippingtool",
+    "magnify",
+    "osk",           # on-screen keyboard
+    "narrator",
+    "eventvwr",
+    "devmgmt.msc",
+    "diskmgmt.msc",
+    "compmgmt.msc",
+    "services.msc",
+    "gpedit.msc",
+    "secpol.msc",
+    "lusrmgr.msc",
+    "certmgr.msc",
+    "wmplayer",
+    "msiexec",
+    "wscript",
+    "cscript",
+    "start ",        # `start <something>` always opens a window
+)
+
+
+def _is_gui_command(command: str) -> bool:
+    """Return True if the command opens a GUI window and never exits on its own."""
+    cmd = command.strip().lower()
+    return any(cmd.startswith(p) for p in _GUI_PREFIXES)
+
 
 @tool(
     name="run_command",
@@ -79,7 +123,10 @@ async def run_command(
                 {"tool": "run_command", "chunk": chunk},
             )
 
-    if background:
+    # GUI commands open a window and never exit — launch detached immediately.
+    if _is_gui_command(command) or background:
+        if _is_gui_command(command):
+            return await _run_gui_detached(command, working_directory)
         return await _run_background(command, working_directory, on_output, _sandbox)
 
     result = await _sandbox.execute(
@@ -89,6 +136,46 @@ async def run_command(
         on_output=on_output,
     )
     return result.output
+
+
+async def _run_gui_detached(command: str, cwd: str | None) -> str:
+    """
+    Launch a GUI command completely detached — fire-and-forget.
+    Returns immediately without waiting for the window to close.
+    Used for commands like rundll32, explorer, notepad, etc. that open
+    a window and never write to stdout/stderr.
+    """
+    import platform
+    import os as _os
+    import subprocess
+
+    try:
+        if platform.system() == "Windows":
+            subprocess.Popen(
+                command,
+                shell=True,
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=(
+                    subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                ),
+            )
+        else:
+            import shlex
+            subprocess.Popen(
+                shlex.split(command),
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        return f"GUI command launched: `{command}`. The window should now be open."
+    except Exception as e:
+        return f"Error launching GUI command: {e}"
 
 
 async def _run_background(

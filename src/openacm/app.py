@@ -57,6 +57,7 @@ class OpenACM:
         self.command_processor: CommandProcessor | None = None
         self._channels: list = []
         self._agent_bot_manager = None
+        self._mcp_manager = None
         self._web_server = None
         self._shutdown_event = asyncio.Event()
 
@@ -252,6 +253,22 @@ class OpenACM:
         # Give brain access to tools
         self.brain.tool_registry = self.tool_registry
 
+        # MCP servers (optional — skipped gracefully if mcp not installed)
+        try:
+            from openacm.tools.mcp_client import MCPManager
+            from openacm.core.config import _find_project_root
+
+            mcp_config_path = _find_project_root() / "config" / "mcp_servers.json"
+            self._mcp_manager = MCPManager(mcp_config_path, self.tool_registry)
+            await self._mcp_manager.auto_connect_all()
+            server_count = len(self._mcp_manager.servers)
+            if server_count:
+                console.print(f"  [green]✓[/green] MCP: {server_count} server(s) configured")
+            else:
+                console.print("  [dim]MCP: no servers configured (add them in the dashboard)[/dim]")
+        except Exception as _mcp_err:
+            console.print(f"  [yellow]~[/yellow] MCP skipped: {_mcp_err}")
+
         tool_count = len(self.tool_registry.tools)
         console.print(f"  [green]✓[/green] {tool_count} tools registered")
 
@@ -348,6 +365,7 @@ class OpenACM:
                 tool_registry=self.tool_registry,
                 channels=self._channels,
                 agent_bot_manager=self._agent_bot_manager,
+                mcp_manager=self._mcp_manager,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "
@@ -477,6 +495,13 @@ class OpenACM:
             await python_kernel.stop_kernel()
         except Exception:
             pass
+
+        # Disconnect MCP servers
+        if self._mcp_manager:
+            try:
+                await self._mcp_manager.disconnect_all()
+            except Exception:
+                pass
 
         console.print("[green]✓ OpenACM stopped. Goodbye! 👋[/green]")
 

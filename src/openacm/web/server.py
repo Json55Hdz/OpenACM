@@ -52,6 +52,7 @@ _config: AppConfig | None = None
 _command_processor: CommandProcessor | None = None
 _channels: list = []
 _agent_bot_manager = None
+_mcp_manager = None
 
 
 def create_app() -> FastAPI:
@@ -1411,6 +1412,73 @@ def create_app() -> FastAPI:
         response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
         return {"response": response}
 
+    # ─── API: MCP Servers ────────────────────────────────────
+
+    @app.get("/api/mcp/servers")
+    async def get_mcp_servers():
+        """List all configured MCP servers with their connection status."""
+        if not _mcp_manager:
+            return []
+        return _mcp_manager.get_status()
+
+    @app.post("/api/mcp/servers")
+    async def add_mcp_server(request: Request):
+        """Add (or replace) an MCP server configuration."""
+        if not _mcp_manager:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+        data = await request.json()
+        name = data.get("name", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        try:
+            cfg = _mcp_manager.add_server(data)
+            return {"status": "ok", **cfg.to_dict()}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.put("/api/mcp/servers/{server_name}")
+    async def update_mcp_server(server_name: str, request: Request):
+        """Update an MCP server configuration."""
+        if not _mcp_manager:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+        data = await request.json()
+        try:
+            cfg = _mcp_manager.update_server(server_name, data)
+            return {"status": "ok", **cfg.to_dict()}
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @app.delete("/api/mcp/servers/{server_name}")
+    async def delete_mcp_server(server_name: str):
+        """Remove an MCP server configuration (disconnects if active)."""
+        if not _mcp_manager:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+        _mcp_manager.remove_server(server_name)
+        return {"status": "ok", "deleted": server_name}
+
+    @app.post("/api/mcp/servers/{server_name}/connect")
+    async def connect_mcp_server(server_name: str):
+        """Connect to an MCP server."""
+        if not _mcp_manager:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+        if server_name not in _mcp_manager.servers:
+            raise HTTPException(status_code=404, detail="Server not found")
+        conn = await _mcp_manager.connect(server_name)
+        return {
+            "status": "ok" if conn.connected else "error",
+            "connected": conn.connected,
+            "error": conn.error,
+            "tools": conn.tools,
+        }
+
+    @app.post("/api/mcp/servers/{server_name}/disconnect")
+    async def disconnect_mcp_server(server_name: str):
+        """Disconnect from an MCP server."""
+        if not _mcp_manager:
+            raise HTTPException(status_code=503, detail="MCP manager not available")
+        await _mcp_manager.disconnect(server_name)
+        return {"status": "ok", "disconnected": server_name}
+
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
@@ -1474,9 +1542,10 @@ async def create_web_server(
     tool_registry: ToolRegistry,
     channels: list | None = None,
     agent_bot_manager=None,
+    mcp_manager=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager
     _brain = brain
     _database = database
     _event_bus = event_bus
@@ -1485,6 +1554,7 @@ async def create_web_server(
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
     _agent_bot_manager = agent_bot_manager
+    _mcp_manager = mcp_manager
 
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):
