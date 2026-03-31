@@ -32,6 +32,7 @@ const t = translations.mcp;
 // ─── Form types ───────────────────────────────────────────────────────────────
 
 type Mode = 'remote' | 'local';
+type RemoteProtocol = 'streamable_http' | 'sse';
 
 interface ServerFormData {
   name: string;
@@ -39,6 +40,7 @@ interface ServerFormData {
   // remote
   url: string;
   api_key: string;
+  protocol: RemoteProtocol;
   // local (stdio)
   command: string;
   args: string;        // one per line
@@ -51,6 +53,7 @@ const EMPTY_FORM: ServerFormData = {
   mode: 'remote',
   url: '',
   api_key: '',
+  protocol: 'streamable_http',
   command: '',
   args: '',
   auto_connect: true,
@@ -62,6 +65,7 @@ function serverToForm(s: MCPServer): ServerFormData {
     mode: s.transport === 'stdio' ? 'local' : 'remote',
     url: s.url,
     api_key: s.api_key ?? '',
+    protocol: (s.transport === 'sse' ? 'sse' : 'streamable_http') as RemoteProtocol,
     command: s.command,
     args: s.args.join('\n'),
     auto_connect: s.auto_connect,
@@ -73,7 +77,7 @@ function formToPayload(f: ServerFormData) {
   if (f.mode === 'remote') {
     return {
       ...base,
-      transport: 'sse',
+      transport: f.protocol,
       url: f.url.trim(),
       api_key: f.api_key.trim(),
       command: '',
@@ -134,7 +138,8 @@ function ServerCard({
           <div>
             <h3 className="font-semibold text-white">{server.name}</h3>
             <span className="text-xs text-slate-500">
-              {isRemote ? 'Remote (SSE)' : 'Local (stdio)'}
+              {!isRemote ? 'Local (stdio)' :
+               server.transport === 'sse' ? 'Remote (SSE)' : 'Remote (HTTP)'}
             </span>
           </div>
         </div>
@@ -325,9 +330,41 @@ function ServerModal({
                   value={form.url}
                   onChange={(e) => set('url', e.target.value)}
                   required
-                  placeholder="https://mcp.example.com/sse"
+                  placeholder="http://localhost:6000/mcp"
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5">Protocol</label>
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => set('protocol', 'streamable_http')}
+                    className={cn(
+                      'py-2 rounded-lg text-xs font-medium transition-all',
+                      form.protocol === 'streamable_http'
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white',
+                    )}
+                  >
+                    HTTP <span className="text-slate-400 font-normal">(modern)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => set('protocol', 'sse')}
+                    className={cn(
+                      'py-2 rounded-lg text-xs font-medium transition-all',
+                      form.protocol === 'sse'
+                        ? 'bg-blue-600 text-white shadow'
+                        : 'text-slate-400 hover:text-white',
+                    )}
+                  >
+                    SSE <span className="text-slate-400 font-normal">(legacy)</span>
+                  </button>
+                </div>
+                <p className="text-xs text-slate-600 mt-1.5">
+                  Use HTTP for unity-mcp and most modern servers. SSE for older ones.
+                </p>
               </div>
               <div>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1.5">
@@ -341,9 +378,6 @@ function ServerModal({
                   placeholder="sk-..."
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
-                <p className="text-xs text-slate-600 mt-1">
-                  Se envía como <code className="text-slate-500">Authorization: Bearer ...</code>
-                </p>
               </div>
             </>
           )}
@@ -364,13 +398,13 @@ function ServerModal({
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1.5">
-                  Arguments <span className="text-slate-600">(uno por línea)</span>
+                  Arguments <span className="text-slate-600">(one per line)</span>
                 </label>
                 <textarea
                   value={form.args}
                   onChange={(e) => set('args', e.target.value)}
                   rows={4}
-                  placeholder={`-y\n@modelcontextprotocol/server-filesystem\nC:\\Users\\tu_usuario`}
+                  placeholder={`-y\n@modelcontextprotocol/server-filesystem\nC:\\Users\\your_username`}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono resize-none"
                 />
               </div>
@@ -385,7 +419,7 @@ function ServerModal({
               onChange={(e) => set('auto_connect', e.target.checked)}
               className="w-4 h-4 accent-blue-500"
             />
-            <span className="text-sm text-slate-300">Auto-conectar al iniciar OpenACM</span>
+            <span className="text-sm text-slate-300">Auto-connect on startup</span>
           </label>
 
           {/* Buttons */}
@@ -395,13 +429,13 @@ function ServerModal({
               onClick={onClose}
               className="flex-1 px-4 py-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm transition-colors"
             >
-              Cancelar
+              Cancel
             </button>
             <button
               type="submit"
               className="flex-1 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
             >
-              {isEdit ? 'Guardar cambios' : 'Agregar servidor'}
+              {isEdit ? 'Save changes' : 'Add server'}
             </button>
           </div>
         </form>
@@ -445,7 +479,7 @@ export default function MCPPage() {
             <div>
               <h1 className="text-3xl font-bold text-white">MCP Servers</h1>
               <p className="text-slate-400 mt-1">
-                Conecta herramientas externas al asistente vía Model Context Protocol
+                Connect external tools to the assistant via Model Context Protocol
               </p>
             </div>
             <button
@@ -453,7 +487,7 @@ export default function MCPPage() {
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
             >
               <Plus size={18} />
-              Agregar servidor
+              Add server
             </button>
           </div>
         </header>
@@ -468,16 +502,16 @@ export default function MCPPage() {
         ) : servers.length === 0 ? (
           <div className="text-center py-20 bg-slate-900 rounded-xl border border-slate-800">
             <Plug size={48} className="mx-auto text-slate-600 mb-4" />
-            <h3 className="text-lg font-medium text-slate-300 mb-2">Sin servidores MCP</h3>
+            <h3 className="text-lg font-medium text-slate-300 mb-2">No MCP servers yet</h3>
             <p className="text-sm text-slate-500 mb-6 max-w-sm mx-auto">
-              Pega la URL de un servidor remoto o configura uno local con un comando.
+              Paste the URL of a remote server or configure a local one with a command.
             </p>
             <button
               onClick={() => setShowAdd(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
             >
               <Plus size={18} />
-              Agregar servidor
+              Add server
             </button>
           </div>
         ) : (

@@ -1412,6 +1412,23 @@ def create_app() -> FastAPI:
         response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
         return {"response": response}
 
+    # ─── API: Debug Traces ───────────────────────────────────
+
+    @app.get("/api/debug/traces")
+    async def get_brain_traces(limit: int = 20):
+        """Return the last N agentic loop traces for debugging."""
+        if not _brain:
+            return []
+        traces = list(reversed(_brain._traces[-limit:]))
+        return traces
+
+    @app.delete("/api/debug/traces")
+    async def clear_brain_traces():
+        """Clear all stored traces."""
+        if _brain:
+            _brain._traces.clear()
+        return {"status": "ok"}
+
     # ─── API: MCP Servers ────────────────────────────────────
 
     @app.get("/api/mcp/servers")

@@ -54,6 +54,9 @@ interface ChatState {
   setWsConnected: (connected: boolean) => void;
   setRouterLearning: (learning: boolean) => void;
   setActiveSkillNames: (names: string[]) => void;
+  // Stable sendMessage function injected by the global WS hook
+  sendMessageFn: ((msg: string, attachments?: string[]) => boolean) | null;
+  setSendMessageFn: (fn: ((msg: string, attachments?: string[]) => boolean) | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -67,6 +70,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   wsConnected: false,
   isRouterLearning: false,
   activeSkillNames: [],
+  sendMessageFn: null,
 
   addMessage: (message) => {
     const newMessage: Message = {
@@ -119,4 +123,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),
+  setSendMessageFn: (fn) => set({ sendMessageFn: fn }),
 }));

@@ -161,15 +161,21 @@ export function useWebSocket() {
         }
       } else if (data.type === 'message.sent') {
         if (data.channel_type === 'web') {
-          // Partial messages (AI text emitted before tool calls) — show immediately
-          if (data.partial && data.channel_id === currentTarget.channel) {
+          const { channel_id, partial, is_error, content, attachments: atts } = data as WebSocketMessage & { is_error?: boolean };
+          // Always show: partial AI text emitted before tool calls, OR error responses
+          // (errors come from brain when LLM times out / fails — show them regardless)
+          if ((partial || is_error) && channel_id === currentTarget.channel) {
             addMessage({
-              content: data.content || '',
-              role: 'assistant',
-              attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
+              content: content || '',
+              role: is_error ? 'error' : 'assistant',
+              attachments: (atts || []).map((name: string) => ({ id: name, name, type: 'file' })),
             });
+            if (is_error) {
+              storeRef.current.setWaitingResponse(false);
+              storeRef.current.setThinkingLabel(null);
+            }
           }
-          // Non-partial web responses come through /ws/chat directly — skip the echo
+          // Non-partial, non-error web responses come through /ws/chat directly — skip
           return;
         }
         if (data.channel_id === currentTarget.channel) {
@@ -268,7 +274,8 @@ export function useWebSocket() {
     return false;
   }, []); // Stable — reads currentTarget from storeRef
 
-  // Single effect that runs once on mount — connect functions are stable
+  // Single effect — runs once. Does NOT close WS on unmount so the connection
+  // survives navigation between pages (app-layout keeps this hook alive).
   useEffect(() => {
     const unsubscribe = authStore.subscribe((state) => {
       if (state.token) {
@@ -277,29 +284,22 @@ export function useWebSocket() {
       }
     });
 
-    // Initial connection if already authenticated
     if (authStore.getState().token) {
       connectChatWs();
       connectEventsWs();
     }
 
+    // Expose sendMessage globally via the store so any page can use it
+    useChatStore.getState().setSendMessageFn(sendMessage);
+
     return () => {
       unsubscribe();
-      // Clear all timers
+      // Only clear timers on unmount — WS connections stay alive
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
       if (eventsReconnectRef.current) clearTimeout(eventsReconnectRef.current);
       if (keepAliveRef.current) clearInterval(keepAliveRef.current);
-      // Disable onclose to prevent reconnect during teardown, then close
-      if (chatWsRef.current) {
-        chatWsRef.current.onclose = null;
-        chatWsRef.current.close();
-      }
-      if (eventsWsRef.current) {
-        eventsWsRef.current.onclose = null;
-        eventsWsRef.current.close();
-      }
     };
-  }, [connectChatWs, connectEventsWs]);
+  }, [connectChatWs, connectEventsWs, sendMessage]);
 
   return { sendMessage };
 }

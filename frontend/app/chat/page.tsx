@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
-import { useWebSocket } from '@/hooks/use-websocket';
+// useWebSocket is now initialized globally in app-layout — no need to import here
 import { useAPI, useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel } from '@/hooks/use-api';
 import {
   Send,
@@ -233,7 +233,7 @@ export default function ChatPage() {
     activeSkillNames,
   } = useChatStore();
 
-  const { sendMessage } = useWebSocket();
+  const sendMessage = useChatStore((s) => s.sendMessageFn);
   const { data: conversations } = useConversations();
   const { data: history, isFetching: isLoadingHistory } = useConversationHistory(currentTarget.channel, currentTarget.user);
   const chatCommand = useChatCommand();
@@ -352,8 +352,8 @@ export default function ChatPage() {
       attachments: currentAttachments,
     });
 
-    // Send via WebSocket
-    const sent = sendMessage(inputValue, attachmentIds);
+    // Send via WebSocket (sendMessage is injected by the global WS hook in app-layout)
+    const sent = sendMessage ? sendMessage(inputValue, attachmentIds) : false;
 
     if (sent) {
       setInputValue('');

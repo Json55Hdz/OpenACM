@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Loader2,
   Plug,
+  Bug,
 } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -36,6 +37,7 @@ const navItems = [
   { href: '/skills', label: t.skills, icon: Brain },
   { href: '/agents', label: t.agents, icon: Bot },
   { href: '/mcp', label: t.mcp, icon: Plug },
+  { href: '/debug', label: t.debug, icon: Bug },
   { href: '/config', label: t.config, icon: Settings },
 ];
 

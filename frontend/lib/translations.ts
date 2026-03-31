@@ -43,6 +43,7 @@ export const translations = {
     skills: 'Skills',
     agents: 'Agents',
     mcp: 'MCP Servers',
+    debug: 'Traces',
     config: 'Configuration',
     logout: 'Log out',
     menu: 'Menu',

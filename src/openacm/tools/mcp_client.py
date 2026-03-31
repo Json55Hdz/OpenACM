@@ -146,17 +146,23 @@ class MCPManager:
                 read, write = await conn._exit_stack.enter_async_context(
                     stdio_client(params)
                 )
-            elif cfg.transport in ("sse", "http"):
-                from mcp.client.sse import sse_client
-
+            elif cfg.transport in ("sse", "http", "streamable_http"):
                 # Merge api_key as Bearer header + any custom headers
-                sse_headers = dict(cfg.headers)
+                http_headers: dict[str, str] = dict(cfg.headers)
                 if cfg.api_key:
-                    sse_headers.setdefault("Authorization", f"Bearer {cfg.api_key}")
+                    http_headers.setdefault("Authorization", f"Bearer {cfg.api_key}")
 
-                read, write = await conn._exit_stack.enter_async_context(
-                    sse_client(cfg.url, headers=sse_headers or None)
-                )
+                if cfg.transport == "sse":
+                    from mcp.client.sse import sse_client
+                    read, write = await conn._exit_stack.enter_async_context(
+                        sse_client(cfg.url, headers=http_headers or None)
+                    )
+                else:
+                    # streamable_http — the modern MCP HTTP transport (e.g. unity-mcp)
+                    from mcp.client.streamable_http import streamablehttp_client
+                    read, write, _ = await conn._exit_stack.enter_async_context(
+                        streamablehttp_client(cfg.url, headers=http_headers or None)
+                    )
             else:
                 raise ValueError(f"Unknown transport: {cfg.transport!r}")
 
