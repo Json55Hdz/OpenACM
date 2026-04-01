@@ -157,8 +157,8 @@ python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py
 If you discover a security vulnerability:
 
 1. **DO NOT open a public issue**
-2. Send an email to: [your-email@example.com]
-3. Include:
+2. Send an email to: [jeisondh55@gmail.com]
+4. Include:
    - Detailed description
    - Steps to reproduce
    - Potential impact
