@@ -703,14 +703,22 @@ ws://127.0.0.1:47821/ws/chat?token=acm_xxx
 
 ### Client → Server
 
-Send a message:
+**Send a message:**
 ```json
 {
-  "content": "Take a screenshot of my screen",
-  "channel": "web",
-  "user": "web_1775269582270",
-  "type": "web",
+  "message": "Take a screenshot of my screen",
+  "target_user_id": "web",
+  "target_channel_id": "web",
   "attachments": []
+}
+```
+
+**Cancel current request** (stops the active agentic task for this channel):
+```json
+{
+  "type": "cancel",
+  "target_user_id": "web",
+  "target_channel_id": "web"
 }
 ```
 
@@ -825,27 +833,57 @@ Server-only stream. Emits real-time system events:
 
 ## WebSocket: Terminal (`/ws/terminal`)
 
-Connect with token:
+Connect with token and channel:
 ```
-ws://127.0.0.1:47821/ws/terminal?token=acm_xxx
+ws://127.0.0.1:47821/ws/terminal?token=acm_xxx&channel=web
 ```
 
-Streams terminal output from tool executions:
+**`channel`** — the chat channel ID this terminal belongs to (e.g. `web`, `telegram-123456`). Each channel gets its own persistent PTY shell session. The session survives WebSocket reconnects, so SSH connections and running processes are not interrupted.
 
+The terminal is a **full interactive PTY** (Windows: ConPTY via `pywinpty`; Linux/Mac: `pty` module). The frontend renders it with [xterm.js](https://xtermjs.org/) for proper ANSI color support, prompt display, and keyboard handling.
+
+### Client → Server
+
+**User input** (keystroke data, exactly as xterm.js produces it):
 ```json
-{
-  "type": "ai_input",
-  "text": "[AI:run_command] $ npm install",
-  "timestamp": "2025-06-03T14:22:00Z"
-}
+{"type": "input", "data": "ls -la\n"}
 ```
 
+**Signal** (Ctrl+C):
 ```json
-{
-  "type": "ai_output",
-  "text": "added 142 packages in 3.2s",
-  "timestamp": "2025-06-03T14:22:03Z"
-}
+{"type": "signal"}
+```
+
+**Terminal resize** (sent automatically when the panel resizes):
+```json
+{"type": "resize", "cols": 220, "rows": 50}
+```
+
+### Server → Client
+
+**Shell output** (raw PTY bytes, includes ANSI escape codes):
+```json
+{"type": "output", "data": "\u001b[32muser@host\u001b[0m:/home/user$ "}
+```
+
+**AI tool command** (shown in magenta in the terminal):
+```json
+{"type": "ai_command", "tool": "run_command", "data": "npm install"}
+```
+
+**AI tool streaming output**:
+```json
+{"type": "ai_output", "tool": "run_command", "data": "added 142 packages in 3.2s\n"}
+```
+
+**Shell exited**:
+```json
+{"type": "exit", "data": "shell process exited"}
+```
+
+**Error** (e.g. PTY failed to start):
+```json
+{"type": "error", "data": "Failed to start shell: ..."}
 ```
 
 ---

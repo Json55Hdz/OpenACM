@@ -3,29 +3,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore, authStore } from '@/stores/auth-store';
-import { useTerminalStore } from '@/stores/terminal-store';
 import { toast } from 'sonner';
-
-const TERMINAL_TOOLS = new Set(['run_command', 'run_python', 'python_kernel', 'execute_command']);
-
-function _mirrorToolToTerminal(phase: 'called' | 'result', tool: string, data: string) {
-  if (!TERMINAL_TOOLS.has(tool)) return;
-  const store = useTerminalStore.getState();
-  if (phase === 'called') {
-    // Extract command/code from JSON arguments
-    let cmd = data;
-    try {
-      const args = JSON.parse(data);
-      cmd = args.command || args.code || data;
-    } catch { /* use raw */ }
-    store.addLine({ type: 'ai_input', text: `[AI:${tool}] $ ${cmd}` });
-  } else {
-    const lines = data.split('\n');
-    for (const line of lines) {
-      store.addLine({ type: 'ai_output', text: line });
-    }
-  }
-}
 
 interface WebSocketMessage {
   type: string;
@@ -228,7 +206,7 @@ export function useWebSocket() {
             status: 'running',
           },
         });
-        _mirrorToolToTerminal('called', data.tool || '', data.arguments || '');
+        // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.result') {
         if (data.channel_id !== currentTarget.channel) return;
         addMessage({
@@ -242,7 +220,7 @@ export function useWebSocket() {
             status: 'completed',
           },
         });
-        _mirrorToolToTerminal('result', data.tool || '', data.result || '');
+        // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.validation') {
         if (data.channel_id !== currentTarget.channel) return;
         const tool = data.tool || '';
@@ -302,6 +280,18 @@ export function useWebSocket() {
     return false;
   }, []); // Stable — reads currentTarget from storeRef
 
+  const cancelMessage = useCallback(() => {
+    if (chatWsRef.current && chatWsRef.current.readyState === WebSocket.OPEN) {
+      const { currentTarget } = storeRef.current;
+      chatWsRef.current.send(JSON.stringify({
+        type: 'cancel',
+        target_user_id: currentTarget.user,
+        target_channel_id: currentTarget.channel,
+      }));
+      storeRef.current.setWaitingResponse(false);
+    }
+  }, []);
+
   // Single effect — runs once. Does NOT close WS on unmount so the connection
   // survives navigation between pages (app-layout keeps this hook alive).
   useEffect(() => {
@@ -317,8 +307,9 @@ export function useWebSocket() {
       connectEventsWs();
     }
 
-    // Expose sendMessage globally via the store so any page can use it
+    // Expose sendMessage/cancelMessage globally via the store so any page can use it
     useChatStore.getState().setSendMessageFn(sendMessage);
+    useChatStore.getState().setCancelMessageFn(cancelMessage);
 
     return () => {
       unsubscribe();
@@ -327,9 +318,9 @@ export function useWebSocket() {
       if (eventsReconnectRef.current) clearTimeout(eventsReconnectRef.current);
       if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     };
-  }, [connectChatWs, connectEventsWs, sendMessage]);
+  }, [connectChatWs, connectEventsWs, sendMessage, cancelMessage]);
 
-  return { sendMessage };
+  return { sendMessage, cancelMessage };
 }
 
 export function useAuth() {

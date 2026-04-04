@@ -22,6 +22,7 @@ The primary interface. Full-featured chat with the OpenACM agent.
 
 **Features:**
 - **Real-time streaming** — responses appear word-by-word as generated
+- **Cancel button** — while the agent is thinking, the send button turns into a red ✕ button; clicking it cancels the current request immediately
 - **Conversation sidebar** — all past conversations listed on the left
 - **New conversation** — each session gets a unique ID; history persists
 - **New conversation badge** — conversations with no messages show a "New" indicator
@@ -184,39 +185,71 @@ Shows the current Activity Watcher status and recent app focus sessions.
 
 ## WebSocket Protocol
 
-The chat interface communicates with the backend via two WebSocket connections:
+The chat interface communicates with the backend via three WebSocket connections:
 
 ### Chat WebSocket
 ```
 ws://127.0.0.1:47821/ws/chat?token=<your_token>
 ```
 
-Client sends:
+Client sends a message:
 ```json
 {
-  "content": "What's my disk usage?",
-  "user_id": "web_1712345678",
-  "channel_id": "web",
-  "files": []
+  "message": "What's my disk usage?",
+  "target_user_id": "web",
+  "target_channel_id": "web"
 }
 ```
 
-Server sends (streaming):
+Client cancels the current request:
 ```json
-{"type": "chunk", "content": "Your disk"}
-{"type": "chunk", "content": " usage is"}
-{"type": "tool_call", "tool": "get_disk_usage", "args": {}}
-{"type": "tool_result", "tool": "get_disk_usage", "result": "87% full"}
-{"type": "chunk", "content": " 87% full."}
-{"type": "done", "full_content": "Your disk usage is 87% full."}
+{
+  "type": "cancel",
+  "target_user_id": "web",
+  "target_channel_id": "web"
+}
 ```
+
+Server sends:
+```json
+{"type": "response", "content": "Your disk usage is 87% full.", "attachments": []}
+```
+
+### Events WebSocket
+```
+ws://127.0.0.1:47821/ws/events?token=<your_token>
+```
+
+Server-only stream of real-time events (tool calls, thinking status, skill activation, memory recall). See `10-api-reference.md` for the full event type list.
 
 ### Terminal WebSocket
 ```
-ws://127.0.0.1:47821/ws/terminal?token=<your_token>
+ws://127.0.0.1:47821/ws/terminal?token=<your_token>&channel=<channel_id>
 ```
 
-Mirrors the server-side terminal output in real time. Useful for seeing log output from tool execution.
+A **real interactive PTY shell** — one persistent session per chat channel. The terminal panel in the dashboard connects here. Powered by xterm.js on the frontend and `pywinpty` (Windows) / `pty` (Linux/Mac) on the backend.
+
+**Key behaviors:**
+- The shell session **persists** across WS reconnects — SSH connections, running servers, and shell state are preserved
+- Each chat channel (`web`, `telegram-xxx`, etc.) gets its own isolated shell
+- Supports full ANSI colors, the current path in the prompt (`PS1`), tab completion, and Ctrl+C
+- When the AI runs `run_command`, its output streams directly into the correct channel's terminal in real time
+
+Client sends:
+```json
+{"type": "input",  "data": "ls -la\n"}
+{"type": "signal", "data": "SIGINT"}
+{"type": "resize", "cols": 220, "rows": 50}
+```
+
+Server sends:
+```json
+{"type": "output",      "data": "\u001b[32muser@host\u001b[0m:/home$ "}
+{"type": "ai_command",  "tool": "run_command", "data": "npm install"}
+{"type": "ai_output",   "tool": "run_command", "data": "added 142 packages"}
+{"type": "exit",        "data": "shell process exited"}
+{"type": "error",       "data": "Failed to start shell: ..."}
+```
 
 ---
 

@@ -52,6 +52,9 @@ dependencies = [
     "jupyter-client>=8.6",
     "ipykernel>=6.29",
 
+    # PTY support
+    "pywinpty>=2.0; sys_platform == 'win32'",
+
     # IoT
     "tinytuya>=1.15",
     "aiowebostv>=0.7",

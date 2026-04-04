@@ -218,9 +218,9 @@ FastAPI application serving:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/ws/chat` | Bidirectional chat — send messages, receive responses |
+| `/ws/chat` | Bidirectional chat — send messages, receive responses, or send `{type:"cancel"}` to abort |
 | `/ws/events` | Server-sent events — real-time tool calls, thinking status, skill activation |
-| `/ws/terminal` | Interactive terminal output mirroring |
+| `/ws/terminal?channel=<id>` | Full interactive PTY shell, one persistent session per channel. Powered by `pywinpty` (Windows) / `pty` (Linux/Mac) + xterm.js frontend |
 
 **Authentication:** Token-based. Every request (REST + WS) must include the dashboard token either as `Authorization: Bearer <token>` header or `?token=<token>` query parameter. Public paths: `/`, `/static/`, `/_next/`, `/api/auth/check`, `/api/ping`.
 
@@ -237,8 +237,9 @@ Pub/sub system for decoupling components.
 | `message.received` | Channels | EventBus WebSocket (dashboard) |
 | `message.sent` | Brain | Channels, EventBus WebSocket |
 | `thinking` | Brain | EventBus WebSocket (spinner UI) |
-| `tool.called` | Brain | EventBus WebSocket, Terminal |
-| `tool.result` | Brain | EventBus WebSocket, Terminal |
+| `tool.called` | Brain | EventBus WebSocket, channel's PTY terminal |
+| `tool.result` | Brain | EventBus WebSocket |
+| `tool.output_stream` | Tools (run_command, run_python…) | Channel's PTY terminal (real-time streaming) |
 | `llm.request` | LLM Router | EventBus WebSocket |
 | `llm.response` | LLM Router | EventBus WebSocket |
 | `memory.recall` | Brain | EventBus WebSocket (memory indicator) |

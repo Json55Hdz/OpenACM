@@ -32,7 +32,9 @@ import {
   Pencil,
   Server,
   X,
+  Wand2,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
@@ -103,6 +105,7 @@ function InfoRow({
 }
 
 export default function ConfigPage() {
+  const router = useRouter();
   const { config, model, isLoading } = useConfig();
   const setModelMut = useSetModel();
   const saveSetup = useSaveSetup();
@@ -1054,9 +1057,18 @@ export default function ConfigPage() {
               <span>·</span>
               <span>React 19</span>
             </div>
-            <div className="flex items-center gap-2">
-              <CheckCircle size={14} className="text-green-400" />
-              <span>System Online</span>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push('/onboarding?force=true')}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 border border-blue-600/30 transition-colors"
+              >
+                <Wand2 size={13} />
+                Setup Wizard
+              </button>
+              <div className="flex items-center gap-2">
+                <CheckCircle size={14} className="text-green-400" />
+                <span>System Online</span>
+              </div>
             </div>
           </div>
         </div>

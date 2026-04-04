@@ -111,24 +111,53 @@ async def run_command(
     if not _sandbox:
         return "Error: Sandbox not available"
 
-    # Stream output to terminal panel in real time if brain/event_bus available
+    _channel_id = kwargs.get("_channel_id", "web")
+
+    # GUI / background commands don't need PTY — launch detached as before.
+    if _is_gui_command(command) or background:
+        if _is_gui_command(command):
+            return await _run_gui_detached(command, working_directory)
+        brain = kwargs.get("_brain")
+        on_output = None
+        if brain and hasattr(brain, "event_bus"):
+            from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
+            async def on_output(chunk: str):
+                await brain.event_bus.emit(
+                    EVENT_TOOL_OUTPUT_STREAM,
+                    {"tool": "run_command", "chunk": chunk, "channel_id": _channel_id},
+                )
+        return await _run_background(command, working_directory, on_output, _sandbox)
+
+    # For interactive / regular commands: route through the channel's PTY shell so
+    # everything (prompts, passwords, colors, current path) shows in the web terminal.
+    if working_directory:
+        # cd first, then run — PTY doesn't have a per-call cwd option
+        full_command = f'cd /d "{working_directory}" && {command}'
+    else:
+        full_command = command
+
+    try:
+        from openacm.web.server import _channel_shells, ChannelShell
+        shell = _channel_shells.get(_channel_id)
+        if not shell or not shell._alive:
+            # Terminal panel may not be open yet — create the PTY shell on demand
+            shell = ChannelShell(_channel_id)
+            await shell.start()
+            _channel_shells[_channel_id] = shell
+        return await shell.run_command_capture(full_command, timeout=float(timeout) if timeout > 0 else 30.0)
+    except Exception:
+        pass
+
+    # Fallback: sandbox subprocess (no PTY, but still works)
     brain = kwargs.get("_brain")
     on_output = None
     if brain and hasattr(brain, "event_bus"):
         from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
-
         async def on_output(chunk: str):
             await brain.event_bus.emit(
                 EVENT_TOOL_OUTPUT_STREAM,
-                {"tool": "run_command", "chunk": chunk},
+                {"tool": "run_command", "chunk": chunk, "channel_id": _channel_id},
             )
-
-    # GUI commands open a window and never exit — launch detached immediately.
-    if _is_gui_command(command) or background:
-        if _is_gui_command(command):
-            return await _run_gui_detached(command, working_directory)
-        return await _run_background(command, working_directory, on_output, _sandbox)
-
     result = await _sandbox.execute(
         command=command,
         timeout=timeout if timeout > 0 else None,

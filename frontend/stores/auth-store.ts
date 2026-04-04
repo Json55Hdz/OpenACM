@@ -27,19 +27,21 @@ const store = create<AuthState>()(
       checkAuth: async () => {
         const token = get().token;
         if (!token) return false;
-        
+
         try {
           const response = await fetch('/api/auth/check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token }),
           });
-          
+
           if (!response.ok) {
             get().clearAuth();
             return false;
           }
-          
+
+          // Ensure isAuthenticated is true in the store after a successful check
+          set({ isAuthenticated: true });
           return true;
         } catch {
           return false;

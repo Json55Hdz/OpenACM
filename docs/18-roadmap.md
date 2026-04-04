@@ -26,6 +26,9 @@ OpenACM is actively developed. This document describes what's planned, what's in
 - ✅ Workflow tracker (suggests automation for repeated patterns)
 - ✅ Custom LLM provider support (OpenAI-compatible endpoints)
 - ✅ Dashboard: stats, charts, model switching, debug traces
+- ✅ Cron scheduler — recurring tasks with visual management UI and LLM tools (`list/create/delete/toggle/trigger_cron_job`)
+- ✅ Per-channel PTY terminal — real interactive shell (xterm.js + pywinpty/pty), one persistent session per chat channel; AI tool output streams directly into the correct channel's terminal
+- ✅ Cancel button — abort any in-progress AI request from the chat UI
 
 ---
 
@@ -35,11 +38,6 @@ OpenACM is actively developed. This document describes what's planned, what's in
 - Whisper integration for speech-to-text in the web chat
 - TTS output option (ElevenLabs, OpenAI TTS, local Coqui)
 - Voice-only Telegram mode
-
-### Scheduled Tasks / Cron
-- Schedule recurring tasks ("every morning at 8am, summarize my emails")
-- Cron-like syntax from natural language
-- Task history and result storage
 
 ### Smarter Fast-Path
 - More intent categories (file operations, web search patterns)

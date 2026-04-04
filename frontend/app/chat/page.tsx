@@ -398,6 +398,7 @@ export default function ChatPage() {
   } = useChatStore();
 
   const sendMessage = useChatStore((s) => s.sendMessageFn);
+  const cancelMessage = useChatStore((s) => s.cancelMessageFn);
   const { data: conversations } = useConversations();
   const { data: history, isFetching: isLoadingHistory } = useConversationHistory(currentTarget.channel, currentTarget.user);
   const chatCommand = useChatCommand();
@@ -1026,17 +1027,23 @@ export default function ChatPage() {
                 />
               </div>
 
-              <button
-                onClick={handleSend}
-                disabled={(!inputValue.trim() && currentAttachments.length === 0) || isWaitingResponse || isUploading}
-                className="p-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              >
-                {isWaitingResponse ? (
-                  <Loader2 size={20} className="animate-spin" />
-                ) : (
+              {isWaitingResponse ? (
+                <button
+                  onClick={() => cancelMessage?.()}
+                  className="p-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                  title="Cancel"
+                >
+                  <X size={20} />
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={(!inputValue.trim() && currentAttachments.length === 0) || isUploading}
+                  className="p-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                >
                   <Send size={20} />
-                )}
-              </button>
+                </button>
+              )}
             </div>
 
             <p className="text-xs text-slate-500 mt-2 text-center">

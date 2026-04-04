@@ -38,7 +38,6 @@ log = structlog.get_logger()
 
 # Store connected WebSocket clients
 _ws_clients: set[WebSocket] = set()
-_terminal_ws_clients: set[WebSocket] = set()
 
 # Tools that produce shell-like output to show in the terminal panel
 _TERMINAL_TOOLS = {"run_command", "run_python", "python_kernel", "execute_command"}
@@ -54,6 +53,7 @@ _channels: list = []
 _agent_bot_manager = None
 _mcp_manager = None
 _activity_watcher = None
+_cron_scheduler = None
 _custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
 
 
@@ -1013,6 +1013,17 @@ def create_app() -> FastAPI:
                     else "telegram"
                 )
 
+                # Cancel request — forward a cancel keyword to the brain
+                if data.get("type") == "cancel":
+                    if _brain:
+                        asyncio.create_task(_brain.process_message(
+                            content="cancelar",
+                            user_id=target_user,
+                            channel_id=target_channel,
+                            channel_type=target_type,
+                        ))
+                    continue
+
                 if not content and not attachments:
                     continue
 
@@ -1091,63 +1102,35 @@ def create_app() -> FastAPI:
 
     @app.websocket("/ws/terminal")
     async def ws_terminal(websocket: WebSocket):
-        """WebSocket endpoint for interactive terminal sessions."""
-        import platform
+        """WebSocket endpoint for interactive terminal sessions — one persistent PTY per channel."""
         import json as _json
 
         if not _verify_ws_token(websocket):
             await websocket.close(code=4001, reason="Unauthorized")
             return
+
+        channel_id = websocket.query_params.get("channel", "web")
         await websocket.accept()
-        _terminal_ws_clients.add(websocket)
 
-        # Pick shell based on OS
-        if platform.system() == "Windows":
-            shell_cmd = ["cmd.exe"]
-        else:
-            shell_cmd = ["/bin/bash", "-i"]
+        # Get or create the persistent PTY shell for this channel
+        shell = _channel_shells.get(channel_id)
+        if not shell or not shell._alive:
+            shell = ChannelShell(channel_id)
+            try:
+                await shell.start()
+            except Exception as e:
+                log.error("Failed to start PTY shell", channel=channel_id, error=str(e))
+                await websocket.send_json({"type": "error", "data": f"Failed to start shell: {e}"})
+                await websocket.close()
+                return
+            _channel_shells[channel_id] = shell
 
-        process = None
-        stdout_task = asyncio.create_task(asyncio.sleep(0))  # placeholder
-        stderr_task = asyncio.create_task(asyncio.sleep(0))  # placeholder
+        shell.clients.add(websocket)
+
+        # Prod the shell so the current prompt re-appears in the freshly connected xterm
+        asyncio.create_task(shell.write("\r\n"))
+
         try:
-            # SECURITY: POR DISEÑO — Terminal interactiva para el administrador
-            # autenticado del dashboard. Requiere token de dashboard válido.
-            process = await asyncio.create_subprocess_exec(
-                *shell_cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-            async def read_stream(stream, stream_type="output"):
-                """Read from stdout/stderr and send to WebSocket."""
-                try:
-                    while True:
-                        data = await stream.read(4096)
-                        if not data:
-                            break
-                        text = data.decode("utf-8", errors="replace")
-                        await websocket.send_json({"type": stream_type, "data": text})
-
-                        # Track in brain's terminal history
-                        if _brain and hasattr(_brain, "terminal_history"):
-                            # Append output to last entry if exists
-                            if _brain.terminal_history and not _brain.terminal_history[-1].get("_closed"):
-                                _brain.terminal_history[-1]["output"] += text
-                                # Cap output size per command
-                                if len(_brain.terminal_history[-1]["output"]) > 2000:
-                                    _brain.terminal_history[-1]["output"] = (
-                                        _brain.terminal_history[-1]["output"][:2000] + "\n... (truncated)"
-                                    )
-                except (asyncio.CancelledError, Exception):
-                    pass
-
-            # Launch readers for stdout and stderr
-            stdout_task = asyncio.create_task(read_stream(process.stdout, "output"))
-            stderr_task = asyncio.create_task(read_stream(process.stderr, "output"))
-
-            # Read from WebSocket and write to process stdin
             while True:
                 raw = await websocket.receive_text()
                 try:
@@ -1155,54 +1138,39 @@ def create_app() -> FastAPI:
                 except _json.JSONDecodeError:
                     continue
 
-                if msg.get("type") == "input":
-                    cmd_data = msg.get("data", "")
-                    if process.stdin and not process.stdin.is_closing():
-                        process.stdin.write(cmd_data.encode("utf-8"))
-                        await process.stdin.drain()
+                msg_type = msg.get("type")
 
-                        # Track command in brain's terminal history
-                        if _brain and hasattr(_brain, "terminal_history"):
-                            cmd_clean = cmd_data.strip()
-                            if cmd_clean:
-                                # Close previous entry
-                                if _brain.terminal_history:
-                                    _brain.terminal_history[-1]["_closed"] = True
-                                _brain.terminal_history.append({
-                                    "command": cmd_clean,
-                                    "output": "",
-                                    "_closed": False,
-                                })
-                                # Keep only last 30 commands
-                                if len(_brain.terminal_history) > 30:
-                                    _brain.terminal_history[:] = _brain.terminal_history[-30:]
+                if msg_type == "input":
+                    data = msg.get("data", "")
+                    await shell.write(data)
+                    # Track printable commands in brain history
+                    if _brain and hasattr(_brain, "terminal_history"):
+                        cmd_clean = data.strip()
+                        if cmd_clean and cmd_clean != "\n" and len(cmd_clean) > 1:
+                            if _brain.terminal_history:
+                                _brain.terminal_history[-1]["_closed"] = True
+                            _brain.terminal_history.append({
+                                "command": cmd_clean, "output": "", "_closed": False,
+                            })
+                            if len(_brain.terminal_history) > 30:
+                                _brain.terminal_history[:] = _brain.terminal_history[-30:]
 
-                elif msg.get("type") == "signal":
-                    if process and process.returncode is None:
-                        try:
-                            process.send_signal(2)  # SIGINT
-                        except (ProcessLookupError, OSError):
-                            pass
+                elif msg_type == "signal":
+                    # Ctrl+C
+                    await shell.write("\x03")
+
+                elif msg_type == "resize":
+                    cols = int(msg.get("cols", 220))
+                    rows = int(msg.get("rows", 50))
+                    shell.resize(cols, rows)
 
         except WebSocketDisconnect:
             pass
         except Exception as e:
-            log.error("Terminal WebSocket error", error=str(e))
+            log.error("Terminal WebSocket error", channel=channel_id, error=str(e))
         finally:
-            _terminal_ws_clients.discard(websocket)
-            if process and process.returncode is None:
-                try:
-                    process.terminate()
-                    await asyncio.wait_for(process.wait(), timeout=3.0)
-                except (asyncio.TimeoutError, ProcessLookupError):
-                    try:
-                        process.kill()
-                    except (ProcessLookupError, OSError):
-                        pass
-            # Cancel reader tasks
-            for task in [stdout_task, stderr_task]:
-                if not task.done():
-                    task.cancel()
+            # Detach client — shell stays alive for the channel
+            shell.clients.discard(websocket)
 
     # ─── WebSocket: Events ────────────────────────────────────
 
@@ -1762,6 +1730,151 @@ def create_app() -> FastAPI:
             "key_path": key_path,
         }
 
+    # ─── API: Cron Scheduler ─────────────────────────────────
+
+    _VALID_ACTION_TYPES = {"run_skill", "run_routine", "analyze_patterns", "custom_command"}
+
+    def _validate_cron_expr(expr: str) -> bool:
+        shortcuts = {"@hourly", "@daily", "@midnight", "@weekly", "@monthly"}
+        if expr.strip() in shortcuts:
+            return True
+        return len(expr.strip().split()) == 5
+
+    @app.get("/api/cron/jobs")
+    async def list_cron_jobs():
+        """List all cron jobs."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        jobs = await _database.get_all_cron_jobs()
+        return {"jobs": jobs}
+
+    @app.post("/api/cron/jobs")
+    async def create_cron_job(request: Request):
+        """Create a new cron job."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        name = data.get("name", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        cron_expr = data.get("cron_expr", "").strip()
+        if not _validate_cron_expr(cron_expr):
+            raise HTTPException(status_code=400, detail="Invalid cron_expr (need 5 fields or @shortcut)")
+        action_type = data.get("action_type", "")
+        if action_type not in _VALID_ACTION_TYPES:
+            raise HTTPException(status_code=400, detail=f"action_type must be one of {_VALID_ACTION_TYPES}")
+
+        from openacm.watchers.cron_scheduler import compute_next_run
+        next_run = compute_next_run(cron_expr)
+
+        job = await _database.create_cron_job(
+            name=name,
+            description=data.get("description", ""),
+            cron_expr=cron_expr,
+            action_type=action_type,
+            action_payload=data.get("action_payload", {}),
+            is_enabled=bool(data.get("is_enabled", True)),
+            next_run=next_run,
+        )
+        # Reload scheduler in-memory jobs
+        if _cron_scheduler:
+            await _cron_scheduler._sync_jobs()
+        return job
+
+    @app.get("/api/cron/jobs/{job_id}")
+    async def get_cron_job(job_id: int):
+        """Get a single cron job."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        job = await _database.get_cron_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Cron job not found")
+        return job
+
+    @app.put("/api/cron/jobs/{job_id}")
+    async def update_cron_job(job_id: int, request: Request):
+        """Update a cron job."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        existing = await _database.get_cron_job(job_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cron job not found")
+        data = await request.json()
+        allowed = {"name", "description", "cron_expr", "action_type", "action_payload", "is_enabled"}
+        updates = {k: v for k, v in data.items() if k in allowed}
+
+        if "cron_expr" in updates:
+            if not _validate_cron_expr(updates["cron_expr"]):
+                raise HTTPException(status_code=400, detail="Invalid cron_expr")
+            from openacm.watchers.cron_scheduler import compute_next_run
+            updates["next_run"] = compute_next_run(updates["cron_expr"])
+        if "action_type" in updates and updates["action_type"] not in _VALID_ACTION_TYPES:
+            raise HTTPException(status_code=400, detail=f"action_type must be one of {_VALID_ACTION_TYPES}")
+
+        await _database.update_cron_job(job_id, **updates)
+        if _cron_scheduler:
+            await _cron_scheduler._sync_jobs()
+        return await _database.get_cron_job(job_id)
+
+    @app.delete("/api/cron/jobs/{job_id}")
+    async def delete_cron_job(job_id: int):
+        """Delete a cron job."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _database.delete_cron_job(job_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Cron job not found")
+        if _cron_scheduler:
+            await _cron_scheduler._sync_jobs()
+        return {"status": "ok", "deleted": job_id}
+
+    @app.post("/api/cron/jobs/{job_id}/trigger")
+    async def trigger_cron_job(job_id: int):
+        """Immediately trigger a cron job."""
+        if not _cron_scheduler:
+            raise HTTPException(status_code=503, detail="Cron scheduler not running")
+        result = await _cron_scheduler.trigger_now(job_id)
+        return result
+
+    @app.post("/api/cron/jobs/{job_id}/toggle")
+    async def toggle_cron_job(job_id: int):
+        """Toggle a cron job enabled/disabled."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        job = await _database.get_cron_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Cron job not found")
+        new_state = not bool(job.get("is_enabled", 1))
+        await _database.update_cron_job(job_id, is_enabled=new_state)
+        if _cron_scheduler:
+            await _cron_scheduler._sync_jobs()
+        return {"status": "ok", "is_enabled": new_state}
+
+    @app.get("/api/cron/runs")
+    async def get_cron_runs(job_id: int | None = None, limit: int = 50):
+        """Get cron job run history."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        runs = await _database.get_cron_runs(job_id=job_id, limit=min(limit, 200))
+        return {"runs": runs}
+
+    @app.get("/api/cron/status")
+    async def get_cron_status():
+        """Return scheduler running status and job summary."""
+        if _cron_scheduler is None:
+            return {"running": False, "job_count": 0, "enabled_count": 0,
+                    "next_job_name": None, "next_job_at": None}
+        jobs = list(_cron_scheduler._jobs.values())
+        enabled = [j for j in jobs if j.is_enabled]
+        next_job = _cron_scheduler.next_due_job()
+        return {
+            "running": _cron_scheduler.is_running,
+            "job_count": len(jobs),
+            "enabled_count": len(enabled),
+            "next_job_name": next_job.name if next_job else None,
+            "next_job_at": next_job.next_run if next_job else None,
+        }
+
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
@@ -1803,18 +1916,221 @@ async def broadcast_event(event_type: str, data: dict[str, Any]):
     _ws_clients -= disconnected
 
 
-async def _broadcast_to_terminal(data: dict[str, Any]):
-    """Broadcast a message to all connected terminal WebSocket clients."""
-    global _terminal_ws_clients
-    if not _terminal_ws_clients:
-        return
-    disconnected = set()
-    for client in _terminal_ws_clients:
+class ChannelShell:
+    """Persistent PTY shell for one channel. Survives WS reconnects."""
+
+    def __init__(self, channel_id: str) -> None:
+        self.channel_id = channel_id
+        self.clients: set[WebSocket] = set()
+        self._platform: str = ""
+        self._pty = None          # winpty.PtyProcess (Windows) or (master_fd, proc) tuple (Unix)
+        self._alive = False
+        self._reader_task: asyncio.Task | None = None
+        self._output_listeners: list[asyncio.Queue] = []  # for run_command_capture
+        self._cmd_lock = asyncio.Lock()                    # one command at a time
+
+    async def start(self, cols: int = 220, rows: int = 50) -> None:
+        import platform as _plat
+        self._platform = _plat.system()
+        loop = asyncio.get_event_loop()
+
+        if self._platform == "Windows":
+            from winpty import PtyProcess  # pywinpty
+            self._pty = await loop.run_in_executor(
+                None, lambda: PtyProcess.spawn("cmd.exe", dimensions=(rows, cols))
+            )
+        else:
+            import pty as _pty_mod, os, subprocess, fcntl, termios, struct
+            master_fd, slave_fd = _pty_mod.openpty()
+            # Set terminal size
+            fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            proc = subprocess.Popen(
+                ["/bin/bash", "-i"],
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                close_fds=True, preexec_fn=os.setsid,
+            )
+            os.close(slave_fd)
+            self._pty = (master_fd, proc)
+
+        self._alive = True
+        self._reader_task = asyncio.create_task(self._read_loop())
+
+    async def _read_loop(self) -> None:
+        loop = asyncio.get_event_loop()
+        consecutive_errors = 0
+        while self._alive:
+            try:
+                chunk = await loop.run_in_executor(None, self._read_chunk)
+                consecutive_errors = 0
+                if chunk is None:
+                    # Process died
+                    self._alive = False
+                    await self._broadcast_json({"type": "exit", "data": "shell exited"})
+                    break
+                if chunk:
+                    await self._broadcast_json({"type": "output", "data": chunk})
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                consecutive_errors += 1
+                if consecutive_errors > 20:
+                    # Too many errors in a row — consider shell dead
+                    self._alive = False
+                    await self._broadcast_json({"type": "exit", "data": "shell read error"})
+                    break
+                await asyncio.sleep(0.05)
+
+    def _read_chunk(self) -> str | None:
+        """Blocking read — runs in thread executor. Returns None when process dies."""
         try:
-            await client.send_json(data)
+            if self._platform == "Windows":
+                if not self._pty.isalive():
+                    return None
+                data = self._pty.read(4096)  # blocks until data available; no timeout param
+                return data if data else ""
+            else:
+                import select, os
+                master_fd, proc = self._pty
+                if proc.poll() is not None:
+                    return None
+                r, _, _ = select.select([master_fd], [], [], 0.1)
+                if r:
+                    return os.read(master_fd, 4096).decode("utf-8", errors="replace")
+                return ""
+        except EOFError:
+            return None  # process exited cleanly
         except Exception:
-            disconnected.add(client)
-    _terminal_ws_clients -= disconnected
+            return None
+
+    async def write(self, data: str) -> None:
+        if not self._alive:
+            return
+        loop = asyncio.get_event_loop()
+        try:
+            if self._platform == "Windows":
+                await loop.run_in_executor(None, self._pty.write, data)
+            else:
+                import os
+                master_fd, _ = self._pty
+                await loop.run_in_executor(None, os.write, master_fd, data.encode("utf-8"))
+        except Exception:
+            pass
+
+    def resize(self, cols: int, rows: int) -> None:
+        try:
+            if self._platform == "Windows":
+                self._pty.setwinsize(rows, cols)
+            else:
+                import fcntl, termios, struct
+                master_fd, _ = self._pty
+                fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        except Exception:
+            pass
+
+    async def _broadcast_json(self, data: dict[str, Any]) -> None:
+        dead: set[WebSocket] = set()
+        for ws in list(self.clients):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                dead.add(ws)
+        self.clients -= dead
+        # Push to any active run_command_capture listeners
+        for q in list(self._output_listeners):
+            try:
+                q.put_nowait(data)
+            except Exception:
+                pass
+
+    async def run_command_capture(self, command: str, timeout: float = 30.0) -> str:
+        """Write a command to the PTY and capture output. Serialized — one command at a time."""
+        import re as _re
+
+        _ANSI = _re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
+
+        def strip_ansi(t: str) -> str:
+            return _ANSI.sub("", t).replace("\r", "")
+
+        def looks_like_prompt(text: str) -> bool:
+            clean = strip_ansi(text).rstrip()
+            if not clean:
+                return False
+            last = clean.splitlines()[-1] if "\n" in clean else clean
+            return bool(_re.search(r"[>$#]\s*$", last))
+
+        async with self._cmd_lock:
+            queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+            self._output_listeners.append(queue)
+            parts: list[str] = []
+
+            try:
+                await self.write(command + "\r\n")
+                deadline = asyncio.get_event_loop().time() + timeout
+                prompt_seen = False
+
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        msg = await asyncio.wait_for(queue.get(), timeout=min(remaining, 0.5))
+                        if msg.get("type") == "output":
+                            parts.append(msg.get("data", ""))
+                            combined = "".join(parts)
+                            if looks_like_prompt(combined) and len(strip_ansi(combined).strip()) > len(command) + 2:
+                                prompt_seen = True
+                                break
+                    except asyncio.TimeoutError:
+                        # Only break on silence if we've already seen the shell prompt —
+                        # avoids cutting off slow network commands (SSH, docker, etc.)
+                        combined = "".join(parts)
+                        if prompt_seen or (parts and looks_like_prompt(combined)):
+                            break
+                        # Otherwise keep waiting — command still running
+            finally:
+                try:
+                    self._output_listeners.remove(queue)
+                except ValueError:
+                    pass
+
+            combined = strip_ansi("".join(parts)).strip()
+            if combined.lower().startswith(command.strip().lower()):
+                combined = combined[len(command.strip()):].strip()
+            return combined or "(sin salida)"
+
+    async def stop(self) -> None:
+        self._alive = False
+        if self._reader_task and not self._reader_task.done():
+            self._reader_task.cancel()
+        try:
+            if self._platform == "Windows":
+                if self._pty:
+                    self._pty.terminate(force=True)
+            else:
+                if self._pty:
+                    import os, signal
+                    master_fd, proc = self._pty
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        os.close(master_fd)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+
+
+# Per-channel persistent shell sessions
+_channel_shells: dict[str, ChannelShell] = {}
+
+
+async def _broadcast_to_terminal(data: dict[str, Any], channel_id: str = "web") -> None:
+    """Broadcast a structured message to the terminal for a specific channel."""
+    shell = _channel_shells.get(channel_id)
+    if shell and shell._alive:
+        await shell._broadcast_json(data)
 
 
 async def create_web_server(
@@ -1827,14 +2143,16 @@ async def create_web_server(
     agent_bot_manager=None,
     mcp_manager=None,
     activity_watcher=None,
+    cron_scheduler=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler
     _brain = brain
     _database = database
     _event_bus = event_bus
     _tool_registry = tool_registry
     _activity_watcher = activity_watcher
+    _cron_scheduler = cron_scheduler
     _config = config
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
@@ -1874,11 +2192,12 @@ async def create_web_server(
     ]:
         event_bus.on(evt, on_event)
 
-    # Mirror AI tool calls to the terminal panel
+    # Mirror AI tool calls to the correct channel's terminal
     async def on_tool_called(event_type: str, data: dict[str, Any]):
         tool_name = data.get("tool", "")
         if tool_name not in _TERMINAL_TOOLS:
             return
+        channel_id = data.get("channel_id", "web")
         args_raw = data.get("arguments", "")
         try:
             import json as _j
@@ -1890,29 +2209,21 @@ async def create_web_server(
             "type": "ai_command",
             "tool": tool_name,
             "data": str(command),
-        })
-
-    async def on_tool_result(event_type: str, data: dict[str, Any]):
-        tool_name = data.get("tool", "")
-        if tool_name not in _TERMINAL_TOOLS:
-            return
-        result = data.get("result", "")
-        await _broadcast_to_terminal({
-            "type": "ai_output",
-            "tool": tool_name,
-            "data": str(result),
-        })
+        }, channel_id=channel_id)
 
     event_bus.on(EVENT_TOOL_CALLED, on_tool_called)
-    event_bus.on(EVENT_TOOL_RESULT, on_tool_result)
 
     from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
 
     async def on_tool_output_stream(event_type: str, data: dict[str, Any]):
         chunk = data.get("chunk", "")
         tool = data.get("tool", "")
+        channel_id = data.get("channel_id", "web")
         if chunk:
-            await _broadcast_to_terminal({"type": "ai_output", "tool": tool, "data": chunk})
+            await _broadcast_to_terminal(
+                {"type": "ai_output", "tool": tool, "data": chunk},
+                channel_id=channel_id,
+            )
 
     event_bus.on(EVENT_TOOL_OUTPUT_STREAM, on_tool_output_stream)
 

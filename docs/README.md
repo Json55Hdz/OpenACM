@@ -26,6 +26,7 @@
 | [Dashboard](./16-dashboard.md) | Web UI guide, all pages |
 | [Extending OpenACM](./17-extending.md) | Creating tools, skills, custom channels, MCP servers |
 | [Roadmap](./18-roadmap.md) | What's coming next |
+| [Cron Scheduler](./19-cron-scheduler.md) | Background job scheduler — recurring tasks, cron expressions, API |
 
 ---
 

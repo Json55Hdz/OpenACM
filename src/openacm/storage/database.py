@@ -159,7 +159,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 5
+    _SCHEMA_VERSION = 6
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -268,6 +268,43 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_ws_user_channel ON workflow_suggestions(user_id, channel_id, status);
             """)
             log.info("Migration 3: created workflow_executions and workflow_suggestions tables")
+
+        # ── Migration 6: cron_jobs + cron_job_runs tables ─────────────────────
+        if current < 6:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS cron_jobs (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name           TEXT    NOT NULL,
+                    description    TEXT    NOT NULL DEFAULT '',
+                    cron_expr      TEXT    NOT NULL,
+                    action_type    TEXT    NOT NULL,
+                    action_payload TEXT    NOT NULL DEFAULT '{}',
+                    is_enabled     INTEGER NOT NULL DEFAULT 1,
+                    last_run       TEXT,
+                    next_run       TEXT,
+                    run_count      INTEGER NOT NULL DEFAULT 0,
+                    last_status    TEXT    NOT NULL DEFAULT 'pending',
+                    last_output    TEXT,
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled  ON cron_jobs(is_enabled);
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run);
+
+                CREATE TABLE IF NOT EXISTS cron_job_runs (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id       INTEGER NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+                    started_at   TEXT    NOT NULL,
+                    finished_at  TEXT,
+                    status       TEXT    NOT NULL DEFAULT 'running',
+                    output       TEXT,
+                    error        TEXT,
+                    triggered_by TEXT    NOT NULL DEFAULT 'scheduler'
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id  ON cron_job_runs(job_id);
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_job_runs(started_at);
+            """)
+            log.info("Migration 6: created cron_jobs and cron_job_runs tables")
 
         # ── Migration 5: add description + chat_mentioned to detected_routines ─
         if current < 5:
@@ -1207,3 +1244,175 @@ class Database:
             (ts, routine_id),
         )
         await self._db.commit()
+
+    # ─── Cron Jobs ────────────────────────────────────────────
+
+    async def create_cron_job(
+        self,
+        name: str,
+        description: str,
+        cron_expr: str,
+        action_type: str,
+        action_payload: dict,
+        is_enabled: bool = True,
+        next_run: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a new cron job and return the full row."""
+        if not self._db:
+            return {}
+        import json as _json
+        cursor = await self._db.execute(
+            "INSERT INTO cron_jobs "
+            "(name, description, cron_expr, action_type, action_payload, is_enabled, next_run) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, description, cron_expr, action_type,
+             _json.dumps(action_payload), int(is_enabled), next_run),
+        )
+        await self._db.commit()
+        row_id = cursor.lastrowid
+        return await self.get_cron_job(row_id) or {}
+
+    async def get_all_cron_jobs(self) -> list[dict[str, Any]]:
+        """Return all cron jobs ordered by id."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM cron_jobs ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_cron_job(self, job_id: int) -> dict[str, Any] | None:
+        """Return a single cron job by id."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM cron_jobs WHERE id = ?", (job_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_cron_job(self, job_id: int, **kwargs: Any) -> bool:
+        """Update allowed fields of a cron job."""
+        if not self._db:
+            return False
+        import json as _json
+        allowed = {
+            "name", "description", "cron_expr", "action_type",
+            "action_payload", "is_enabled", "next_run",
+        }
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key not in allowed:
+                continue
+            updates.append(f"{key} = ?")
+            if key == "action_payload" and isinstance(val, dict):
+                params.append(_json.dumps(val))
+            elif key == "is_enabled":
+                params.append(int(val))
+            else:
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(job_id)
+        await self._db.execute(
+            f"UPDATE cron_jobs SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def update_cron_job_after_run(
+        self,
+        job_id: int,
+        last_run: str,
+        next_run: str,
+        status: str,
+        output: str,
+    ) -> None:
+        """Update last_run, next_run, status, and increment run_count after execution."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "UPDATE cron_jobs SET "
+            "last_run = ?, next_run = ?, last_status = ?, last_output = ?, "
+            "run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (last_run, next_run or None, status, output[:4000] if output else None, job_id),
+        )
+        await self._db.commit()
+
+    async def delete_cron_job(self, job_id: int) -> bool:
+        """Delete a cron job and its run history."""
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM cron_jobs WHERE id = ?", (job_id,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Cron Job Runs ────────────────────────────────────────
+
+    async def create_cron_run(
+        self,
+        job_id: int,
+        started_at: str,
+        triggered_by: str = "scheduler",
+    ) -> int:
+        """Insert a run row with status='running'. Returns the run id."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO cron_job_runs (job_id, started_at, triggered_by) VALUES (?, ?, ?)",
+            (job_id, started_at, triggered_by),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def finish_cron_run(
+        self,
+        run_id: int,
+        finished_at: str,
+        status: str,
+        output: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Mark a run as finished with its result."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "UPDATE cron_job_runs "
+            "SET finished_at = ?, status = ?, output = ?, error = ? "
+            "WHERE id = ?",
+            (finished_at, status,
+             output[:4000] if output else None,
+             error[:2000] if error else None,
+             run_id),
+        )
+        await self._db.commit()
+
+    async def get_cron_runs(
+        self,
+        job_id: int | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return recent cron runs, optionally filtered by job_id."""
+        if not self._db:
+            return []
+        if job_id is not None:
+            cursor = await self._db.execute(
+                "SELECT r.*, j.name as job_name FROM cron_job_runs r "
+                "JOIN cron_jobs j ON j.id = r.job_id "
+                "WHERE r.job_id = ? ORDER BY r.id DESC LIMIT ?",
+                (job_id, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT r.*, j.name as job_name FROM cron_job_runs r "
+                "JOIN cron_jobs j ON j.id = r.job_id "
+                "ORDER BY r.id DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

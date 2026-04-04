@@ -61,6 +61,7 @@ class OpenACM:
         self._mcp_manager = None
         self._web_server = None
         self._activity_watcher = None
+        self._cron_scheduler = None
         self._shutdown_event = asyncio.Event()
 
     async def run(self):
@@ -273,6 +274,9 @@ class OpenACM:
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)
 
+        from openacm.tools import cron_tool
+        self.tool_registry.register_module(cron_tool)
+
         # Stitch tool (optional — requiere STITCH_API_KEY en config/.env)
         try:
             from openacm.tools import stitch_tool
@@ -388,7 +392,7 @@ class OpenACM:
             console.print(f"  [yellow]~[/yellow] Agent bots skipped: {e}")
 
     async def _init_watchers(self):
-        """Start OS activity watcher."""
+        """Start OS activity watcher and cron scheduler."""
         try:
             from openacm.watchers.activity_watcher import ActivityWatcher
             self._activity_watcher = ActivityWatcher(self.database)
@@ -397,6 +401,20 @@ class OpenACM:
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Activity watcher skipped: {e}")
 
+        try:
+            from openacm.watchers.cron_scheduler import CronScheduler
+            self._cron_scheduler = CronScheduler(
+                database=self.database,
+                brain=self.brain,
+            )
+            await self._cron_scheduler.start()
+            job_count = len(self._cron_scheduler._jobs)
+            console.print(
+                f"  [green]✓[/green] Cron scheduler running ([dim]{job_count} job(s)[/dim])"
+            )
+        except Exception as e:
+            console.print(f"  [yellow]~[/yellow] Cron scheduler skipped: {e}")
+
     async def _init_web(self):
         """Start the web dashboard."""
         try:
@@ -404,6 +422,14 @@ class OpenACM:
 
             import os as _os
             _os.environ["OPENACM_PORT"] = str(self.config.web.port)
+            # Give cron tools access to the scheduler for trigger_now
+            if self._cron_scheduler:
+                try:
+                    from openacm.tools import cron_tool as _ct
+                    _ct._cron_scheduler = self._cron_scheduler
+                except Exception:
+                    pass
+
             self._web_server = await create_web_server(
                 config=self.config,
                 brain=self.brain,
@@ -414,6 +440,7 @@ class OpenACM:
                 agent_bot_manager=self._agent_bot_manager,
                 mcp_manager=self._mcp_manager,
                 activity_watcher=self._activity_watcher,
+                cron_scheduler=self._cron_scheduler,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "
@@ -514,6 +541,13 @@ class OpenACM:
         if self._agent_bot_manager:
             try:
                 await self._agent_bot_manager.stop_all()
+            except Exception:
+                pass
+
+        # Stop cron scheduler
+        if self._cron_scheduler:
+            try:
+                await self._cron_scheduler.stop()
             except Exception:
                 pass
 

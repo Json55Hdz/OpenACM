@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/use-websocket';
 import { useConfigStatus, useSaveSetup, useSetModel, useGoogleStatus, useSaveGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
@@ -81,8 +81,10 @@ function StepIndicator({
   );
 }
 
-export default function OnboardingPage() {
+function OnboardingContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const forceOpen = searchParams.get('force') === 'true';
   const { login, isAuthenticated } = useAuth();
   const { data: configStatus } = useConfigStatus();
   const saveSetup = useSaveSetup();
@@ -122,12 +124,14 @@ export default function OnboardingPage() {
   useEffect(() => {
     if (!isAuthenticated || currentStep !== 1) return;
     if (configStatus === undefined) return; // still loading — wait
-    if (!configStatus.needs_setup) {
+    if (!configStatus.needs_setup && !forceOpen) {
+      // Already configured and not forced — go to dashboard
       router.push('/dashboard');
     } else {
+      // Either needs setup OR opened manually with ?force=true — skip auth step
       setCurrentStep(2);
     }
-  }, [isAuthenticated, configStatus, currentStep, router]);
+  }, [isAuthenticated, configStatus, currentStep, router, forceOpen]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -569,5 +573,17 @@ export default function OnboardingPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+      </div>
+    }>
+      <OnboardingContent />
+    </Suspense>
   );
 }

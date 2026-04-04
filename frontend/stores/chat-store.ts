@@ -70,9 +70,11 @@ interface ChatState {
   setRouterLearning: (learning: boolean) => void;
   setActiveSkillNames: (names: string[]) => void;
   setMemoryRecall: (state: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null) => void;
-  // Stable sendMessage function injected by the global WS hook
+  // Stable sendMessage/cancelMessage functions injected by the global WS hook
   sendMessageFn: ((msg: string, attachments?: string[]) => boolean) | null;
   setSendMessageFn: (fn: ((msg: string, attachments?: string[]) => boolean) | null) => void;
+  cancelMessageFn: (() => void) | null;
+  setCancelMessageFn: (fn: (() => void) | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -88,6 +90,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSkillNames: [],
   memoryRecall: null,
   sendMessageFn: null,
+  cancelMessageFn: null,
 
   addMessage: (message) => {
     const newMessage: Message = {
@@ -178,4 +181,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),
   setMemoryRecall: (state) => set({ memoryRecall: state }),
   setSendMessageFn: (fn) => set({ sendMessageFn: fn }),
+  setCancelMessageFn: (fn) => set({ cancelMessageFn: fn }),
 }));
