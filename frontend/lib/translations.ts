@@ -45,6 +45,7 @@ export const translations = {
     mcp: 'MCP Servers',
     debug: 'Traces',
     config: 'Configuration',
+    routines: 'Mis Rutinas',
     logout: 'Log out',
     menu: 'Menu',
   },

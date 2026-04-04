@@ -20,6 +20,7 @@ from openacm.core.commands import CommandProcessor
 from openacm.core.events import EventBus
 from openacm.core.llm_router import LLMRouter
 from openacm.core.brain import Brain
+from openacm.core.local_router import LocalRouter
 from openacm.core.memory import MemoryManager
 from openacm.core.skill_manager import SkillManager
 from openacm.storage.database import Database
@@ -59,6 +60,7 @@ class OpenACM:
         self._agent_bot_manager = None
         self._mcp_manager = None
         self._web_server = None
+        self._activity_watcher = None
         self._shutdown_event = asyncio.Event()
 
     async def run(self):
@@ -113,6 +115,7 @@ class OpenACM:
 
             # Phase 6: Start web dashboard
             progress.update(task, description=steps[5])
+            await self._init_watchers()
             await self._init_web()
             progress.advance(task)
 
@@ -132,8 +135,18 @@ class OpenACM:
             )
         )
 
-        # Start LocalRouter warm-up AFTER the panel so its log appears below it
-        asyncio.create_task(self.brain.local_router.warm_up())
+        # Start LocalRouter warm-up AFTER the panel so its log appears below it.
+        # Once the model is loaded, also precompute tool embeddings for semantic selection.
+        async def _warmup_and_embed():
+            await self.brain.local_router.warm_up()
+            model = LocalRouter._model
+            if model is not None and self.tool_registry is not None:
+                try:
+                    self.tool_registry.precompute_tool_embeddings(model)
+                except Exception as e:
+                    log.warning("Failed to precompute tool embeddings", error=str(e))
+
+        asyncio.create_task(_warmup_and_embed())
 
         # Phase 6: Interactive console loop
         await self._console_loop()
@@ -155,9 +168,18 @@ class OpenACM:
         # Event bus
         self.event_bus = EventBus()
 
+        # Activity encryptor (local key, never transmitted)
+        _enc = None
+        try:
+            from openacm.watchers.encryption import ActivityEncryptor
+            _enc = ActivityEncryptor()
+            console.print(f"  [green]✓[/green] Activity data encrypted (key: [dim]{_enc.key_path}[/dim])")
+        except Exception as _enc_err:
+            console.print(f"  [yellow]~[/yellow] Activity encryption skipped: {_enc_err}")
+
         # Database
         _step("Initializing database")
-        self.database = Database(self.config.storage.database_path)
+        self.database = Database(self.config.storage.database_path, encryptor=_enc)
         await self.database.initialize()
         if progress and task is not None:
             progress.advance(task)
@@ -198,6 +220,21 @@ class OpenACM:
             tool_registry=None,  # set after tools init
             skill_manager=self.skill_manager,
         )
+
+        # Workflow Tracker — detects repeated tool patterns and suggests automation
+        try:
+            from openacm.core.workflow_tracker import WorkflowTracker
+            from openacm.core import rag as _rag_module
+            _rag_engine = getattr(_rag_module, '_rag_engine', None)
+        except Exception:
+            _rag_engine = None
+        try:
+            from openacm.core.workflow_tracker import WorkflowTracker
+            self.brain.workflow_tracker = WorkflowTracker(
+                self.database, _rag_engine, self.brain.llm_router
+            )
+        except Exception as _wf_err:
+            log.warning("WorkflowTracker init failed", error=str(_wf_err))
 
         # Central command processor
         self.command_processor = CommandProcessor(self.brain, self.database)
@@ -350,6 +387,16 @@ class OpenACM:
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Agent bots skipped: {e}")
 
+    async def _init_watchers(self):
+        """Start OS activity watcher."""
+        try:
+            from openacm.watchers.activity_watcher import ActivityWatcher
+            self._activity_watcher = ActivityWatcher(self.database)
+            await self._activity_watcher.start()
+            console.print("  [green]✓[/green] Activity watcher running")
+        except Exception as e:
+            console.print(f"  [yellow]~[/yellow] Activity watcher skipped: {e}")
+
     async def _init_web(self):
         """Start the web dashboard."""
         try:
@@ -366,6 +413,7 @@ class OpenACM:
                 channels=self._channels,
                 agent_bot_manager=self._agent_bot_manager,
                 mcp_manager=self._mcp_manager,
+                activity_watcher=self._activity_watcher,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "
@@ -466,6 +514,13 @@ class OpenACM:
         if self._agent_bot_manager:
             try:
                 await self._agent_bot_manager.stop_all()
+            except Exception:
+                pass
+
+        # Stop activity watcher
+        if self._activity_watcher:
+            try:
+                await self._activity_watcher.stop()
             except Exception:
                 pass
 

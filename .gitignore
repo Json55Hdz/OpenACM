@@ -17,6 +17,12 @@ config/.env
 config/google_credentials.json
 config/google_token.json
 
+# Activity encryption key — machine-local, never commit
+config/activity.key
+
+# User-defined custom LLM providers (may contain API keys)
+config/custom_providers.json
+
 # Data
 data/
 *.db

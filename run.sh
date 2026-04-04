@@ -20,13 +20,17 @@ fi
 source .venv/bin/activate
 python -c "import openacm" 2>/dev/null
 if [ $? -ne 0 ]; then
-    echo "[ERROR] OpenACM no está instalado correctamente."
-    echo ""
-    echo "Intenta ejecutar ./setup.sh de nuevo."
-    echo ""
-    exit 1
+    echo "[!] OpenACM package not found. Attempting quick reinstall..."
+    pip install -e "$SCRIPT_DIR" -q 2>/dev/null
+    python -c "import openacm" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] Reinstall failed. Please run ./setup.sh to repair the installation."
+        echo ""
+        exit 1
+    fi
+    echo "[OK] Reinstalled successfully."
 fi
-echo "[OK] Entorno verificado."
+echo "[OK] Environment verified."
 echo ""
 
 # Build frontend (ensures latest code is always served)

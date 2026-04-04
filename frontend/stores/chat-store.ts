@@ -1,5 +1,11 @@
 import { create } from 'zustand';
 
+export interface ValidationStep {
+  step: string;
+  status: 'running' | 'passed' | 'failed' | 'warning';
+  detail: string;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -12,6 +18,13 @@ interface Message {
     arguments: string;
     result?: string;
     status: 'running' | 'completed' | 'error';
+  };
+  // Live validation progress (tool/skill creation)
+  validation?: {
+    tool: string;
+    steps: ValidationStep[];
+    done: boolean;
+    passed: boolean;
   };
 }
 
@@ -39,9 +52,11 @@ interface ChatState {
   wsConnected: boolean;
   isRouterLearning: boolean;
   activeSkillNames: string[];
+  memoryRecall: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null;
 
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
+  upsertValidationStep: (tool: string, step: ValidationStep, done?: boolean, passed?: boolean) => void;
   clearMessages: () => void;
   setTarget: (target: ChatTarget) => void;
   setWaitingResponse: (waiting: boolean) => void;
@@ -54,6 +69,7 @@ interface ChatState {
   setWsConnected: (connected: boolean) => void;
   setRouterLearning: (learning: boolean) => void;
   setActiveSkillNames: (names: string[]) => void;
+  setMemoryRecall: (state: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null) => void;
   // Stable sendMessage function injected by the global WS hook
   sendMessageFn: ((msg: string, attachments?: string[]) => boolean) | null;
   setSendMessageFn: (fn: ((msg: string, attachments?: string[]) => boolean) | null) => void;
@@ -70,6 +86,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   wsConnected: false,
   isRouterLearning: false,
   activeSkillNames: [],
+  memoryRecall: null,
   sendMessageFn: null,
 
   addMessage: (message) => {
@@ -92,6 +109,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => set({ messages: [] }),
+
+  upsertValidationStep: (tool, step, done = false, passed = false) => {
+    set((state) => {
+      // Find the existing validation message for this tool, if any
+      const idx = state.messages.findLastIndex(
+        (m) => m.validation?.tool === tool
+      );
+
+      if (idx === -1) {
+        // Create a new validation message
+        const newMsg: Message = {
+          id: `validation-${tool}-${Date.now()}`,
+          content: '',
+          role: 'system',
+          timestamp: new Date(),
+          validation: { tool, steps: [step], done, passed },
+        };
+        return { messages: [...state.messages, newMsg] };
+      }
+
+      // Update existing validation message
+      const updated = [...state.messages];
+      const existing = updated[idx];
+      const steps = existing.validation!.steps.filter((s) => s.step !== step.step);
+      updated[idx] = {
+        ...existing,
+        validation: {
+          tool,
+          steps: [...steps, step],
+          done,
+          passed,
+        },
+      };
+      return { messages: updated };
+    });
+  },
 
   setTarget: (target) => {
     const current = get().currentTarget;
@@ -123,5 +176,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),
+  setMemoryRecall: (state) => set({ memoryRecall: state }),
   setSendMessageFn: (fn) => set({ sendMessageFn: fn }),
 }));

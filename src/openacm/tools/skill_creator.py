@@ -15,12 +15,15 @@ log = structlog.get_logger()
 @tool(
     name="create_skill",
     description=(
-        "Create a new AI skill dynamically. Use this when the user wants to:\n"
-        "1. Create a specialized assistant persona (e.g., 'create a Python expert skill')\n"
-        "2. Add domain-specific knowledge (e.g., 'add a skill for reviewing SQL queries')\n"
-        "3. Create a coding assistant for a specific technology\n"
-        "4. Define custom behavior patterns or workflows\n"
-        "The skill will be generated using AI and activated immediately."
+        "Create a new AI skill — a set of INSTRUCTIONS AND KNOWLEDGE injected into the system "
+        "prompt that changes how the AI thinks, responds, or behaves. Skills contain NO executable "
+        "code. Use ONLY when the user wants to:\n"
+        "1. Give the AI a persona or expertise ('be a Python expert', 'always respond formally')\n"
+        "2. Add domain knowledge or guidelines ('know our API conventions', 'follow OWASP rules')\n"
+        "3. Define behavioral patterns ('always ask for confirmation before deleting')\n"
+        "DO NOT use this when the user asks to create a 'tool', 'función', 'integración', or "
+        "anything that requires RUNNING CODE — use create_tool for that instead.\n"
+        "IMPORTANT: Call without apply=True first — show the user a preview before saving."
     ),
     parameters={
         "type": "object",
@@ -43,6 +46,15 @@ log = structlog.get_logger()
                 "enum": ["security", "development", "ai", "custom"],
                 "default": "custom",
             },
+            "apply": {
+                "type": "boolean",
+                "description": "Set to true only after the user has reviewed the preview and confirmed. Default false.",
+                "default": False,
+            },
+            "_generated_content": {
+                "type": "string",
+                "description": "Internal: pre-generated content to save (used in apply phase to avoid re-generating).",
+            },
         },
         "required": ["name", "description", "use_cases"],
     },
@@ -55,6 +67,8 @@ async def create_skill(
     description: str,
     use_cases: str,
     category: str = "custom",
+    apply: bool = False,
+    _generated_content: str = "",
     _brain=None,
     **kwargs,
 ) -> str:
@@ -65,26 +79,19 @@ async def create_skill(
 
     skill_manager: SkillManager = _brain.skill_manager
 
-    # Validate name
     name = name.lower().replace(" ", "-").replace("_", "-")
     if not name.replace("-", "").isalnum():
-        return f"Error: Invalid skill name '{name}'. Use only letters, numbers, and hyphens."
+        return f"Error: nombre de skill inválido '{name}'. Solo letras, números y guiones."
 
-    # Check if skill already exists
     existing = await skill_manager.database.get_skill_by_name(name)
     if existing:
         if existing.get("is_active"):
-            return f"⚠️ Skill '{name}' already exists and is active. Use it directly or delete it first to recreate."
+            return f"⚠️ Skill '{name}' ya existe y está activa. Desactívala primero para recriarla."
         else:
-            # Reactivate existing skill
             await skill_manager.toggle_skill(existing["id"])
-            return f"✅ Skill '{name}' already existed and has been reactivated!"
+            return f"✅ Skill '{name}' ya existía — reactivada."
 
-    try:
-        # Generate the skill using LLM
-        log.info("Generating skill", name=name, category=category)
-
-        skill_prompt = f"""Create a comprehensive skill guide for an AI assistant.
+    skill_prompt = f"""Create a comprehensive skill guide for an AI assistant.
 
 Skill Name: {name}
 Description: {description}
@@ -99,80 +106,81 @@ Write detailed instructions in Markdown format following this structure:
 ## Overview
 What this skill does and when to use it.
 
-## Guidelines  
-Detailed instructions, best practices, and specific patterns:
-- What to do in different scenarios
-- How to approach problems
-- Specific techniques or methodologies
-- Code patterns or examples if relevant
+## Guidelines
+Detailed instructions, best practices, and specific patterns.
 
 ## Examples
-Concrete examples showing the skill in action:
-- Example 1: Common scenario
-- Example 2: Edge case
-- Example 3: Best practice demonstration
+Concrete examples showing the skill in action.
 
 ## Common Pitfalls
-What to avoid and why:
-- Anti-patterns
-- Common mistakes
-- Performance traps
-- Security concerns
+What to avoid and why.
 
-Make it immediately actionable. The AI should be able to apply this knowledge right away.
-Be specific and practical, not generic.
+Make it immediately actionable. Be specific and practical, not generic.
 """
 
-        # Generate content using LLM
-        response = await _brain.llm_router.chat(
-            messages=[{"role": "user", "content": skill_prompt}],
-            temperature=0.7,
-            max_tokens=2000,
-        )
+    try:
+        # ── Phase 1: generate + preview (apply=False) ────────────────────────
+        if not apply:
+            log.info("Generating skill preview", name=name, category=category)
+            response = await _brain.llm_router.chat(
+                messages=[{"role": "user", "content": skill_prompt}],
+                temperature=0.7,
+                max_tokens=2000,
+            )
+            content = response.get("content", "").strip()
 
-        content = response.get("content", "").strip()
+            if not content or len(content) < 100:
+                return "Error: el contenido generado es demasiado corto. Intenta con una descripción más detallada."
 
-        if not content or len(content) < 100:
-            return f"Error: Generated skill content is too short or empty. Please try again with a more detailed description."
+            preview = content[:600] + "\n..." if len(content) > 600 else content
 
-        # Create the skill
+            return f"""👁️ **Preview de skill `{name}`**
+
+📝 {description}
+📂 Categoría: {category}
+
+**Contenido generado:**
+```
+{preview}
+```
+
+¿Todo bien? Responde **sí / aplicar** para guardarla, o **no** para cancelar."""
+
+        # ── Phase 2: save (apply=True) — re-generate since content isn't persisted ─
+        # Re-generate only if no pre-generated content was passed
+        if _generated_content:
+            content = _generated_content
+        else:
+            log.info("Re-generating skill for apply", name=name)
+            response = await _brain.llm_router.chat(
+                messages=[{"role": "user", "content": skill_prompt}],
+                temperature=0.7,
+                max_tokens=2000,
+            )
+            content = response.get("content", "").strip()
+            if not content or len(content) < 100:
+                return "Error: no se pudo regenerar el contenido. Intenta de nuevo."
+
         skill = await skill_manager.create_skill(
             name=name,
             description=description,
             content=content,
             category=category,
         )
-
-        # Skill is created active by default
-
-        # Refresh brain's skill cache
         await skill_manager._refresh_cache()
+        log.info("Skill created", name=name, id=skill.get("id"))
 
-        log.info("Skill created successfully", name=name, id=skill.get("id"))
+        return f"""✅ **Skill `{name}` creada y activada.**
 
-        # Return success message with preview
-        preview = content[:300] + "..." if len(content) > 300 else content
+📝 {description}
+📂 {category} · ID {skill.get("id")}
 
-        return f"""✅ **Skill '{name}' creada y activada exitosamente!**
-
-📝 **Descripción:** {description}
-📂 **Categoría:** {category}
-🔢 **ID:** {skill.get("id")}
-
-**Vista previa del contenido:**
-```
-{preview}
-```
-
-💡 **Esta skill ahora está activa** y se aplicará automáticamente en nuestras conversaciones. Puedes desactivarla desde el dashboard en la sección Skills si lo necesitas.
-
-🎯 **Casos de uso:**
-{use_cases}
+Se aplicará automáticamente en futuras conversaciones.
 """
 
     except Exception as e:
         log.error("Failed to create skill", name=name, error=str(e))
-        return f"Error creating skill: {str(e)}"
+        return f"Error creando skill: {str(e)}"
 
 
 @tool(

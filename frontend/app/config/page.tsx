@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig, useAPI } from '@/hooks/use-api';
-import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth } from '@/hooks/use-setup';
+import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth, useCustomProviders, useAddCustomProvider, useUpdateCustomProvider, useDeleteCustomProvider } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
@@ -28,6 +28,10 @@ import {
   Sparkles,
   Zap,
   Paintbrush,
+  Plus,
+  Pencil,
+  Server,
+  X,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -222,6 +226,31 @@ export default function ConfigPage() {
   };
   const { data: providerStatus } = useProviderStatus();
   const { data: googleStatus } = useGoogleStatus();
+  const { data: customProviders = [] } = useCustomProviders();
+  const addCustomProvider = useAddCustomProvider();
+  const updateCustomProvider = useUpdateCustomProvider();
+  const deleteCustomProvider = useDeleteCustomProvider();
+
+  const [showAddCustomProvider, setShowAddCustomProvider] = useState(false);
+  const [cpForm, setCpForm] = useState({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
+  const [editingCpId, setEditingCpId] = useState<string | null>(null);
+  const [editCpForm, setEditCpForm] = useState({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
+
+  const handleAddCustomProvider = async () => {
+    const { name, base_url, api_key, default_model, suggested_models } = cpForm;
+    if (!name.trim() || !base_url.trim()) return;
+    const suggested = suggested_models.split(',').map(s => s.trim()).filter(Boolean);
+    await addCustomProvider.mutateAsync({ name: name.trim(), base_url: base_url.trim(), api_key: api_key.trim() || undefined, default_model: default_model.trim() || undefined, suggested_models: suggested.length ? suggested : undefined });
+    setCpForm({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
+    setShowAddCustomProvider(false);
+  };
+
+  const handleUpdateCustomProvider = async (id: string) => {
+    const { name, base_url, api_key, default_model, suggested_models } = editCpForm;
+    const suggested = suggested_models.split(',').map(s => s.trim()).filter(Boolean);
+    await updateCustomProvider.mutateAsync({ id, name: name.trim(), base_url: base_url.trim(), api_key: api_key.trim() || undefined, default_model: default_model.trim(), suggested_models: suggested });
+    setEditingCpId(null);
+  };
   const saveGoogleCreds = useSaveGoogleCredentials();
   const deleteGoogleCreds = useDeleteGoogleCredentials();
   const startGoogleAuth = useStartGoogleAuth();
@@ -264,10 +293,24 @@ export default function ConfigPage() {
     setCustomModel('');
   };
 
-  // Build provider list from API response, falling back to static metadata where available
+  // Build provider list from API response, merging static definitions with custom ones
   const configuredProviders = Object.entries(providerStatus?.providers ?? {})
     .filter(([, enabled]) => enabled)
-    .map(([id]) => getProviderById(id) ?? { id, name: id, envVar: '', needsKey: true, suggestedModels: [], apiKeyUrl: '', description: '' });
+    .map(([id]) => {
+      const staticDef = getProviderById(id);
+      if (staticDef) return staticDef;
+      const customDef = customProviders.find(cp => cp.id === id);
+      if (customDef) return {
+        id: customDef.id,
+        name: customDef.name,
+        envVar: '',
+        needsKey: customDef.has_key,
+        suggestedModels: customDef.suggested_models,
+        apiKeyUrl: '',
+        description: `Custom — ${customDef.base_url}`,
+      };
+      return { id, name: id, envVar: '', needsKey: true, suggestedModels: [], apiKeyUrl: '', description: '' };
+    });
   const activeProviderId = model?.provider || '';
 
   const handleTelegramSave = async () => {
@@ -301,6 +344,200 @@ export default function ConfigPage() {
               icon={Settings}
             >
               <ProviderSetupForm mode="config" />
+            </ConfigSection>
+          </div>
+
+          {/* Custom Providers */}
+          <div className="lg:col-span-2">
+            <ConfigSection
+              title="Custom Providers"
+              subtitle="Add any OpenAI-compatible endpoint — LM Studio, Together AI, Groq, etc."
+              icon={Server}
+            >
+              <div className="space-y-4">
+                {/* Existing custom providers list */}
+                {customProviders.length > 0 && (
+                  <div className="space-y-2">
+                    {customProviders.map((cp) => (
+                      <div key={cp.id} className="rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
+                        {editingCpId === cp.id ? (
+                          <div className="p-4 space-y-3">
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs text-slate-500 mb-1">Name</label>
+                                <input
+                                  value={editCpForm.name}
+                                  onChange={e => setEditCpForm(p => ({ ...p, name: e.target.value }))}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-slate-500 mb-1">Base URL</label>
+                                <input
+                                  value={editCpForm.base_url}
+                                  onChange={e => setEditCpForm(p => ({ ...p, base_url: e.target.value }))}
+                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-slate-500 mb-1">Default Model</label>
+                                <input
+                                  value={editCpForm.default_model}
+                                  onChange={e => setEditCpForm(p => ({ ...p, default_model: e.target.value }))}
+                                  placeholder="e.g. llama-3.1-8b"
+                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-slate-500 mb-1">API Key (leave blank to keep existing)</label>
+                                <input
+                                  type="password"
+                                  value={editCpForm.api_key}
+                                  onChange={e => setEditCpForm(p => ({ ...p, api_key: e.target.value }))}
+                                  placeholder="sk-..."
+                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-slate-500 mb-1">Suggested Models (comma-separated)</label>
+                              <input
+                                value={editCpForm.suggested_models}
+                                onChange={e => setEditCpForm(p => ({ ...p, suggested_models: e.target.value }))}
+                                placeholder="model-a, model-b"
+                                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleUpdateCustomProvider(cp.id)}
+                                disabled={updateCustomProvider.isPending}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+                              >
+                                {updateCustomProvider.isPending ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                                Save
+                              </button>
+                              <button onClick={() => setEditingCpId(null)} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="px-4 py-3 flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-medium text-white">{cp.name}</span>
+                                {cp.has_key && <span className="text-[10px] bg-green-500/15 text-green-400 border border-green-500/30 rounded px-1.5 py-0.5">Key set</span>}
+                              </div>
+                              <div className="text-xs text-slate-500 font-mono truncate mt-0.5">{cp.base_url}</div>
+                              {cp.default_model && <div className="text-xs text-slate-400 mt-0.5">Default: <span className="font-mono">{cp.default_model}</span></div>}
+                            </div>
+                            <div className="flex items-center gap-1 ml-3">
+                              <button
+                                onClick={() => {
+                                  setEditingCpId(cp.id);
+                                  setEditCpForm({ name: cp.name, base_url: cp.base_url, api_key: '', default_model: cp.default_model, suggested_models: cp.suggested_models.join(', ') });
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-blue-400 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                onClick={() => deleteCustomProvider.mutate(cp.id)}
+                                disabled={deleteCustomProvider.isPending}
+                                className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add form */}
+                {showAddCustomProvider ? (
+                  <div className="p-4 rounded-lg border border-blue-500/30 bg-blue-500/5 space-y-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium text-white">New Custom Provider</span>
+                      <button onClick={() => setShowAddCustomProvider(false)} className="text-slate-500 hover:text-slate-300">
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Name <span className="text-red-400">*</span></label>
+                        <input
+                          value={cpForm.name}
+                          onChange={e => setCpForm(p => ({ ...p, name: e.target.value }))}
+                          placeholder="e.g. LM Studio"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Base URL <span className="text-red-400">*</span></label>
+                        <input
+                          value={cpForm.base_url}
+                          onChange={e => setCpForm(p => ({ ...p, base_url: e.target.value }))}
+                          placeholder="http://localhost:1234/v1"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Default Model</label>
+                        <input
+                          value={cpForm.default_model}
+                          onChange={e => setCpForm(p => ({ ...p, default_model: e.target.value }))}
+                          placeholder="e.g. llama-3.1-8b-instruct"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">API Key (optional)</label>
+                        <input
+                          type="password"
+                          value={cpForm.api_key}
+                          onChange={e => setCpForm(p => ({ ...p, api_key: e.target.value }))}
+                          placeholder="sk-... or leave blank for local"
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Suggested Models (comma-separated, optional)</label>
+                      <input
+                        value={cpForm.suggested_models}
+                        onChange={e => setCpForm(p => ({ ...p, suggested_models: e.target.value }))}
+                        placeholder="model-a, model-b, model-c"
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="pt-1 text-xs text-slate-500">
+                      Any OpenAI-compatible endpoint works — LM Studio, Ollama's OpenAI API, Together AI, Groq, Perplexity, etc.
+                    </div>
+                    <button
+                      onClick={handleAddCustomProvider}
+                      disabled={!cpForm.name.trim() || !cpForm.base_url.trim() || addCustomProvider.isPending}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+                    >
+                      {addCustomProvider.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                      Add Provider
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowAddCustomProvider(true)}
+                    className="flex items-center gap-2 px-4 py-2 border border-dashed border-slate-600 hover:border-blue-500/50 hover:bg-blue-500/5 text-slate-400 hover:text-blue-400 text-sm rounded-lg transition-colors w-full justify-center"
+                  >
+                    <Plus size={14} />
+                    Add Custom Provider
+                  </button>
+                )}
+              </div>
             </ConfigSection>
           </div>
 

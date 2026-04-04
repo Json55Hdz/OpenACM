@@ -28,7 +28,10 @@ EVENT_CHANNEL_DISCONNECTED = "channel.disconnected"
 EVENT_TOOL_OUTPUT_STREAM = "tool.output_stream"  # real-time chunk from a running tool
 EVENT_ERROR = "error"
 EVENT_ROUTER_LEARNED = "router.learned"  # LocalRouter saved a new example
+EVENT_TOOL_VALIDATION = "tool.validation"  # Step-by-step progress from tool/skill validator
 EVENT_SKILL_ACTIVE = "skill.active"  # One or more skills were activated for this message
+EVENT_WORKFLOW_SUGGESTION = "workflow.suggestion"
+EVENT_MEMORY_RECALL = "memory.recall"  # RAG long-term memory is being queried
 
 
 class EventBus:

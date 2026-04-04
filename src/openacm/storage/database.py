@@ -19,9 +19,43 @@ log = structlog.get_logger()
 class Database:
     """Async SQLite database wrapper."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, encryptor: Any = None):
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
+        self._enc = encryptor  # ActivityEncryptor | None
+
+    # ─── Encryption helpers ───────────────────────────────────
+
+    def _e(self, value: str) -> str:
+        """Encrypt value if encryptor is configured, else return as-is."""
+        return self._enc.encrypt(value) if self._enc else value
+
+    def _d(self, value: str) -> str:
+        """Decrypt value if encryptor is configured, else return as-is."""
+        return self._enc.decrypt(value) if self._enc else value
+
+    def _decrypt_activity(self, row: dict) -> dict:
+        """Decrypt sensitive fields in an app_activity row."""
+        if not self._enc:
+            return row
+        return {
+            **row,
+            "app_name":     self._d(row.get("app_name", "")),
+            "window_title": self._d(row.get("window_title", "")),
+            "process_name": self._d(row.get("process_name", "")),
+        }
+
+    def _decrypt_routine(self, row: dict) -> dict:
+        """Decrypt sensitive fields in a detected_routine row."""
+        if not self._enc:
+            return row
+        return {
+            **row,
+            "name":         self._d(row.get("name", "")),
+            "description":  self._d(row.get("description", "")),
+            "apps":         self._d(row.get("apps", "[]")),
+            "trigger_data": self._d(row.get("trigger_data", "{}")),
+        }
 
     async def initialize(self):
         """Create database and tables if they don't exist."""
@@ -125,7 +159,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 2
+    _SCHEMA_VERSION = 5
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -200,6 +234,94 @@ class Database:
             if updates:
                 log.info("Migration 2: fixed tool_call ids", count=len(updates))
 
+        # ── Migration 3: add workflow tracking tables ──────────────────────────
+        if current < 3:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS workflow_executions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    user_message TEXT NOT NULL,
+                    intent_summary TEXT NOT NULL DEFAULT '',
+                    tool_sequence_raw TEXT NOT NULL DEFAULT '[]',
+                    tool_sequence_clean TEXT NOT NULL DEFAULT '[]',
+                    tool_args_hash TEXT NOT NULL DEFAULT '',
+                    turn_timestamp TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_wf_user_channel ON workflow_executions(user_id, channel_id);
+                CREATE INDEX IF NOT EXISTS idx_wf_hash ON workflow_executions(user_id, tool_args_hash);
+                CREATE INDEX IF NOT EXISTS idx_wf_timestamp ON workflow_executions(turn_timestamp);
+
+                CREATE TABLE IF NOT EXISTS workflow_suggestions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    trigger_count INTEGER NOT NULL DEFAULT 0,
+                    representative_ids TEXT NOT NULL DEFAULT '[]',
+                    suggested_at TEXT NOT NULL,
+                    responded_at TEXT,
+                    created_tool_name TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_ws_user_channel ON workflow_suggestions(user_id, channel_id, status);
+            """)
+            log.info("Migration 3: created workflow_executions and workflow_suggestions tables")
+
+        # ── Migration 5: add description + chat_mentioned to detected_routines ─
+        if current < 5:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE detected_routines ADD COLUMN description TEXT DEFAULT ''"
+                )
+            except Exception:
+                pass
+            try:
+                await self._db.execute(
+                    "ALTER TABLE detected_routines ADD COLUMN chat_mentioned INTEGER DEFAULT 0"
+                )
+            except Exception:
+                pass
+            log.info("Migration 5: added description and chat_mentioned to detected_routines")
+
+        # ── Migration 4: OS activity watcher + detected routines ──────────────
+        if current < 4:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS app_activities (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    app_name TEXT NOT NULL,
+                    window_title TEXT NOT NULL DEFAULT '',
+                    process_name TEXT NOT NULL DEFAULT '',
+                    focus_seconds REAL NOT NULL DEFAULT 0,
+                    session_start TEXT NOT NULL,
+                    session_end TEXT NOT NULL,
+                    day_of_week INTEGER NOT NULL DEFAULT 0,
+                    hour_of_day INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_app_activities_app
+                    ON app_activities(app_name);
+                CREATE INDEX IF NOT EXISTS idx_app_activities_start
+                    ON app_activities(session_start);
+
+                CREATE TABLE IF NOT EXISTS detected_routines (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL DEFAULT 'manual',
+                    trigger_data TEXT NOT NULL DEFAULT '{}',
+                    apps TEXT NOT NULL DEFAULT '[]',
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    last_run TEXT,
+                    run_count INTEGER NOT NULL DEFAULT 0,
+                    occurrence_count INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            log.info("Migration 4: created app_activities and detected_routines tables")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -225,21 +347,21 @@ class Database:
         content: str,
         timestamp: str | None = None,
     ):
-        """Log a conversation message."""
+        """Log a conversation message (content encrypted at rest if encryptor configured)."""
         if not self._db:
             return
         ts = timestamp or datetime.now(timezone.utc).isoformat()
         await self._db.execute(
             "INSERT INTO messages (user_id, channel_id, role, content, timestamp) "
             "VALUES (?, ?, ?, ?, ?)",
-            (user_id, channel_id, role, content, ts),
+            (user_id, channel_id, role, self._e(content), ts),
         )
         await self._db.commit()
 
     async def get_conversation(
         self, user_id: str, channel_id: str, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Get conversation history."""
+        """Get conversation history (content decrypted on read)."""
         if not self._db:
             return []
         cursor = await self._db.execute(
@@ -249,7 +371,32 @@ class Database:
             (user_id, channel_id, limit),
         )
         rows = await cursor.fetchall()
-        return [dict(row) for row in reversed(rows)]
+        result = []
+        for row in reversed(rows):
+            r = dict(row)
+            try:
+                r["content"] = self._d(r["content"])
+            except Exception:
+                pass  # leave as-is if decryption fails (e.g. pre-encryption rows)
+            result.append(r)
+        return result
+
+    @property
+    def messages_encrypted(self) -> bool:
+        """True if message content is being encrypted at rest."""
+        return self._enc is not None
+
+    async def delete_conversation_messages(self, user_id: str, channel_id: str) -> int:
+        """Delete all messages for a user/channel pair from the database.
+        Returns the number of rows deleted."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "DELETE FROM messages WHERE user_id = ? AND channel_id = ?",
+            (user_id, channel_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount or 0
 
     # ─── Tool Executions ──────────────────────────────────────
 
@@ -605,3 +752,458 @@ class Database:
         cursor = await self._db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # ─── Workflow Tracking ────────────────────────────────────────────────────
+
+    async def insert_workflow_execution(
+        self,
+        user_id: str,
+        channel_id: str,
+        user_message: str,
+        tool_sequence_raw: str,
+        tool_sequence_clean: str,
+        tool_args_hash: str,
+        turn_timestamp: str,
+    ) -> int:
+        """Insert a workflow execution record and return its id."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO workflow_executions "
+            "(user_id, channel_id, user_message, tool_sequence_raw, tool_sequence_clean, tool_args_hash, turn_timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, channel_id, user_message, tool_sequence_raw, tool_sequence_clean, tool_args_hash, turn_timestamp),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def update_workflow_intent_summary(self, execution_id: int, intent_summary: str) -> None:
+        """Update the intent_summary field of a workflow_execution row."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "UPDATE workflow_executions SET intent_summary = ? WHERE id = ?",
+            (intent_summary, execution_id),
+        )
+        await self._db.commit()
+
+    async def get_recent_workflow_executions(
+        self, user_id: str, channel_id: str, limit: int = 30
+    ) -> list[dict[str, Any]]:
+        """Get the most recent workflow executions for a user/channel."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM workflow_executions "
+            "WHERE user_id = ? AND channel_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, channel_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def count_workflow_hash(self, user_id: str, tool_args_hash: str) -> int:
+        """Count how many times a specific tool sequence hash appears for a user."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM workflow_executions "
+            "WHERE user_id = ? AND tool_args_hash = ?",
+            (user_id, tool_args_hash),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_workflow_executions_by_hash(
+        self, user_id: str, tool_args_hash: str, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Get workflow executions matching a specific hash."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM workflow_executions "
+            "WHERE user_id = ? AND tool_args_hash = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, tool_args_hash, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def count_user_workflow_turns(self, user_id: str) -> int:
+        """Count total workflow execution records for a user."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM workflow_executions WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    async def insert_workflow_suggestion(
+        self,
+        user_id: str,
+        channel_id: str,
+        trigger_count: int,
+        representative_ids_json: str,
+        suggested_at: str,
+    ) -> int:
+        """Insert a workflow suggestion record and return its id."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO workflow_suggestions "
+            "(user_id, channel_id, trigger_count, representative_ids, suggested_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, channel_id, trigger_count, representative_ids_json, suggested_at),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_pending_suggestion(self, user_id: str, channel_id: str) -> dict[str, Any] | None:
+        """Get the latest pending suggestion for a user/channel."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM workflow_suggestions "
+            "WHERE user_id = ? AND channel_id = ? AND status = 'pending' "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, channel_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_pending_suggestion_by_id(self, suggestion_id: int) -> dict[str, Any] | None:
+        """Get a workflow suggestion by its id."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM workflow_suggestions WHERE id = ? LIMIT 1",
+            (suggestion_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_suggestion_status(
+        self,
+        suggestion_id: int,
+        status: str,
+        responded_at: str | None = None,
+        created_tool_name: str | None = None,
+    ) -> None:
+        """Update the status (and optional fields) of a workflow suggestion."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "UPDATE workflow_suggestions "
+            "SET status = ?, responded_at = ?, created_tool_name = ? "
+            "WHERE id = ?",
+            (status, responded_at, created_tool_name, suggestion_id),
+        )
+        await self._db.commit()
+
+    async def get_last_suggestion(self, user_id: str, channel_id: str) -> dict[str, Any] | None:
+        """Get the most recent suggestion for a user/channel (any status) for cooldown checks."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM workflow_suggestions "
+            "WHERE user_id = ? AND channel_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, channel_id),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_workflow_executions_by_ids(self, ids: list[int]) -> list[dict[str, Any]]:
+        """Fetch workflow executions by a list of ids."""
+        if not self._db or not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        cursor = await self._db.execute(
+            f"SELECT * FROM workflow_executions WHERE id IN ({placeholders})",
+            ids,
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def count_turns_since_execution_id(
+        self, user_id: str, channel_id: str, since_id: int
+    ) -> int:
+        """Count workflow executions for a user/channel with id > since_id."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM workflow_executions "
+            "WHERE user_id = ? AND channel_id = ? AND id > ?",
+            (user_id, channel_id, since_id),
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    # ─── App Activity (OS Watcher) ────────────────────────────
+
+    async def log_app_activity(
+        self,
+        app_name: str,
+        window_title: str,
+        process_name: str,
+        focus_seconds: float,
+        session_start: str,
+        session_end: str,
+        day_of_week: int,
+        hour_of_day: int,
+    ) -> int:
+        """Record a single app focus session (sensitive fields encrypted if configured)."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO app_activities "
+            "(app_name, window_title, process_name, focus_seconds, "
+            " session_start, session_end, day_of_week, hour_of_day) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self._e(app_name),
+                self._e(window_title),
+                self._e(process_name),
+                focus_seconds,
+                session_start,
+                session_end,
+                day_of_week,
+                hour_of_day,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_app_activities(self, limit: int = 5000) -> list[dict[str, Any]]:
+        """Return decrypted app activity records ordered by session_start ASC."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM app_activities ORDER BY session_start ASC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [self._decrypt_activity(dict(r)) for r in rows]
+
+    async def get_app_stats(self) -> list[dict[str, Any]]:
+        """
+        Return per-app aggregated usage: total seconds + session count.
+        When encryption is active, aggregation is done in Python (cannot GROUP BY
+        ciphertext in SQL since each ciphertext is unique due to random IVs).
+        """
+        if not self._db:
+            return []
+
+        if self._enc:
+            # Fetch all rows, decrypt, aggregate in Python
+            cursor = await self._db.execute(
+                "SELECT app_name, process_name, focus_seconds FROM app_activities"
+            )
+            raw = await cursor.fetchall()
+            from collections import defaultdict
+            agg: dict[str, dict] = defaultdict(lambda: {"total_seconds": 0.0, "session_count": 0, "process_name": ""})
+            for row in raw:
+                name = self._d(row[0])
+                proc = self._d(row[1])
+                secs = row[2]
+                agg[name]["total_seconds"] += secs
+                agg[name]["session_count"] += 1
+                agg[name]["process_name"] = proc
+            result = [
+                {"app_name": k, "process_name": v["process_name"],
+                 "total_seconds": v["total_seconds"], "session_count": v["session_count"]}
+                for k, v in agg.items()
+            ]
+            return sorted(result, key=lambda x: -x["total_seconds"])[:30]
+
+        # No encryption — fast SQL path
+        cursor = await self._db.execute(
+            "SELECT app_name, process_name, "
+            "SUM(focus_seconds) as total_seconds, COUNT(*) as session_count "
+            "FROM app_activities "
+            "GROUP BY app_name "
+            "ORDER BY total_seconds DESC "
+            "LIMIT 30"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_recent_app_sessions(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Return most recent app focus sessions, decrypted."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM app_activities ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [self._decrypt_activity(dict(r)) for r in rows]
+
+    async def get_activity_count(self) -> int:
+        """Total number of recorded activity sessions."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute("SELECT COUNT(*) as cnt FROM app_activities")
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    async def get_activity_hours(self) -> float:
+        """Total hours of app usage recorded."""
+        if not self._db:
+            return 0.0
+        cursor = await self._db.execute(
+            "SELECT COALESCE(SUM(focus_seconds), 0) as total FROM app_activities"
+        )
+        row = await cursor.fetchone()
+        return (row["total"] if row else 0) / 3600.0
+
+    # ─── Detected Routines ────────────────────────────────────
+
+    async def create_routine(
+        self,
+        name: str,
+        trigger_type: str,
+        trigger_data: str,
+        apps: str,
+        confidence: float,
+        occurrence_count: int,
+        status: str = "pending",
+        description: str = "",
+    ) -> int:
+        """Create a new detected routine (sensitive fields encrypted if configured)."""
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO detected_routines "
+            "(name, trigger_type, trigger_data, apps, confidence, occurrence_count, status, description) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self._e(name),
+                trigger_type,
+                self._e(trigger_data),
+                self._e(apps),
+                confidence,
+                occurrence_count,
+                status,
+                self._e(description),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_routine(self, routine_id: int) -> dict[str, Any] | None:
+        """Get a single decrypted routine by id."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM detected_routines WHERE id = ?", (routine_id,)
+        )
+        row = await cursor.fetchone()
+        return self._decrypt_routine(dict(row)) if row else None
+
+    async def get_all_routines(self) -> list[dict[str, Any]]:
+        """Return all routines decrypted, ordered by confidence desc."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM detected_routines ORDER BY confidence DESC, occurrence_count DESC"
+        )
+        rows = await cursor.fetchall()
+        return [self._decrypt_routine(dict(r)) for r in rows]
+
+    async def get_routine_by_apps(self, apps: list[str]) -> dict[str, Any] | None:
+        """
+        Find an existing routine whose app list matches (order-independent).
+        We compare JSON-encoded sorted app name lists.
+        """
+        if not self._db:
+            return None
+        import json as _json
+        all_routines = await self.get_all_routines()
+        target = sorted(apps)
+        for r in all_routines:
+            try:
+                stored_apps = _json.loads(r.get("apps", "[]"))
+                stored_names = sorted(
+                    a["app_name"] if isinstance(a, dict) else a
+                    for a in stored_apps
+                )
+                if stored_names == target:
+                    return r
+            except Exception:
+                pass
+        return None
+
+    async def update_routine(self, routine_id: int, **kwargs: Any) -> bool:
+        """Update arbitrary fields of a detected routine."""
+        if not self._db:
+            return False
+        allowed = {
+            "name", "description", "trigger_type", "trigger_data", "apps",
+            "confidence", "status", "last_run", "run_count", "occurrence_count", "chat_mentioned",
+        }
+        _encrypt_fields = {"name", "description", "trigger_data", "apps"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(self._e(val) if (key in _encrypt_fields and isinstance(val, str)) else val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(routine_id)
+        await self._db.execute(
+            f"UPDATE detected_routines SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_routine(self, routine_id: int) -> bool:
+        """Delete a routine by id."""
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM detected_routines WHERE id = ?", (routine_id,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def get_unmentioned_routines(self, limit: int = 2) -> list[dict[str, Any]]:
+        """Return pending routines that haven't been mentioned in chat yet."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM detected_routines "
+            "WHERE status = 'pending' AND (chat_mentioned = 0 OR chat_mentioned IS NULL) "
+            "ORDER BY confidence DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def mark_routines_mentioned(self, routine_ids: list[int]) -> None:
+        """Mark routines as mentioned in chat."""
+        if not self._db or not routine_ids:
+            return
+        placeholders = ",".join("?" * len(routine_ids))
+        await self._db.execute(
+            f"UPDATE detected_routines SET chat_mentioned = 1, updated_at = CURRENT_TIMESTAMP "
+            f"WHERE id IN ({placeholders})",
+            routine_ids,
+        )
+        await self._db.commit()
+
+    async def record_routine_run(self, routine_id: int) -> None:
+        """Increment run_count and update last_run timestamp."""
+        if not self._db:
+            return
+        ts = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "UPDATE detected_routines "
+            "SET run_count = run_count + 1, last_run = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (ts, routine_id),
+        )
+        await self._db.commit()

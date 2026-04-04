@@ -387,6 +387,18 @@ export function useClearConversation() {
   });
 }
 
+export function useSystemInfo() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['system-info'],
+    queryFn: async () => fetchAPI('/api/system/info'),
+    enabled: isAuthenticated,
+    staleTime: Infinity, // encryption status doesn't change at runtime
+  });
+}
+
 export function useCurrentModel() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();

@@ -7,6 +7,7 @@ import { useConfigStatus, useSaveSetup, useSetModel, useGoogleStatus, useSaveGoo
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { ModelSelector } from '@/components/setup/model-selector';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
+import { useAddCustomProvider, useCustomProviders } from '@/hooks/use-setup';
 import { translations } from '@/lib/translations';
 import {
   Brain,
@@ -20,6 +21,9 @@ import {
   Rocket,
   Globe2,
   ChevronsRight,
+  Plus,
+  Server,
+  X,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -95,6 +99,24 @@ export default function OnboardingPage() {
   const { data: googleStatus } = useGoogleStatus();
   const saveGoogleCreds = useSaveGoogleCredentials();
   const startGoogleAuth = useStartGoogleAuth();
+
+  // Custom provider form state (wizard step 2)
+  const addCustomProvider = useAddCustomProvider();
+  const { data: customProviders = [] } = useCustomProviders();
+  const [showCustomForm, setShowCustomForm] = useState(false);
+  const [cpForm, setCpForm] = useState({ name: '', base_url: '', api_key: '', default_model: '' });
+
+  const handleAddCustomProvider = async () => {
+    if (!cpForm.name.trim() || !cpForm.base_url.trim()) return;
+    await addCustomProvider.mutateAsync({
+      name: cpForm.name.trim(),
+      base_url: cpForm.base_url.trim(),
+      api_key: cpForm.api_key.trim() || undefined,
+      default_model: cpForm.default_model.trim() || undefined,
+    });
+    setCpForm({ name: '', base_url: '', api_key: '', default_model: '' });
+    setShowCustomForm(false);
+  };
 
   // Auto-advance past auth if already authenticated
   useEffect(() => {
@@ -262,7 +284,98 @@ export default function OnboardingPage() {
 
           {/* Step 2: Providers */}
           {currentStep === 2 && (
-            <ProviderSetupForm mode="onboarding" onComplete={handleProviderComplete} />
+            <div className="space-y-6">
+              <ProviderSetupForm mode="onboarding" onComplete={handleProviderComplete} />
+
+              {/* Custom provider section */}
+              <div className="border-t border-slate-700/50 pt-5">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Server size={15} className="text-slate-400" />
+                    <span className="text-sm font-medium text-slate-300">Custom / Self-hosted Provider</span>
+                  </div>
+                  {!showCustomForm && (
+                    <button
+                      onClick={() => setShowCustomForm(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-slate-600 hover:border-blue-500/50 hover:bg-blue-500/5 text-slate-400 hover:text-blue-400 text-xs rounded-lg transition-colors"
+                    >
+                      <Plus size={12} /> Add
+                    </button>
+                  )}
+                </div>
+
+                {/* Existing custom providers */}
+                {customProviders.length > 0 && (
+                  <div className="space-y-1.5 mb-3">
+                    {customProviders.map(cp => (
+                      <div key={cp.id} className="flex items-center gap-2 px-3 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50">
+                        <CheckCircle size={13} className="text-green-400 flex-shrink-0" />
+                        <span className="text-sm text-white">{cp.name}</span>
+                        <span className="text-xs text-slate-500 font-mono truncate">{cp.base_url}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {showCustomForm && (
+                  <div className="p-4 rounded-lg border border-blue-500/30 bg-blue-500/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-300">New Custom Provider</span>
+                      <button onClick={() => setShowCustomForm(false)} className="text-slate-500 hover:text-slate-300">
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Name <span className="text-red-400">*</span></label>
+                        <input
+                          value={cpForm.name}
+                          onChange={e => setCpForm(p => ({ ...p, name: e.target.value }))}
+                          placeholder="e.g. LM Studio"
+                          className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Base URL <span className="text-red-400">*</span></label>
+                        <input
+                          value={cpForm.base_url}
+                          onChange={e => setCpForm(p => ({ ...p, base_url: e.target.value }))}
+                          placeholder="http://localhost:1234/v1"
+                          className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">Default Model</label>
+                        <input
+                          value={cpForm.default_model}
+                          onChange={e => setCpForm(p => ({ ...p, default_model: e.target.value }))}
+                          placeholder="llama-3.1-8b"
+                          className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-500 mb-1">API Key (optional)</label>
+                        <input
+                          type="password"
+                          value={cpForm.api_key}
+                          onChange={e => setCpForm(p => ({ ...p, api_key: e.target.value }))}
+                          placeholder="sk-... or leave blank"
+                          className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleAddCustomProvider}
+                      disabled={!cpForm.name.trim() || !cpForm.base_url.trim() || addCustomProvider.isPending}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                    >
+                      {addCustomProvider.isPending ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                      Add Provider
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
 
           {/* Step 3: Model & Telegram */}

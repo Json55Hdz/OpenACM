@@ -8,7 +8,19 @@ import { ActivityChart } from '@/components/dashboard/activity-chart';
 import { StatsCard } from '@/components/dashboard/stats-card';
 import { ChannelList } from '@/components/dashboard/channel-list';
 import { EventLog } from '@/components/dashboard/event-log';
-import { MessageSquare, Hash, Wrench, Radio, Download, FileImage, File, Box } from 'lucide-react';
+import {
+  MessageSquare,
+  Hash,
+  Wrench,
+  Radio,
+  Download,
+  FileImage,
+  File,
+  Box,
+  Cpu,
+  TrendingUp,
+  Info,
+} from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 
 function fileIcon(ext: string) {
@@ -23,13 +35,28 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatTokens(v: number) {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}K`;
+  return String(v);
+}
+
+function SectionHeader({ title, description }: { title: string; description?: string }) {
+  return (
+    <div className="mb-4">
+      <h3 className="text-lg font-semibold text-white">{title}</h3>
+      {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const { data: stats, isLoading: statsLoading } = useStats();
   const { data: history, isLoading: historyLoading } = useActivityHistory();
   const { data: mediaFiles } = useMediaFiles();
   const { setStats, setOnline } = useDashboardStore();
   const token = useAuthStore((s) => s.token);
-  
+
   useEffect(() => {
     if (stats) {
       setStats({
@@ -42,7 +69,12 @@ export default function DashboardPage() {
       setOnline(true);
     }
   }, [stats, setStats, setOnline]);
-  
+
+  const totalTokensAllTime = Math.max(
+    stats?.total_tokens || 0,
+    stats?.total_requests !== undefined ? 0 : 0, // prefer DB value
+  );
+
   return (
     <AppLayout>
       <div className="p-6 lg:p-8">
@@ -51,75 +83,125 @@ export default function DashboardPage() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold text-white">Dashboard</h1>
-              <p className="text-slate-400 mt-1">Activity monitor and system status</p>
+              <p className="text-slate-400 mt-1">Real-time activity monitor and usage statistics</p>
             </div>
-            
-            <div className="flex items-center gap-2 px-4 py-2 bg-slate-900 rounded-full border border-slate-700">
-              <span className="text-xl">🤖</span>
-              <span className="text-slate-300 text-sm font-medium">
-                {stats?.current_model || 'Loading...'}
-              </span>
+
+            {/* Active model badge */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-4 py-2 bg-slate-900 rounded-full border border-slate-700">
+                <Cpu size={16} className="text-blue-400" />
+                <div className="text-right">
+                  <div className="text-slate-300 text-sm font-medium leading-none">
+                    {stats?.current_model || 'Loading...'}
+                  </div>
+                  {stats?.current_provider && (
+                    <div className="text-slate-500 text-xs mt-0.5">{stats.current_provider}</div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </header>
-        
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <StatsCard
-            icon={<MessageSquare size={24} className="text-blue-400" />}
-            value={stats?.messages_today || 0}
-            label="Messages Today"
-            loading={statsLoading}
-          />
-          <StatsCard
-            icon={<Hash size={24} className="text-purple-400" />}
-            value={stats?.tokens_today || 0}
-            label="Tokens Today"
-            loading={statsLoading}
-            formatter={(v) => v >= 1000 ? `${(v/1000).toFixed(1)}K` : String(v)}
-          />
-          <StatsCard
-            icon={<Wrench size={24} className="text-amber-400" />}
-            value={stats?.total_tool_calls || 0}
-            label="Tool Calls"
-            loading={statsLoading}
-          />
-          <StatsCard
-            icon={<Radio size={24} className="text-green-400" />}
-            value={stats?.active_conversations || 0}
-            label="Conversations"
-            loading={statsLoading}
-          />
-        </div>
-        
-        {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Activity Chart */}
-          <div className="lg:col-span-2 bg-slate-900 rounded-xl border border-slate-800 p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Recent Activity</h3>
-            <ActivityChart data={history || []} loading={historyLoading} />
+
+        {/* ── Today's Stats ── */}
+        <div className="mb-2">
+          <div className="flex items-center gap-2 mb-4">
+            <TrendingUp size={15} className="text-slate-500" />
+            <span className="text-sm font-medium text-slate-400">Today's Activity</span>
+            <span className="text-xs text-slate-600 ml-1">— resets at midnight</span>
           </div>
-          
-          {/* Channels */}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <StatsCard
+              icon={<MessageSquare size={22} className="text-blue-400" />}
+              accentClass="bg-blue-500/10"
+              value={stats?.messages_today || 0}
+              label="Messages Today"
+              subtitle="LLM requests and responses sent since midnight"
+              secondary={stats?.total_messages}
+              secondaryLabel="All time"
+              loading={statsLoading}
+            />
+            <StatsCard
+              icon={<Hash size={22} className="text-violet-400" />}
+              accentClass="bg-violet-500/10"
+              value={stats?.tokens_today || 0}
+              label="Tokens Today"
+              subtitle="Prompt + completion tokens consumed today (input + output)"
+              secondary={totalTokensAllTime}
+              secondaryLabel="All time"
+              loading={statsLoading}
+              formatter={formatTokens}
+            />
+            <StatsCard
+              icon={<Wrench size={22} className="text-amber-400" />}
+              accentClass="bg-amber-500/10"
+              value={stats?.total_tool_calls || 0}
+              label="Tool Executions"
+              subtitle="Total tool calls made by the AI since installation (run_command, browser, etc.)"
+              loading={statsLoading}
+            />
+            <StatsCard
+              icon={<Radio size={22} className="text-green-400" />}
+              accentClass="bg-green-500/10"
+              value={stats?.active_conversations || 0}
+              label="Active Sessions"
+              subtitle="Unique user + channel combinations with messages in the last 24 hours"
+              loading={statsLoading}
+            />
+          </div>
+        </div>
+
+        {/* ── Dashboard Grid ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+          {/* Activity Chart — 2/3 width */}
+          <div className="lg:col-span-2 bg-slate-900 rounded-xl border border-slate-800 p-6">
+            <SectionHeader
+              title="14-Day Activity History"
+              description="Blue bars = number of LLM API calls per day. Purple line = total tokens consumed (input + output, in thousands)."
+            />
+            <ActivityChart data={history || []} loading={historyLoading} />
+            {!historyLoading && history && history.length > 0 && (
+              <div className="mt-3 flex items-start gap-1.5 text-xs text-slate-600">
+                <Info size={11} className="mt-0.5 flex-shrink-0" />
+                <span>Tokens are logged per LLM call. High token days usually mean complex multi-step tasks with many tool iterations.</span>
+              </div>
+            )}
+          </div>
+
+          {/* Channels — 1/3 width */}
           <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Channels</h3>
+            <SectionHeader
+              title="Active Channels"
+              description="Interfaces where the AI is reachable. Each channel shows the last message and total count."
+            />
             <ChannelList />
           </div>
-          
-          {/* Event Log */}
+
+          {/* Live Events — full width */}
           <div className="lg:col-span-3 bg-slate-900 rounded-xl border border-slate-800 p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">Live Events</h3>
+            <SectionHeader
+              title="Live Event Stream"
+              description="Real-time feed of system events: messages received, LLM calls, tool executions, and results. Newest events appear at the top."
+            />
             <EventLog />
           </div>
 
-          {/* File Browser */}
+          {/* File Browser — full width */}
           <div className="lg:col-span-3 bg-slate-900 rounded-xl border border-slate-800 p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">
-              Files
-              <span className="ml-2 text-sm font-normal text-slate-500">({mediaFiles?.length ?? 0})</span>
-            </h3>
+            <SectionHeader
+              title={`Generated Files  (${mediaFiles?.length ?? 0})`}
+              description="Files created by the AI during tool use — screenshots, Python plots, PDFs, 3D models, and other exports. All files are stored locally in the workspace folder."
+            />
             {!mediaFiles || mediaFiles.length === 0 ? (
-              <p className="text-slate-500 text-sm">No files yet. Files generated by tools (screenshots, 3D models, etc.) will appear here.</p>
+              <div className="flex flex-col items-center justify-center py-8 text-center gap-2">
+                <File size={32} className="text-slate-700" />
+                <p className="text-slate-500 text-sm">No files yet</p>
+                <p className="text-slate-600 text-xs max-w-sm">
+                  When the AI uses tools like <span className="font-mono text-slate-500">screenshot</span>, <span className="font-mono text-slate-500">run_python</span> (with matplotlib), or generates documents, the files will appear here for download.
+                </p>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -128,7 +210,7 @@ export default function DashboardPage() {
                       <th className="pb-2 pr-4 font-medium">File</th>
                       <th className="pb-2 pr-4 font-medium">Size</th>
                       <th className="pb-2 pr-4 font-medium">Modified</th>
-                      <th className="pb-2 font-medium"></th>
+                      <th className="pb-2 font-medium" />
                     </tr>
                   </thead>
                   <tbody>

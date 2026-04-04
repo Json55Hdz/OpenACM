@@ -15,6 +15,27 @@ from openacm.core.config import SecurityConfig
 
 log = structlog.get_logger()
 
+# Commands that are ALWAYS blocked regardless of user config.
+# These either escalate privileges (triggering UAC / su dialogs that hang the
+# subprocess forever) or are otherwise too dangerous to allow the AI to run.
+_ALWAYS_BLOCKED_PATTERNS: list[re.Pattern] = [
+    # Windows privilege escalation
+    re.compile(r"\brunas\b", re.IGNORECASE),
+    re.compile(r"\bgsudo\b", re.IGNORECASE),
+    # net user/localgroup modifications (adding accounts, granting admin)
+    re.compile(r"\bnet\s+user\b.*/add\b", re.IGNORECASE),
+    re.compile(r"\bnet\s+localgroup\s+administrators\b.*/add\b", re.IGNORECASE),
+    # Linux/macOS privilege escalation
+    re.compile(r"\bsudo\s+-s\b", re.IGNORECASE),      # sudo shell
+    re.compile(r"\bsudo\s+-i\b", re.IGNORECASE),      # sudo login shell
+    re.compile(r"\bsu\s+-\b", re.IGNORECASE),          # su root
+    re.compile(r"\bchmod\s+[0-9]*[46][0-9]*\s", re.IGNORECASE),  # setuid/setgid
+    re.compile(r"\bchown\s+root\b", re.IGNORECASE),
+    # History/credential file exfil attempts
+    re.compile(r"/etc/shadow", re.IGNORECASE),
+    re.compile(r"/etc/passwd", re.IGNORECASE),
+]
+
 
 class SecurityViolation(Exception):
     """Raised when a security policy is violated."""
@@ -51,7 +72,14 @@ class SecurityPolicy:
         - If allowed: (True, "")
         - If blocked: (False, "reason why blocked")
         """
-        # Check blocked patterns
+        # Check always-blocked patterns (hardcoded, cannot be overridden by config)
+        for pattern in _ALWAYS_BLOCKED_PATTERNS:
+            if pattern.search(command):
+                reason = f"Command blocked: privilege escalation is not allowed"
+                log.warning("Command blocked (always-blocked)", command=command, pattern=pattern.pattern)
+                return False, reason
+
+        # Check user-configured blocked patterns
         for pattern in self._compiled_patterns:
             if pattern.search(command):
                 reason = f"Command matches blocked pattern: {pattern.pattern}"

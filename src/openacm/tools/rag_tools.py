@@ -27,13 +27,30 @@ from openacm.tools.base import tool
 )
 async def remember_note(note: str, **kwargs) -> str:
     """Save a note to long-term memory."""
-    _event_bus = kwargs.get("_event_bus")
-    
-    # Access RAG engine through a global reference
+    _brain = kwargs.get("_brain")
+    event_bus = getattr(_brain, "event_bus", None)
+    channel_id = kwargs.get("channel_id", "")
+    channel_type = kwargs.get("channel_type", "")
+
     try:
         from openacm.core.rag import _rag_engine
+        from openacm.core.events import EVENT_MEMORY_RECALL
         if _rag_engine and _rag_engine.is_ready:
+            if event_bus:
+                await event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "saving",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": 0,
+                })
             await _rag_engine.remember(note)
+            if event_bus:
+                await event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "saved",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": 1,
+                })
             return f"✅ Remembered: '{note[:80]}{'...' if len(note) > 80 else ''}'"
         else:
             return "⚠️ Long-term memory is not available right now."

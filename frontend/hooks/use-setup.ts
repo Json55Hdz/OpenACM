@@ -162,6 +162,71 @@ export function useSaveSetup() {
   });
 }
 
+export interface CustomProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  default_model: string;
+  suggested_models: string[];
+  has_key: boolean;
+}
+
+export function useCustomProviders() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+  return useQuery<CustomProvider[]>({
+    queryKey: ['custom-providers'],
+    queryFn: () => fetchAPI('/api/config/custom_providers'),
+    enabled: isAuthenticated,
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+}
+
+export function useAddCustomProvider() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; base_url: string; api_key?: string; default_model?: string; suggested_models?: string[] }) =>
+      fetchAPI('/api/config/custom_providers', { method: 'POST', body: JSON.stringify(data) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['custom-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-status'] });
+      toast.success('Custom provider added');
+    },
+    onError: () => toast.error('Failed to add custom provider'),
+  });
+}
+
+export function useUpdateCustomProvider() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; name?: string; base_url?: string; api_key?: string; default_model?: string; suggested_models?: string[] }) =>
+      fetchAPI(`/api/config/custom_providers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['custom-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-status'] });
+      toast.success('Provider updated');
+    },
+    onError: () => toast.error('Failed to update provider'),
+  });
+}
+
+export function useDeleteCustomProvider() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => fetchAPI(`/api/config/custom_providers/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['custom-providers'] });
+      queryClient.invalidateQueries({ queryKey: ['provider-status'] });
+      toast.success('Provider removed');
+    },
+    onError: () => toast.error('Failed to remove provider'),
+  });
+}
+
 export function useSetModel() {
   const { fetchAPI } = useAPI();
   const queryClient = useQueryClient();

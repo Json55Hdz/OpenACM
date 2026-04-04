@@ -62,11 +62,15 @@ class Brain:
         self.event_bus = event_bus
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
+        # Give memory access to LLM router for conversation compaction
+        self.memory._llm_router = llm_router
         self.terminal_history: list[dict] = []
         # Tracks the active processing task per channel — used for interruption
         self._channel_tasks: dict[str, asyncio.Task] = {}
         # Queued message per channel while a task is running (one slot — latest wins)
         self._channel_queue: dict[str, tuple] = {}
+        self.workflow_tracker = None  # injected by app.py
+        self._pending_suggestions: dict[str, object] = {}  # key: "channel_id:user_id"
         # Last N agentic loop traces for debugging
         self._traces: list[dict] = []
         self._MAX_TRACES = 20
@@ -307,39 +311,71 @@ class Brain:
 
         return None
 
+    # Messages older than this index (from the end) get their tool results
+    # and reasoning_content aggressively truncated to save tokens.
+    _RECENT_MSG_WINDOW = 8  # keep full detail for the last N messages
+    _OLD_TOOL_RESULT_MAX = 300  # chars to keep for old tool results
+    _OLD_REASONING_MAX = 0  # strip reasoning_content from old messages entirely
+
     def _prepare_messages_for_llm(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         is_tool_loop: bool,
     ) -> list[dict[str, Any]]:
-        """Return a shallow copy of *messages* with optional enforcement injection.
+        """Return a copy of *messages* optimized for the LLM call.
 
-        The enforcement hint is only added when:
-        - tools are available,
-        - the provider profile says it needs enforcement, AND
-        - we are NOT already inside a tool-calling loop (iterations > 1).
-
-        The enforcement is appended to the system prompt (messages[0]) instead
-        of inserted as a separate message, because Gemini requires strict
-        function_call → function_response adjacency and rejects any message
-        in between.
+        Optimizations applied:
+        1. Tool enforcement injection (for weak providers)
+        2. Truncate old tool results — after the LLM already processed them,
+           keeping the full 6K chars is wasteful. Old results are trimmed to ~300 chars.
+        3. Strip reasoning_content from old messages — these can be thousands of
+           tokens from thinking models (Kimi, DeepSeek) and are never useful in history.
 
         The original list is never mutated (memory stays clean).
         """
         profile = self.llm_router.get_provider_profile()
+        total = len(messages)
+        cutoff = max(0, total - self._RECENT_MSG_WINDOW)
 
-        if not tools or not profile.needs_tool_enforcement or is_tool_loop:
-            return list(messages)  # shallow copy, no injection
+        prepared = []
+        for i, msg in enumerate(messages):
+            is_old = i > 0 and i < cutoff  # index 0 = system, always keep
 
-        prepared = list(messages)
+            # Check if this message needs any modification
+            needs_copy = False
 
-        # Append enforcement to the system prompt (messages[0]).
-        # We copy the dict so the in-memory cache is not mutated.
-        if prepared and prepared[0].get("role") == "system":
-            sys_msg = prepared[0].copy()
-            sys_msg["content"] = f"{sys_msg['content']}\n\n{self._TOOL_ENFORCEMENT_MSG}"
-            prepared[0] = sys_msg
+            if is_old:
+                # Truncate old tool results
+                if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+                    content = msg["content"]
+                    if len(content) > self._OLD_TOOL_RESULT_MAX:
+                        needs_copy = True
+
+                # Strip reasoning_content from old messages
+                if msg.get("reasoning_content"):
+                    needs_copy = True
+
+            if needs_copy:
+                msg = msg.copy()
+                if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
+                    content = msg["content"]
+                    if len(content) > self._OLD_TOOL_RESULT_MAX:
+                        msg["content"] = (
+                            content[:self._OLD_TOOL_RESULT_MAX]
+                            + f" [...{len(content)} chars truncated]"
+                        )
+                if msg.get("reasoning_content") and self._OLD_REASONING_MAX == 0:
+                    msg.pop("reasoning_content", None)
+
+            prepared.append(msg)
+
+        # Tool enforcement injection for weak providers
+        if tools and profile.needs_tool_enforcement and not is_tool_loop:
+            if prepared and prepared[0].get("role") == "system":
+                sys_msg = prepared[0].copy()
+                sys_msg["content"] = f"{sys_msg['content']}\n\n{self._TOOL_ENFORCEMENT_MSG}"
+                prepared[0] = sys_msg
 
         return prepared
 
@@ -456,6 +492,24 @@ class Brain:
             },
         )
 
+        # ── Workflow suggestion interception ──────────────────────────────────────
+        _suggestion_key = f"{channel_id}:{user_id}"
+        _pending_sug = self._pending_suggestions.get(_suggestion_key)
+        if _pending_sug:
+            _confirmation = self._check_workflow_confirmation(content)
+            if _confirmation == "yes":
+                self._pending_suggestions.pop(_suggestion_key, None)
+                return await self._handle_tool_creation_from_workflow(
+                    _pending_sug, user_id, channel_id, channel_type
+                )
+            elif _confirmation == "no":
+                self._pending_suggestions.pop(_suggestion_key, None)
+                if self.workflow_tracker:
+                    await self.workflow_tracker.resolve_suggestion(
+                        _pending_sug.suggestion_id, accepted=False
+                    )
+                # fall through — process the message normally
+
         # Emitir evento thinking para mostrar que estamos procesando
         await self.event_bus.emit(
             EVENT_THINKING,
@@ -470,6 +524,9 @@ class Brain:
 
         # LocalRouter: classify intent for observation + passive learning
         _router_task = asyncio.create_task(self.local_router.observe(content))
+
+        # Accumulate tool calls for this agentic turn (for workflow tracking)
+        _tool_sequence_for_turn: list[dict] = []
 
         # Build system prompt with OpenACM context FIRST, then skills
         system_prompt = self.config.system_prompt
@@ -546,35 +603,51 @@ class Brain:
         # RAG: Query long-term memory for relevant context (score-filtered)
         try:
             from openacm.core.rag import _rag_engine
+            from openacm.core.events import EVENT_MEMORY_RECALL
 
             if _rag_engine and _rag_engine.is_ready and content:
+                await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "searching",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": 0,
+                })
                 scored_results = await _rag_engine.query_with_scores(content, top_k=5)
                 # Only keep relevant results (cosine distance < 1.0) and limit to 2
                 memories = [doc for doc, dist in scored_results if dist < 1.0][:2]
                 if memories:
+                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                        "status": "found",
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                        "count": len(memories),
+                    })
                     memory_block = "\n".join(f"- {m[:200]}" for m in memories)
-                    # Inject as a system-level hint (after the main system prompt)
-                    # Check if we already have a memory injection and update it
                     memory_msg = {
                         "role": "system",
                         "content": (
-                            f"[Memoria a largo plazo — fragmentos relevantes encontrados]:\n"
+                            f"[Long-term memory — relevant fragments retrieved]:\n"
                             f"{memory_block}\n"
-                            f"[Usa esta información si es relevante para la conversación actual.]"
+                            f"[Use this information if relevant to the current conversation.]"
                         ),
                     }
-                    # Insert after the first system prompt but before user messages
                     if len(messages) > 1 and messages[0]["role"] == "system":
-                        # Remove old memory injection if present
                         messages = [
                             m
                             for m in messages
                             if not (
                                 m.get("role") == "system"
-                                and "Memoria a largo plazo" in str(m.get("content", ""))
+                                and "Long-term memory" in str(m.get("content", ""))
                             )
                         ]
                         messages.insert(1, memory_msg)
+                else:
+                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                        "status": "empty",
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                        "count": 0,
+                    })
         except Exception:
             pass  # RAG is optional, never break the main flow
 
@@ -697,6 +770,8 @@ class Brain:
         iterations = 0
         max_iterations = self.config.max_tool_iterations
         generated_attachments: list[str] = []  # Track files generated by send_file_to_chat
+        _last_tool_signature: str | None = None  # For repeated-call loop detection
+        _repeated_call_count: int = 0
 
         # ── Trace: record this request for debugging ──────────────────────────
         import time as _time
@@ -849,9 +924,16 @@ class Brain:
                 # Prefix ATTACHMENT: lines so server.py extracts them as structured attachments
                 if generated_attachments:
                     prefix = "\n".join(f"ATTACHMENT:{att}" for att in generated_attachments)
-                    return f"{prefix}\n{assistant_content}"
+                    _wf_result = await self._run_workflow_hook(
+                        user_id, channel_id, content, _tool_sequence_for_turn,
+                        f"{prefix}\n{assistant_content}"
+                    )
+                    return _wf_result
 
-                return assistant_content
+                _wf_result = await self._run_workflow_hook(
+                    user_id, channel_id, content, _tool_sequence_for_turn, assistant_content
+                )
+                return _wf_result
 
             # Process tool calls
             # First, add the assistant message with tool_calls to memory.
@@ -888,6 +970,36 @@ class Brain:
                 asyncio.create_task(self._maybe_learn_from_tools(
                     content, response["tool_calls"], _router_task
                 ))
+
+            # Loop detection: if the model calls the exact same tool+args twice in a
+            # row it's stuck. Break early to avoid burning tokens indefinitely.
+            _call_sig = "|".join(
+                f"{tc['function']['name']}:{tc['function']['arguments']}"
+                for tc in response["tool_calls"]
+            )
+            if _call_sig == _last_tool_signature:
+                _repeated_call_count += 1
+                if _repeated_call_count >= 2:
+                    log.warning(
+                        "Loop detected — same tool call repeated, breaking",
+                        signature=_call_sig[:120],
+                        iterations=iterations,
+                    )
+                    _trace["outcome"] = "loop_detected"
+                    final_response = (
+                        "I seem to be stuck in a loop calling the same tool repeatedly. "
+                        "Please try rephrasing your request or check if the required tool is available."
+                    )
+                    await self.event_bus.emit(
+                        EVENT_MESSAGE_SENT,
+                        {"content": final_response, "user_id": user_id,
+                         "channel_id": channel_id, "channel_type": channel_type, "tokens": 0},
+                    )
+                    await self.memory.add_message(user_id, channel_id, "assistant", final_response)
+                    break
+            else:
+                _last_tool_signature = _call_sig
+                _repeated_call_count = 0
 
             # Execute each tool call
             for tool_call in response["tool_calls"]:
@@ -926,12 +1038,19 @@ class Brain:
                         "arguments": tool_args_str,
                         "user_id": user_id,
                         "channel_id": channel_id,
+                        "channel_type": channel_type,
                     },
                 )
 
                 try:
                     # Parse arguments
                     tool_args = json.loads(tool_args_str) if tool_args_str else {}
+
+                    # Record tool call for workflow tracking
+                    _tool_sequence_for_turn.append({
+                        "tool": tool_name,
+                        "arguments": tool_args if isinstance(tool_args, dict) else {},
+                    })
 
                     # Execute tool
                     if self.tool_registry and tool_name in self.tool_registry.tools:
@@ -973,6 +1092,7 @@ class Brain:
                         "result": result[:500],  # Truncate for event
                         "user_id": user_id,
                         "channel_id": channel_id,
+                        "channel_type": channel_type,
                     },
                 )
 
@@ -1047,7 +1167,10 @@ class Brain:
                 _trace["outcome"] = "success"
                 _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
                 self._save_trace(_trace)
-                return final_content
+                _wf_result = await self._run_workflow_hook(
+                    user_id, channel_id, content, _tool_sequence_for_turn, final_content
+                )
+                return _wf_result
             else:
                 _trace["outcome"] = "empty_response"
                 _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
@@ -1065,3 +1188,191 @@ class Brain:
                 "⚠️ He ejecutado varias herramientas pero alcanzé el límite de pasos. "
                 "Revisa el dashboard para ver los resultados completos, o intenta dividir tu solicitud en pasos más pequeños."
             )
+
+    # ── Workflow tracking helpers ─────────────────────────────────────────────
+
+    async def _run_workflow_hook(
+        self,
+        user_id: str,
+        channel_id: str,
+        user_message: str,
+        tool_sequence_for_turn: list[dict],
+        final_response_text: str,
+    ) -> str:
+        """
+        After each agentic turn with tool calls, record the workflow and
+        optionally append a suggestion if a repeated pattern is detected.
+        Returns final_response_text, possibly with suggestion appended.
+        """
+        if not self.workflow_tracker or not tool_sequence_for_turn:
+            return await self._append_routine_mentions(final_response_text)
+
+        from openacm.core.workflow_tracker import _ALWAYS_NOISE_TOOLS
+        import hashlib as _hashlib
+
+        # Filter out meta-tools that don't represent user workflows
+        _wf_clean = [
+            t["tool"] for t in tool_sequence_for_turn
+            if t["tool"] not in {"create_tool", "create_skill", "edit_tool", "delete_tool"}
+        ]
+        if not _wf_clean:
+            return final_response_text
+
+        _signal_tools = [t for t in _wf_clean if t not in _ALWAYS_NOISE_TOOLS]
+        if not _signal_tools:
+            return final_response_text
+
+        # Record the turn asynchronously (non-blocking)
+        asyncio.create_task(
+            self.workflow_tracker.record_turn(
+                user_id, channel_id, user_message, tool_sequence_for_turn
+            )
+        )
+
+        # Evaluate whether to show a suggestion
+        _sug_hash = _hashlib.sha256(
+            "|".join(sorted(_signal_tools)).encode()
+        ).hexdigest()[:16]
+
+        try:
+            _suggestion = await self.workflow_tracker.evaluate_suggestion(
+                user_id, channel_id, _sug_hash
+            )
+        except Exception as e:
+            log.debug("Workflow suggestion evaluation failed", error=str(e))
+            _suggestion = None
+
+        if _suggestion:
+            _suggestion_key = f"{channel_id}:{user_id}"
+            self._pending_suggestions[_suggestion_key] = _suggestion
+            return final_response_text + _suggestion.append_text
+
+        return await self._append_routine_mentions(final_response_text)
+
+    async def _append_routine_mentions(self, response_text: str) -> str:
+        """
+        If there are new pending routines that haven't been mentioned in chat,
+        append a brief, friendly note about them.  Only fires once per routine.
+        """
+        try:
+            db = self.memory.database
+            routines = await db.get_unmentioned_routines(limit=2)
+            if not routines:
+                return response_text
+
+            ids = [r["id"] for r in routines]
+            await db.mark_routines_mentioned(ids)
+
+            lines = ["\n\n---"]
+            lines.append("📅 **He detectado nuevas rutinas en tu actividad:**")
+            for r in routines:
+                name = r.get("name", "Rutina")
+                desc = r.get("description", "")
+                apps_raw = r.get("apps", "[]")
+                try:
+                    import json as _json
+                    apps = [a["app_name"] for a in _json.loads(apps_raw) if isinstance(a, dict)]
+                except Exception:
+                    apps = []
+                apps_str = ", ".join(apps[:4]) if apps else "varias apps"
+                pct = int(r.get("confidence", 0) * 100)
+                line = f"  • **{name}** — {apps_str} ({pct}% de confianza)"
+                if desc:
+                    line += f"\n    _{desc}_"
+                lines.append(line)
+            lines.append("Puedes verlas y ejecutarlas en la pestaña **Mis Rutinas**.")
+            return response_text + "\n".join(lines)
+        except Exception as exc:
+            log.debug("_append_routine_mentions failed", error=str(exc))
+            return response_text
+
+    def _check_workflow_confirmation(self, content: str) -> str:
+        """Returns 'yes', 'no', or 'unknown'."""
+        text = content.strip().lower()
+        if len(text) > 50:  # long message = probably not a confirmation
+            return "unknown"
+        yes_words = {"sí", "si", "yes", "dale", "adelante", "hazlo", "confirmo",
+                     "ok", "claro", "por supuesto", "crear", "conviértelo", "convierte",
+                     "generar", "generate", "quiero", "va"}
+        no_words = {"no", "nope", "nah", "cancelar", "cancel", "omitir", "skip",
+                    "no gracias", "déjalo", "olvídalo", "paso"}
+        tokens = set(text.replace(",", " ").replace(".", " ").split())
+        if tokens & yes_words:
+            return "yes"
+        if tokens & no_words:
+            return "no"
+        return "unknown"
+
+    async def _handle_tool_creation_from_workflow(
+        self,
+        suggestion,  # SuggestionResult
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+    ) -> str:
+        """Generate and initiate tool creation from a detected workflow pattern."""
+        import re as _re
+
+        try:
+            # Resolve and get cluster data
+            rep_executions = await self.workflow_tracker.resolve_suggestion(
+                suggestion.suggestion_id, accepted=True
+            )
+            if not rep_executions:
+                return "No pude recuperar el contexto del flujo. Intenta de nuevo."
+
+            cluster = await self.workflow_tracker.get_cluster_context(rep_executions)
+
+            # Build generation prompt
+            messages_preview = "\n".join(f'- "{m}"' for m in cluster["user_messages"][:3])
+            tools_preview = " → ".join(cluster["most_common_sequence"])
+
+            gen_prompt = (
+                f"You are OpenACM's tool generator. The user has repeated this workflow "
+                f"{cluster['example_count']} times.\n\n"
+                f"## User's typical requests:\n{messages_preview}\n\n"
+                f"## Tool sequence used:\n{tools_preview}\n\n"
+                f"Generate a Python async tool that automates this workflow. "
+                f"Respond ONLY with valid JSON:\n"
+                f"{{\n"
+                f'  "name": "snake_case_name_max_30_chars",\n'
+                f'  "description": "one sentence describing what it does",\n'
+                f'  "parameters": "param1: description\\nparam2: description (optional)",\n'
+                f'  "code": "complete async Python implementation using run_command/run_python/web_search as needed"\n'
+                f"}}"
+            )
+
+            response = await self.llm_router.chat(
+                messages=[{"role": "user", "content": gen_prompt}],
+                temperature=0.3,
+                max_tokens=1500,
+            )
+            raw = response.get("content", "").strip()
+
+            # Parse JSON response
+            json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
+            if not json_match:
+                return "No pude generar la tool. Inténtalo manualmente con 'crea una tool que...'."
+
+            tool_data = json.loads(json_match.group())
+
+            # Invoke create_tool in preview mode (apply=False)
+            if self.tool_registry and "create_tool" in self.tool_registry.tools:
+                result = await self.tool_registry.execute(
+                    "create_tool",
+                    {
+                        "name": tool_data.get("name", "auto_workflow"),
+                        "description": tool_data.get("description", ""),
+                        "parameters": tool_data.get("parameters", ""),
+                        "code": tool_data.get("code", ""),
+                        "apply": False,
+                    },
+                    user_id, channel_id, channel_type, _brain=self
+                )
+                return f"Basándome en tus flujos repetidos, generé esta tool:\n\n{result}"
+
+            return "Tool registry no disponible. No se pudo crear la tool."
+
+        except Exception as e:
+            log.error("Workflow tool creation failed", error=str(e))
+            return f"Error al generar la tool automáticamente: {str(e)[:200]}"

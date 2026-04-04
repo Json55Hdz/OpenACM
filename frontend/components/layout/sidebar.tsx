@@ -16,6 +16,7 @@ import {
   Loader2,
   Plug,
   Bug,
+  CalendarClock,
 } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -33,6 +34,7 @@ const t = translations.navigation;
 const navItems = [
   { href: '/dashboard', label: t.dashboard, icon: LayoutDashboard },
   { href: '/chat', label: t.chat, icon: MessageSquare },
+  { href: '/routines', label: t.routines, icon: CalendarClock },
   { href: '/tools', label: t.tools, icon: Wrench },
   { href: '/skills', label: t.skills, icon: Brain },
   { href: '/agents', label: t.agents, icon: Bot },

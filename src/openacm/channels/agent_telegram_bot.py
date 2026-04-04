@@ -78,6 +78,9 @@ class AgentTelegramChannel(TelegramChannel):
         super().__init__(config, brain, event_bus, database)
         self._agent_channel_type = brain.channel_type  # ej: "telegram_a5"
 
+    def _owns_event(self, data: dict) -> bool:
+        return data.get("channel_type") == self._agent_channel_type
+
     async def _on_message_sent(self, event_type: str, data: dict):
         # Solo procesar eventos de ESTE agente, no de otros bots
         if data.get("channel_type") != self._agent_channel_type:

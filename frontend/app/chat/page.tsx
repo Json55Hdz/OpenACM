@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
 // useWebSocket is now initialized globally in app-layout — no need to import here
-import { useAPI, useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel } from '@/hooks/use-api';
+import { useAPI, useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel, useSystemInfo } from '@/hooks/use-api';
 import {
   Send,
   Paperclip,
@@ -26,7 +27,15 @@ import {
   MicOff,
   FileText,
   Music,
+  FlaskConical,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  BrainCircuit,
+  Trash2,
+  ShieldCheck,
 } from 'lucide-react';
+import type { ValidationStep } from '@/stores/chat-store';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
@@ -56,6 +65,38 @@ function RouterLearningIndicator() {
   );
 }
 
+function MemoryRecallIndicator({ status, count }: {
+  status: 'searching' | 'found' | 'empty' | 'saving' | 'saved';
+  count: number;
+}) {
+  const isBusy   = status === 'searching' || status === 'saving';
+  const isGood   = status === 'found' || status === 'saved';
+  const isEmpty  = status === 'empty';
+
+  const label =
+    status === 'searching' ? 'Searching memory...' :
+    status === 'found'     ? `Memory: ${count} ${count === 1 ? 'fragment' : 'fragments'}` :
+    status === 'saving'    ? 'Saving to memory...' :
+    status === 'saved'     ? 'Saved to memory' :
+                             'No memory results';
+
+  return (
+    <div className={cn(
+      'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg backdrop-blur-sm border transition-all duration-300',
+      isBusy  && 'bg-indigo-950/80 border-indigo-500/40 text-indigo-300',
+      isGood  && 'bg-indigo-950/80 border-indigo-400/50 text-indigo-200',
+      isEmpty && 'bg-slate-900/80 border-slate-700/40 text-slate-400',
+    )}>
+      <BrainCircuit size={12} className={cn(
+        isBusy  && 'animate-pulse text-indigo-400',
+        isGood  && 'text-indigo-300',
+        isEmpty && 'text-slate-500',
+      )} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function SkillActiveIndicator({ names }: { names: string[] }) {
   const label = names
     .map((n) => n.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
@@ -80,6 +121,128 @@ function TypingIndicator({ label }: { label?: string | null }) {
         <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
       </div>
       {label && <span className="text-xs text-slate-300 truncate">{label}</span>}
+    </div>
+  );
+}
+
+function ValidationBubble({
+  tool,
+  steps,
+  done,
+  passed,
+}: {
+  tool: string;
+  steps: ValidationStep[];
+  done: boolean;
+  passed: boolean;
+}) {
+  const visibleSteps = steps.filter((s) => s.step !== '__done__');
+
+  const stepIcon = (status: ValidationStep['status']) => {
+    if (status === 'running') return <Loader2 size={13} className="animate-spin text-blue-400 flex-shrink-0" />;
+    if (status === 'passed')  return <CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" />;
+    if (status === 'warning') return <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />;
+    return <XCircle size={13} className="text-red-400 flex-shrink-0" />;
+  };
+
+  const headerColor = !done
+    ? 'text-blue-300 border-blue-600/30 bg-blue-950/40'
+    : passed
+      ? 'text-emerald-300 border-emerald-600/30 bg-emerald-950/40'
+      : 'text-red-300 border-red-600/30 bg-red-950/40';
+
+  const headerLabel = !done
+    ? 'Validando...'
+    : passed
+      ? 'Tests pasados — listo para aplicar'
+      : 'Tests fallaron — corrige los errores';
+
+  return (
+    <div className="flex gap-3">
+      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-violet-700">
+        <FlaskConical size={15} className="text-white" />
+      </div>
+      <div className="flex flex-col max-w-[85%] items-start">
+        <span className="text-xs text-slate-500 mb-1">Validación automática</span>
+        <div className={cn('px-4 py-3 rounded-2xl rounded-tl-sm border w-full', headerColor)}>
+          <div className="flex items-center gap-2 mb-3">
+            {!done && <Loader2 size={14} className="animate-spin" />}
+            {done && passed && <CheckCircle2 size={14} className="text-emerald-400" />}
+            {done && !passed && <XCircle size={14} className="text-red-400" />}
+            <span className="font-medium text-sm">{`Tool: ${tool}`}</span>
+            <span className="text-xs opacity-70 ml-auto">{headerLabel}</span>
+          </div>
+          <div className="space-y-1.5">
+            {visibleSteps.map((s) => (
+              <div key={s.step} className="flex items-start gap-2 text-xs">
+                {stepIcon(s.status)}
+                <span className="font-medium w-28 flex-shrink-0 opacity-90">{s.step}</span>
+                <span className="opacity-60 truncate">{s.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Regex that matches bare /api/media/<filename> links written by the LLM in plain text.
+// Captures the filename (everything after /api/media/ up to whitespace or end).
+const MEDIA_LINK_RE = /\/api\/media\/([\w.\-]+)/g;
+
+/**
+ * Renders message text, converting any /api/media/<file> links into
+ * inline image previews (for images) or download buttons (for other files).
+ * The link text is removed from the paragraph so it's not shown twice.
+ */
+function MessageContent({ content, token }: { content: string; token: string | null }) {
+  // Find all /api/media/ links in the text
+  const mediaMatches: { filename: string; index: number; fullMatch: string }[] = [];
+  let m: RegExpExecArray | null;
+  MEDIA_LINK_RE.lastIndex = 0;
+  while ((m = MEDIA_LINK_RE.exec(content)) !== null) {
+    mediaMatches.push({ filename: m[1], index: m.index, fullMatch: m[0] });
+  }
+
+  // Remove the matched links from the visible text
+  const cleanText = content.replace(MEDIA_LINK_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+
+  return (
+    <div>
+      {cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>}
+      {mediaMatches.length > 0 && (
+        <div className={cn("space-y-2", cleanText && "mt-3")}>
+          {mediaMatches.map(({ filename }, idx) => {
+            const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(filename);
+            const previewUrl = `/api/media/${filename}${token ? `?token=${token}` : ''}`;
+            const downloadUrl = `/api/media/${filename}?download=true${token ? `&token=${token}` : ''}`;
+            return (
+              <div key={idx} className="rounded-lg overflow-hidden border border-slate-600">
+                {isImage && (
+                  <img
+                    src={previewUrl}
+                    alt={filename}
+                    className="max-w-xs max-h-64 object-contain bg-slate-900 block"
+                  />
+                )}
+                <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 text-xs">
+                  <Paperclip size={12} className="text-slate-400 flex-shrink-0" />
+                  <span className="truncate text-slate-300 flex-1">{filename}</span>
+                  <a
+                    href={downloadUrl}
+                    download={filename}
+                    className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors flex-shrink-0"
+                  >
+                    <Download size={11} />
+                    Download
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -167,14 +330,14 @@ function MessageBubble({
         
         <div className={cn(
           "px-4 py-3 rounded-2xl",
-          isUser 
-            ? "bg-blue-600 text-white rounded-tr-sm" 
-            : isError 
+          isUser
+            ? "bg-blue-600 text-white rounded-tr-sm"
+            : isError
               ? "bg-red-500/20 text-red-200 border border-red-500/30 rounded-tl-sm"
               : "bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-sm"
         )}>
-          <p className="whitespace-pre-wrap">{content}</p>
-          
+          <MessageContent content={content} token={token} />
+
           {attachments && attachments.length > 0 && (
             <div className="mt-3 space-y-2">
               {attachments.map((att, idx) => {
@@ -231,6 +394,7 @@ export default function ChatPage() {
     setShowToolLogs,
     isRouterLearning,
     activeSkillNames,
+    memoryRecall,
   } = useChatStore();
 
   const sendMessage = useChatStore((s) => s.sendMessageFn);
@@ -239,12 +403,15 @@ export default function ChatPage() {
   const chatCommand = useChatCommand();
   const clearConversation = useClearConversation();
   const { data: modelData } = useCurrentModel();
+  const { data: systemInfo } = useSystemInfo();
   const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
 
   const { isOpen: isTerminalOpen, toggleOpen: toggleTerminal } = useTerminalStore();
 
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -471,14 +638,45 @@ export default function ChatPage() {
   };
 
   const startNewConversation = () => {
+    const newUserId = `web_${Date.now()}`;
     loadedKeyRef.current = '';
+    setMessages([]);
     setTarget({
       channel: 'web',
-      user: 'web',
+      user: newUserId,
       title: 'New Conversation',
+    });
+    // Optimistically add the new conversation to the sidebar immediately
+    queryClient.setQueryData(['conversations'], (old: Conversation[] | undefined) => {
+      const entry: Conversation = {
+        channel_id: 'web',
+        user_id: newUserId,
+        title: 'New Conversation',
+        last_message: '',
+        last_timestamp: new Date().toISOString(),
+        message_count: 0,
+      };
+      return [entry, ...(old ?? [])];
     });
   };
   
+  const handleDeleteConversation = async (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const key = `${conv.channel_id}-${conv.user_id}`;
+    setDeletingKey(key);
+    try {
+      await clearConversation.mutateAsync({ channelId: conv.channel_id, userId: conv.user_id });
+      // If we deleted the currently active conversation, start a new one
+      if (currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id) {
+        startNewConversation();
+      }
+    } catch {
+      toast.error('Failed to delete conversation');
+    } finally {
+      setDeletingKey(null);
+    }
+  };
+
   const conversationList: Conversation[] = conversations || [];
   
   return (
@@ -492,7 +690,7 @@ export default function ChatPage() {
           <div className="flex flex-col h-full">
             {/* Header */}
             <div className="p-4 border-b border-slate-800">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-3">
                 <h2 className="text-lg font-semibold text-white">Conversations</h2>
                 <button
                   onClick={() => setIsSidebarOpen(false)}
@@ -501,6 +699,12 @@ export default function ChatPage() {
                   <X size={20} />
                 </button>
               </div>
+              {systemInfo?.messages_encrypted && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 mb-3 rounded-lg bg-emerald-950/50 border border-emerald-700/30 text-emerald-400 text-xs">
+                  <ShieldCheck size={13} className="shrink-0" />
+                  <span>Messages encrypted at rest</span>
+                </div>
+              )}
               <button
                 onClick={startNewConversation}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
@@ -512,35 +716,69 @@ export default function ChatPage() {
             
             {/* Conversation List */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {conversationList.map((conv) => (
-                <button
-                  key={`${conv.channel_id}-${conv.user_id}`}
-                  onClick={() => selectConversation(conv)}
-                  className={cn(
-                    "w-full text-left p-3 rounded-lg transition-colors",
-                    currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id
-                      ? "bg-blue-600/20 border border-blue-600/30"
-                      : "hover:bg-slate-800"
-                  )}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center">
-                      <MessageSquare size={18} className="text-slate-400" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-200 truncate">
-                        {conv.title || `${conv.channel_id} - ${conv.user_id}`}
-                      </p>
-                      <p className="text-xs text-slate-500 truncate">
-                        {conv.last_message || 'No messages'}
-                      </p>
-                    </div>
-                    {conv.message_count > 0 && (
-                      <span className="text-xs text-slate-500">{conv.message_count}</span>
+              {conversationList.map((conv) => {
+                const convKey = `${conv.channel_id}-${conv.user_id}`;
+                const isActive = currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id;
+                const isDeleting = deletingKey === convKey;
+                const isDeletable = conv.channel_id !== 'console';
+                return (
+                  <div
+                    key={convKey}
+                    className={cn(
+                      "group relative w-full text-left p-3 rounded-lg transition-colors cursor-pointer",
+                      isActive
+                        ? "bg-blue-600/20 border border-blue-600/30"
+                        : "hover:bg-slate-800 border border-transparent"
                     )}
+                    onClick={() => selectConversation(conv)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center shrink-0">
+                        <MessageSquare size={18} className="text-slate-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-slate-200 truncate">
+                            {conv.title || `${conv.channel_id} - ${conv.user_id}`}
+                          </p>
+                          {conv.message_count === 0 && (
+                            <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 bg-blue-500/15 text-blue-400 rounded-full border border-blue-500/20">
+                              New
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 truncate">
+                          {conv.last_message || 'No messages yet'}
+                        </p>
+                      </div>
+                      {/* Message count — hidden when delete button is visible */}
+                      {conv.message_count > 0 && (
+                        <span className="text-xs text-slate-500 group-hover:hidden">
+                          {conv.message_count}
+                        </span>
+                      )}
+                      {/* Delete button — only for external channels (not web/console), shown on hover */}
+                      {isDeletable && (
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv, e)}
+                          disabled={isDeleting}
+                          className={cn(
+                            "hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0",
+                            "text-slate-500 hover:text-red-400 hover:bg-red-500/10",
+                            isDeleting && "!flex"
+                          )}
+                          title="Delete conversation"
+                        >
+                          {isDeleting
+                            ? <Loader2 size={14} className="animate-spin" />
+                            : <Trash2 size={14} />
+                          }
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+              })}
               
               {conversationList.length === 0 && (
                 <div className="text-center py-8">
@@ -601,8 +839,9 @@ export default function ChatPage() {
           
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
-            {(isRouterLearning || activeSkillNames.length > 0) && (
+            {(isRouterLearning || activeSkillNames.length > 0 || memoryRecall) && (
               <div className="sticky top-2 z-10 flex justify-end gap-2 pointer-events-none">
+                {memoryRecall && <MemoryRecallIndicator status={memoryRecall.status} count={memoryRecall.count} />}
                 {isRouterLearning && <RouterLearningIndicator />}
                 {activeSkillNames.length > 0 && <SkillActiveIndicator names={activeSkillNames} />}
               </div>
@@ -616,31 +855,49 @@ export default function ChatPage() {
                   </>
                 ) : (
                   <>
-                    <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4">
-                      <Bot size={32} className="text-slate-400" />
+                    <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-full flex items-center justify-center mb-4">
+                      <Plus size={28} className="text-blue-400" />
+                    </div>
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="px-2 py-0.5 text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
+                        New conversation
+                      </span>
                     </div>
                     <h3 className="text-lg font-medium text-slate-300 mb-2">
-                      Start a conversation
+                      Ready to start
                     </h3>
-                    <p className="text-sm text-slate-500 max-w-md">
-                      Type a message to start interacting with the AI assistant.
+                    <p className="text-sm text-slate-500 max-w-sm">
+                      This is a fresh conversation. Type your first message below.
                     </p>
                   </>
                 )}
               </div>
             ) : (
               messages
-                .filter((msg) => showToolLogs || !msg.toolCall)
-                .map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    content={msg.content}
-                    role={msg.role}
-                    badge={msg.badge}
-                    attachments={msg.attachments}
-                    toolCall={msg.toolCall}
-                  />
-                ))
+                .filter((msg) => showToolLogs || (!msg.toolCall && !msg.validation))
+                .map((msg) => {
+                  if (msg.validation) {
+                    return (
+                      <ValidationBubble
+                        key={msg.id}
+                        tool={msg.validation.tool}
+                        steps={msg.validation.steps}
+                        done={msg.validation.done}
+                        passed={msg.validation.passed}
+                      />
+                    );
+                  }
+                  return (
+                    <MessageBubble
+                      key={msg.id}
+                      content={msg.content}
+                      role={msg.role}
+                      badge={msg.badge}
+                      attachments={msg.attachments}
+                      toolCall={msg.toolCall}
+                    />
+                  );
+                })
             )}
             
             {isWaitingResponse && <TypingIndicator label={thinkingLabel} />}
@@ -650,10 +907,7 @@ export default function ChatPage() {
           {/* Command Buttons */}
           <div className="px-4 py-2 border-t border-slate-800 bg-slate-900/30 flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => {
-                executeCommand('/new');
-                clearConversation.mutate({ channelId: currentTarget.channel, userId: currentTarget.user });
-              }}
+              onClick={startNewConversation}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
             >
               <Plus size={13} />

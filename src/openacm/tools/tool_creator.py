@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime
 
 from openacm.tools.base import tool
+from openacm.tools.tool_validator import run_tool_validation
 
 log = structlog.get_logger()
 
@@ -37,13 +38,14 @@ def sanitize_filename(name: str) -> str:
 @tool(
     name="create_tool",
     description=(
-        "Create a new Python tool dynamically and save it to disk. "
-        "Use this when the user wants to:\n"
-        "1. Create a custom automation script\n"
-        "2. Add a new capability to OpenACM\n"
-        "3. Create a reusable function for common tasks\n"
-        "4. Extend OpenACM with domain-specific functionality\n"
-        "The tool will be saved as a Python file and registered immediately."
+        "Create a new EXECUTABLE Python tool — a function with real code that runs, calls APIs, "
+        "reads files, controls devices, etc. "
+        "Use ONLY when the user explicitly asks to create a 'tool', 'función', 'integración', "
+        "'automatización', or when they need NEW EXECUTABLE BEHAVIOR that doesn't exist yet.\n"
+        "DO NOT use this for knowledge, personas, instructions, or behavioral guidelines — "
+        "use create_skill for those instead.\n"
+        "IMPORTANT: Call without apply=True first to run automated tests and show the user "
+        "the results. Only call with apply=True after the user explicitly confirms."
     ),
     parameters={
         "type": "object",
@@ -64,6 +66,11 @@ def sanitize_filename(name: str) -> str:
                 "type": "string",
                 "description": "Complete Python code for the tool function. Must be valid Python with proper indentation. Include imports and the async function.",
             },
+            "apply": {
+                "type": "boolean",
+                "description": "Set to true only after the user has reviewed the test results and confirmed. Default false.",
+                "default": False,
+            },
         },
         "required": ["name", "description", "parameters", "code"],
     },
@@ -76,32 +83,23 @@ async def create_tool(
     description: str,
     parameters: str,
     code: str,
+    apply: bool = False,
+    _brain=None,
     **kwargs,
 ) -> str:
     """Create a new tool file and register it."""
 
-    # Validate name
     safe_name = sanitize_filename(name)
     if not safe_name or safe_name[0].isdigit():
-        return f"❌ Invalid tool name '{name}'. Use letters, numbers, hyphens, underscores. Cannot start with a number."
+        return f"❌ Nombre de tool inválido '{name}'. Usa letras, números, guiones, underscores. No puede empezar con número."
 
-    # Check if file already exists
     tool_file = TOOLS_DIR / f"{safe_name}.py"
     if tool_file.exists():
-        return (
-            f"⚠️ Tool file '{safe_name}.py' already exists. Delete it first or use a different name."
-        )
+        return f"⚠️ Tool '{safe_name}.py' ya existe. Elimínalo primero o usa otro nombre."
 
-    # Validate Python code
-    is_valid, error_msg = validate_python_code(code)
-    if not is_valid:
-        return f"❌ Python syntax error:\n{error_msg}\n\nPlease fix the code and try again."
-
-    try:
-        # Generate complete tool file content
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        file_content = f'''"""
+    # Build the full module content (needed for dry-run and to save later)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    file_content = f'''"""
 {safe_name.replace("_", " ").title()} Tool — {description}
 
 Generated automatically on {timestamp}
@@ -131,49 +129,56 @@ async def {safe_name}(
     **kwargs,
 ) -> str:
     """{description}"""
-    
+
 {indent_code(code)}
 
 
-# Make function available at module level
 __all__ = ["{safe_name}"]
 '''
 
-        # Write file
-        tool_file.write_text(file_content, encoding="utf-8")
-        log.info("Tool file created", file=str(tool_file))
+    # ── Phase 1: test only (apply=False) ────────────────────────────────────
+    if not apply:
+        event_bus = getattr(_brain, "event_bus", None)
+        channel_id = kwargs.get("channel_id")
+        report = await run_tool_validation(safe_name, code, file_content, event_bus, channel_id)
+        overall = "✅ Todos los tests pasaron" if report.passed else "❌ Hay errores que corregir"
+        if report.passed and report.has_warnings:
+            overall = "⚠️ Tests pasaron con advertencias"
 
-        # Success message with instructions
-        return f"""✅ **Tool '{safe_name}' creado exitosamente!**
+        result = f"""🧪 **Reporte de tests — tool `{safe_name}`**
 
-📁 **Ubicación:** `{tool_file}`
-📝 **Descripción:** {description}
-⚡ **Estado:** Guardado en disco
+{report.format()}
 
-🔧 **Para activar este tool, necesitas:**
-
-1. **Reiniciar OpenACM** (o recargar el módulo)
-2. El tool se registrará automáticamente al inicio
-
-💡 **Uso desde el chat:**
-Una vez activo, puedes usarlo diciendo:
-- "Ejecuta {safe_name} con..."
-- "Usa el tool {safe_name} para..."
-
-⚠️ **Nota importante:** Los tools se guardan en disco pero requieren reinicio para cargar.
-Esto es una medida de seguridad para evitar ejecución de código no verificado.
-
-🎯 **Siguiente paso:** Reinicia OpenACM para usar el nuevo tool.
+─────────────────────────────
+{overall}
 
 **Vista previa del código:**
 ```python
-{code[:500]}{"..." if len(code) > 500 else ""}
+{code[:600]}{"..." if len(code) > 600 else ""}
 ```
-"""
 
+"""
+        if report.passed:
+            result += "¿Todo bien? Responde **sí / aplicar** para guardarlo, o **no** para cancelar o ajustar el código."
+        else:
+            result += "Corrige los errores arriba y vuelve a intentarlo."
+
+        return result
+
+    # ── Phase 2: apply (apply=True) — user already reviewed ─────────────────
+    try:
+        tool_file.write_text(file_content, encoding="utf-8")
+        log.info("Tool file created", file=str(tool_file))
+        return f"""✅ **Tool `{safe_name}` guardado en disco.**
+
+📁 `{tool_file}`
+📝 {description}
+
+⚠️ Reinicia OpenACM para activarlo (o recarga el módulo desde la UI).
+"""
     except Exception as e:
-        log.error("Failed to create tool", name=name, error=str(e))
-        return f"❌ Error creating tool: {str(e)}"
+        log.error("Failed to write tool file", name=name, error=str(e))
+        return f"❌ Error al guardar: {str(e)}"
 
 
 @tool(

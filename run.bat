@@ -50,12 +50,19 @@ echo [OK] Using: %PYTHON_VERSION% from .venv
 echo [*] Verifying OpenACM installation...
 "%VENV_PYTHON%" -c "import openacm" 2>nul
 if errorlevel 1 (
-    echo [ERROR] OpenACM is not installed correctly.
-    echo.
-    echo Try running setup.bat again.
-    echo.
-    pause
-    exit /b 1
+    echo [!] OpenACM package not found. Attempting quick reinstall...
+    "%VENV_PIP%" install -e "%~dp0" -q 2>nul
+    if errorlevel 1 (
+        "%~dp0.venv\Scripts\uv.exe" pip install -e "%~dp0" 2>nul
+    )
+    "%VENV_PYTHON%" -c "import openacm" 2>nul
+    if errorlevel 1 (
+        echo [ERROR] Reinstall failed. Please run setup.bat to repair the installation.
+        echo.
+        pause
+        exit /b 1
+    )
+    echo [OK] Reinstalled successfully.
 )
 
 echo [OK] All good. Starting...

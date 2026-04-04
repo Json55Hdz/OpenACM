@@ -32,6 +32,7 @@ class LLMConfig(BaseModel):
 
     default_provider: str = "ollama"
     providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    timeout: float = 300.0  # seconds to wait for any LLM response before timing out
 
 
 class SecurityConfig(BaseModel):
@@ -41,7 +42,7 @@ class SecurityConfig(BaseModel):
     whitelisted_commands: list[str] = Field(default_factory=list)
     blocked_patterns: list[str] = Field(default_factory=list)
     blocked_paths: list[str] = Field(default_factory=list)
-    max_command_timeout: int = 0  # 0 = no limit — wait until command finishes naturally
+    max_command_timeout: int = 120  # seconds; 0 = no limit. Default 2 min prevents hung UAC/sudo dialogs
     max_output_length: int = 50000
 
 

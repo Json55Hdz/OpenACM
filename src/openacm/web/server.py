@@ -53,6 +53,64 @@ _command_processor: CommandProcessor | None = None
 _channels: list = []
 _agent_bot_manager = None
 _mcp_manager = None
+_activity_watcher = None
+_custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
+
+
+# ─── Custom Provider Helpers (module-level so create_web_server can call them) ──
+
+import re as _re
+
+def _get_custom_providers_path() -> Path:
+    from openacm.core.config import _find_project_root
+    return _find_project_root() / "config" / "custom_providers.json"
+
+
+def _load_custom_providers() -> list[dict]:
+    path = _get_custom_providers_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def _save_custom_providers(providers: list[dict]) -> None:
+    path = _get_custom_providers_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(providers, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _apply_custom_providers(providers: list[dict]) -> None:
+    """Inject custom providers into the live config + env and update the tracking set."""
+    global _custom_provider_ids, _config
+    if not _config:
+        return
+    for p in providers:
+        pid = p["id"]
+        _custom_provider_ids.add(pid)
+        _config.llm.providers[pid] = {
+            "base_url": p["base_url"],
+            "default_model": p.get("default_model", ""),
+        }
+        api_key = p.get("api_key", "")
+        if api_key:
+            os.environ[f"{pid.upper()}_API_KEY"] = api_key
+
+
+def _make_provider_id(name: str, existing: list[dict]) -> str:
+    """Turn a human name into a unique snake_case provider ID."""
+    pid = _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    if not pid:
+        pid = "custom"
+    existing_ids = {p["id"] for p in existing}
+    candidate = pid
+    counter = 2
+    while candidate in existing_ids:
+        candidate = f"{pid}_{counter}"
+        counter += 1
+    return candidate
 
 
 def create_app() -> FastAPI:
@@ -146,6 +204,13 @@ def create_app() -> FastAPI:
     async def ping():
         """Public health check — used by frontend to detect restarts."""
         return {"ok": True}
+
+    @app.get("/api/system/info")
+    async def system_info():
+        """Basic system info flags (encryption status, etc.)."""
+        return {
+            "messages_encrypted": _database.messages_encrypted if _database else False,
+        }
 
     @app.post("/api/system/restart")
     async def restart_system():
@@ -266,6 +331,10 @@ def create_app() -> FastAPI:
         result: dict[str, bool] = {}
         for provider_id in _config.llm.providers:
             if provider_id in _NO_KEY_PROVIDERS:
+                result[provider_id] = True
+            elif provider_id in _custom_provider_ids:
+                # Custom providers are always "configured" — user added them deliberately.
+                # For keyless local endpoints (LM Studio etc.) they just work.
                 result[provider_id] = True
             else:
                 env_var = f"{provider_id.upper()}_API_KEY"
@@ -519,6 +588,89 @@ def create_app() -> FastAPI:
                 log.info("Telegram bot (re)created with updated token")
 
         return {"status": "ok", "updated": updated}
+
+    # ─── Custom Providers CRUD ────────────────────────────────
+
+    @app.get("/api/config/custom_providers")
+    async def get_custom_providers_list():
+        """List user-defined custom OpenAI-compatible providers (api_key masked)."""
+        providers = _load_custom_providers()
+        return [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "base_url": p["base_url"],
+                "default_model": p.get("default_model", ""),
+                "suggested_models": p.get("suggested_models", []),
+                "has_key": bool(p.get("api_key", "")),
+            }
+            for p in providers
+        ]
+
+    @app.post("/api/config/custom_providers")
+    async def add_custom_provider(request: Request):
+        """Add a new custom OpenAI-compatible provider."""
+        data = await request.json()
+        name = (data.get("name") or "").strip()
+        base_url = (data.get("base_url") or "").strip()
+        if not name or not base_url:
+            raise HTTPException(status_code=400, detail="name and base_url are required")
+
+        providers = _load_custom_providers()
+        pid = _make_provider_id(name, providers)
+        provider = {
+            "id": pid,
+            "name": name,
+            "base_url": base_url.rstrip("/"),
+            "api_key": (data.get("api_key") or "").strip(),
+            "default_model": (data.get("default_model") or "").strip(),
+            "suggested_models": data.get("suggested_models") or [],
+        }
+        providers.append(provider)
+        _save_custom_providers(providers)
+        _apply_custom_providers([provider])
+        log.info("Custom provider added", id=pid, name=name)
+        return {"status": "ok", "id": pid}
+
+    @app.put("/api/config/custom_providers/{provider_id}")
+    async def update_custom_provider(provider_id: str, request: Request):
+        """Update an existing custom provider."""
+        data = await request.json()
+        providers = _load_custom_providers()
+        for i, p in enumerate(providers):
+            if p["id"] == provider_id:
+                if "name" in data:
+                    p["name"] = data["name"].strip()
+                if "base_url" in data:
+                    p["base_url"] = data["base_url"].strip().rstrip("/")
+                if data.get("api_key"):
+                    p["api_key"] = data["api_key"].strip()
+                if "default_model" in data:
+                    p["default_model"] = data["default_model"].strip()
+                if "suggested_models" in data:
+                    p["suggested_models"] = data["suggested_models"]
+                providers[i] = p
+                _save_custom_providers(providers)
+                _apply_custom_providers([p])
+                return {"status": "ok"}
+        raise HTTPException(status_code=404, detail="Provider not found")
+
+    @app.delete("/api/config/custom_providers/{provider_id}")
+    async def delete_custom_provider(provider_id: str):
+        """Remove a custom provider."""
+        global _custom_provider_ids
+        providers = _load_custom_providers()
+        new_providers = [p for p in providers if p["id"] != provider_id]
+        if len(new_providers) == len(providers):
+            raise HTTPException(status_code=404, detail="Provider not found")
+        _save_custom_providers(new_providers)
+        _custom_provider_ids.discard(provider_id)
+        if _config and provider_id in _config.llm.providers:
+            del _config.llm.providers[provider_id]
+        env_key = f"{provider_id.upper()}_API_KEY"
+        os.environ.pop(env_key, None)
+        log.info("Custom provider deleted", id=provider_id)
+        return {"status": "ok"}
 
     @app.get("/api/config/local_router")
     async def get_local_router_config():
@@ -799,11 +951,16 @@ def create_app() -> FastAPI:
 
     @app.delete("/api/conversations/{channel_id}/{user_id}")
     async def delete_conversation(channel_id: str, user_id: str):
-        """Clear conversation history for a user/channel pair."""
+        """Delete conversation history for a user/channel pair (memory + database)."""
         if not _brain:
             raise HTTPException(status_code=503, detail="Brain not available")
+        # Clear in-memory cache
         await _brain.memory.clear(user_id, channel_id)
-        return {"status": "ok"}
+        # Delete from database so it doesn't reload on next access
+        deleted_rows = 0
+        if _database:
+            deleted_rows = await _database.delete_conversation_messages(user_id, channel_id)
+        return {"status": "ok", "deleted_rows": deleted_rows}
 
     # ─── API: Commands ────────────────────────────────────────
 
@@ -1498,6 +1655,113 @@ def create_app() -> FastAPI:
         await _mcp_manager.disconnect(server_name)
         return {"status": "ok", "disconnected": server_name}
 
+    # ─── API: Routines ───────────────────────────────────────
+
+    @app.get("/api/routines")
+    async def get_routines():
+        """List all detected routines."""
+        if not _database:
+            return []
+        return await _database.get_all_routines()
+
+    @app.post("/api/routines/{routine_id}/execute")
+    async def execute_routine(routine_id: int):
+        """Execute a routine (launch its apps)."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        routine = await _database.get_routine(routine_id)
+        if not routine:
+            raise HTTPException(status_code=404, detail="Routine not found")
+        try:
+            from openacm.watchers.routine_executor import RoutineExecutor
+            executor = RoutineExecutor()
+            results = await executor.execute(routine)
+            await _database.record_routine_run(routine_id)
+            return {"status": "ok", "results": results}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.put("/api/routines/{routine_id}")
+    async def update_routine(routine_id: int, request: Request):
+        """Update a routine (name, status, trigger_data)."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        allowed = {"name", "status", "trigger_type", "trigger_data", "apps"}
+        kwargs = {k: v for k, v in data.items() if k in allowed}
+        if "trigger_data" in kwargs and isinstance(kwargs["trigger_data"], dict):
+            import json as _json
+            kwargs["trigger_data"] = _json.dumps(kwargs["trigger_data"])
+        ok = await _database.update_routine(routine_id, **kwargs)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Routine not found")
+        return await _database.get_routine(routine_id)
+
+    @app.delete("/api/routines/{routine_id}")
+    async def delete_routine(routine_id: int):
+        """Delete a routine."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _database.delete_routine(routine_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Routine not found")
+        return {"status": "ok", "deleted": routine_id}
+
+    @app.post("/api/routines/analyze")
+    async def analyze_routines():
+        """Trigger pattern analysis and return newly created routines."""
+        if not _database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        try:
+            from openacm.watchers.pattern_analyzer import PatternAnalyzer
+            llm = _brain.llm_router if _brain else None
+            analyzer = PatternAnalyzer(_database, llm_router=llm)
+            new_routines = await analyzer.analyze()
+            return {"status": "ok", "new_routines": len(new_routines), "routines": new_routines}
+        except Exception as exc:
+            log.error("Pattern analysis failed", error=str(exc))
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    # ─── API: Activity Stats ─────────────────────────────────
+
+    @app.get("/api/activity/stats")
+    async def get_activity_stats():
+        """Return per-app usage stats, total hours tracked, and session count."""
+        if not _database:
+            return {"apps": [], "total_hours": 0, "session_count": 0}
+        app_stats = await _database.get_app_stats()
+        total_hours = await _database.get_activity_hours()
+        session_count = await _database.get_activity_count()
+        return {
+            "apps": app_stats,
+            "total_hours": round(total_hours, 2),
+            "session_count": session_count,
+        }
+
+    @app.get("/api/activity/sessions")
+    async def get_recent_sessions(limit: int = 30):
+        """Return recent app focus sessions."""
+        if not _database:
+            return []
+        return await _database.get_recent_app_sessions(limit)
+
+    @app.get("/api/watcher/status")
+    async def get_watcher_status():
+        """Return activity watcher running status and encryption info."""
+        encrypted = _database._enc is not None if _database else False
+        key_path = _database._enc.key_path if (encrypted and _database) else None
+        if _activity_watcher is None:
+            return {"running": False, "current_app": None, "sessions_recorded": 0,
+                    "encrypted": encrypted, "key_path": key_path}
+        return {
+            "running": _activity_watcher.is_running,
+            "current_app": _activity_watcher.current_app,
+            "current_title": _activity_watcher.current_title,
+            "sessions_recorded": _activity_watcher.sessions_recorded,
+            "encrypted": encrypted,
+            "key_path": key_path,
+        }
+
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
@@ -1562,18 +1826,23 @@ async def create_web_server(
     channels: list | None = None,
     agent_bot_manager=None,
     mcp_manager=None,
+    activity_watcher=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher
     _brain = brain
     _database = database
     _event_bus = event_bus
     _tool_registry = tool_registry
+    _activity_watcher = activity_watcher
     _config = config
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
     _agent_bot_manager = agent_bot_manager
     _mcp_manager = mcp_manager
+
+    # Load and apply user-defined custom providers on startup
+    _apply_custom_providers(_load_custom_providers())
 
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):
@@ -1588,6 +1857,7 @@ async def create_web_server(
         EVENT_LLM_REQUEST,
         EVENT_LLM_RESPONSE,
         EVENT_ROUTER_LEARNED,
+        EVENT_TOOL_VALIDATION,
     )
 
     for evt in [
@@ -1599,6 +1869,8 @@ async def create_web_server(
         EVENT_LLM_REQUEST,
         EVENT_LLM_RESPONSE,
         EVENT_ROUTER_LEARNED,
+        EVENT_TOOL_VALIDATION,
+        "memory.recall",
     ]:
         event_bus.on(evt, on_event)
 

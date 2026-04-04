@@ -258,16 +258,29 @@ class LLMRouter:
                 if m.get("role") != "tool" or i > first_assistant
             ]
 
-        # Pass 1: collect all tool_call_ids that already have a response
-        responded_ids: set[str] = set()
+        # Build index of tool responses by tool_call_id.
+        # If there are multiple responses for the same ID (shouldn't happen, but be safe),
+        # keep the last one. Tool messages will be placed immediately after the assistant
+        # message that called them, guaranteeing the ordering the LLM spec requires.
+        tool_response_index: dict[str, dict] = {}
         for msg in messages:
             if msg.get("role") == "tool" and msg.get("tool_call_id"):
-                responded_ids.add(msg["tool_call_id"])
+                tool_response_index[msg["tool_call_id"]] = msg
 
-        # Pass 2: normalize assistant tool_calls + inject missing responses
+        # Pass 2: rebuild with tool responses immediately after their calling assistant.
+        # Tool messages are skipped in the main loop — they are inserted when their
+        # assistant message is processed, ensuring correct adjacency even when the
+        # original history has them out of order (e.g. after a subsequent assistant turn).
         normalized: list[dict[str, Any]] = []
+
         for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            role = msg.get("role")
+
+            # Tool messages are placed by their assistant; skip here.
+            if role == "tool":
+                continue
+
+            if role == "assistant" and msg.get("tool_calls"):
                 clean_tool_calls = []
                 for tc in msg["tool_calls"]:
                     cid = tc.get("id", "")
@@ -287,10 +300,15 @@ class LLMRouter:
                         msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
 
                 normalized.append(msg)
-                # Inject synthetic responses for any orphaned tool_call_ids
+
+                # Immediately place tool responses for each tool_call
                 for tc in clean_tool_calls:
                     cid = tc.get("id", "")
-                    if cid and cid not in responded_ids:
+                    if not cid:
+                        continue
+                    if cid in tool_response_index:
+                        normalized.append(tool_response_index[cid])
+                    else:
                         log.warning("Injecting synthetic tool response for orphaned tool_call_id", id=cid)
                         normalized.append({
                             "role": "tool",
@@ -303,29 +321,7 @@ class LLMRouter:
                     msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
                 normalized.append(msg)
 
-        # Pass 3: drop tool responses with no matching tool_call
-        all_tc_ids: set[str] = set()
-        for msg in normalized:
-            if msg.get("role") == "assistant":
-                for tc in msg.get("tool_calls") or []:
-                    cid = tc.get("id", "")
-                    if cid:
-                        all_tc_ids.add(cid)
-
-        final: list[dict[str, Any]] = []
-        for msg in normalized:
-            if msg.get("role") == "tool":
-                tcid = msg.get("tool_call_id", "")
-                if not tcid or tcid not in all_tc_ids:
-                    log.warning(
-                        "Dropping unmatched tool response",
-                        tool_call_id=repr(tcid),
-                        all_known_ids=list(all_tc_ids),
-                    )
-                    continue
-            final.append(msg)
-
-        return final
+        return normalized
 
     async def _custom_chat(
         self,
@@ -398,6 +394,11 @@ class LLMRouter:
         # tool_calls keyed by index: {0: {"id": ..., "name": ..., "arguments": ...}}
         tool_calls_acc: dict[int, dict[str, str]] = {}
         finish_reason = "stop"
+        stream_usage: dict[str, int] = {}
+
+        # Ask providers to include usage in the final stream chunk (OpenAI-compatible flag).
+        # Providers that don't support it will silently ignore it.
+        payload.setdefault("stream_options", {"include_usage": True})
 
         # SECURITY: POR DISEÑO - HTTP client para APIs de LLM
         async with httpx.AsyncClient() as client:
@@ -430,6 +431,11 @@ class LLMRouter:
                         chunk = _json.loads(data_str)
                     except _json.JSONDecodeError:
                         continue
+
+                    # Capture usage from any chunk that carries it
+                    # (some providers send it in a final chunk with empty choices)
+                    if chunk.get("usage"):
+                        stream_usage = chunk["usage"]
 
                     choices = chunk.get("choices", [])
                     if not choices:
@@ -490,22 +496,36 @@ class LLMRouter:
             })
 
         captured_reasoning = "".join(reasoning_parts)
+        full_content = "".join(content_parts)
+
+        # Build token usage from stream data, or estimate if provider didn't send it.
+        # Estimation: ~3.5 chars/token for output; prompt tokens unknown so we use 0.
+        prompt_tokens = stream_usage.get("prompt_tokens", 0)
+        completion_tokens = stream_usage.get("completion_tokens", 0)
+        total_tokens = stream_usage.get("total_tokens", 0)
+        if total_tokens == 0:
+            # Fallback estimate from output length so the counter is never stuck at 0
+            completion_tokens = max(1, len(full_content + "".join(reasoning_parts)) // 4)
+            total_tokens = prompt_tokens + completion_tokens
+
         log.debug(
             "Custom provider stream complete",
             model=model,
             reasoning_chars=len(captured_reasoning),
             tool_calls=len(assembled_tool_calls),
-            content_chars=len("".join(content_parts)),
+            content_chars=len(full_content),
+            total_tokens=total_tokens,
+            usage_from_stream=bool(stream_usage),
         )
 
         result = {
-            "content": "".join(content_parts),
+            "content": full_content,
             "reasoning_content": captured_reasoning,
             "tool_calls": assembled_tool_calls,
             "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
             },
             "model": model,
             "elapsed": 0,
@@ -601,7 +621,7 @@ class LLMRouter:
 
         try:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
-            _llm_timeout = 60.0  # max seconds to wait for any LLM response (no retries on timeout)
+            _llm_timeout = self.config.timeout  # configurable via llm.timeout in config/default.yaml
 
             if self._is_custom_provider():
                 result = await asyncio.wait_for(
@@ -690,6 +710,20 @@ class LLMRouter:
                     "has_tool_calls": bool(result["tool_calls"]),
                 },
             )
+
+            # Persist token usage so the dashboard can show historical stats
+            if self._database:
+                try:
+                    await self._database.log_llm_usage(
+                        model=self._current_model or model,
+                        provider=self._current_provider,
+                        prompt_tokens=result["usage"]["prompt_tokens"],
+                        completion_tokens=result["usage"]["completion_tokens"],
+                        total_tokens=result["usage"]["total_tokens"],
+                        elapsed_ms=int(result["elapsed"] * 1000),
+                    )
+                except Exception:
+                    pass  # Never block a response due to a DB write error
 
             log.debug(
                 "LLM response",

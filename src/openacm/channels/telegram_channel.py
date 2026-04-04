@@ -154,8 +154,14 @@ class TelegramChannel(BaseChannel):
             return True  # No restrictions
         return str(user_id) in self.config.allowed_users
 
+    def _owns_event(self, data: dict) -> bool:
+        """Return True if this channel instance should handle the event."""
+        return data.get("channel_type") == "telegram"
+
     async def _on_tool_called(self, event_type: str, data: dict):
         if not self._app or not self._connected:
+            return
+        if not self._owns_event(data):
             return
 
         if os.environ.get("OPENACM_VERBOSE_CHANNELS", "true").lower() != "true":
@@ -185,6 +191,8 @@ class TelegramChannel(BaseChannel):
 
     async def _on_tool_result(self, event_type: str, data: dict):
         if not self._app or not self._connected:
+            return
+        if not self._owns_event(data):
             return
 
         if os.environ.get("OPENACM_VERBOSE_CHANNELS", "true").lower() != "true":

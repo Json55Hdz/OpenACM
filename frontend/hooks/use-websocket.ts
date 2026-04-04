@@ -43,6 +43,9 @@ interface WebSocketMessage {
   partial?: boolean;
   attachments?: string[];
   skills?: string[];
+  // tool.validation fields
+  step?: string;
+  detail?: string;
 }
 
 export function useWebSocket() {
@@ -186,6 +189,13 @@ export function useWebSocket() {
             attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
           });
         }
+      } else if (data.type === 'memory.recall') {
+        const status = data.status as 'searching' | 'found' | 'empty' | 'saving' | 'saved';
+        const count = (data as { count?: number }).count ?? 0;
+        storeRef.current.setMemoryRecall({ status, count });
+        if (status === 'found' || status === 'empty' || status === 'saved') {
+          setTimeout(() => storeRef.current.setMemoryRecall(null), 2500);
+        }
       } else if (data.type === 'router.learned') {
         storeRef.current.setRouterLearning(true);
         setTimeout(() => storeRef.current.setRouterLearning(false), 3000);
@@ -233,6 +243,24 @@ export function useWebSocket() {
           },
         });
         _mirrorToolToTerminal('result', data.tool || '', data.result || '');
+      } else if (data.type === 'tool.validation') {
+        if (data.channel_id !== currentTarget.channel) return;
+        const tool = data.tool || '';
+        const stepName = data.step || '';
+        const status = (data.status || 'running') as 'running' | 'passed' | 'failed' | 'warning';
+        const detail = data.detail || '';
+
+        if (stepName === '__done__') {
+          // Mark the validation panel as finished
+          storeRef.current.upsertValidationStep(
+            tool,
+            { step: '__done__', status, detail: '' },
+            true,
+            status === 'passed',
+          );
+        } else {
+          storeRef.current.upsertValidationStep(tool, { step: stepName, status, detail });
+        }
       }
     };
 
