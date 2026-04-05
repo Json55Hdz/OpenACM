@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { PROVIDERS } from '@/lib/providers';
 import { ProviderCard } from '@/components/setup/provider-card';
-import { useProviderStatus, useSaveSetup, useOllamaStatus } from '@/hooks/use-setup';
+import { useProviderStatus, useSaveSetup, useOllamaStatus, useCliStatus } from '@/hooks/use-setup';
 import { translations } from '@/lib/translations';
 import { Loader2, Save, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,7 +18,16 @@ interface ProviderSetupFormProps {
 export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderSetupFormProps) {
   const { data: status } = useProviderStatus();
   const { data: ollamaStatus } = useOllamaStatus();
+  const { data: cliClaudeStatus } = useCliStatus('claude');
+  const { data: cliGeminiStatus } = useCliStatus('gemini');
+  const { data: cliOpenCodeStatus } = useCliStatus('opencode');
   const saveSetup = useSaveSetup();
+
+  const cliStatusMap: Record<string, { available: boolean } | null | undefined> = {
+    cli_claude:   cliClaudeStatus   ? { available: cliClaudeStatus.available }   : null,
+    cli_gemini:   cliGeminiStatus   ? { available: cliGeminiStatus.available }   : null,
+    cli_opencode: cliOpenCodeStatus ? { available: cliOpenCodeStatus.available } : null,
+  };
   const [keys, setKeys] = useState<Record<string, string>>({});
 
   const configuredProviders = status?.providers ?? {};
@@ -83,6 +92,7 @@ export function ProviderSetupForm({ mode = 'onboarding', onComplete }: ProviderS
             onKeyChange={(val) => handleKeyChange(provider.id, provider.envVar, val)}
             mode={mode}
             ollamaStatus={provider.id === 'ollama' ? (ollamaStatus ?? null) : undefined}
+            cliStatus={provider.isCli ? (cliStatusMap[provider.id] ?? null) : undefined}
           />
         ))}
       </div>

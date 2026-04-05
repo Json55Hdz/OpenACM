@@ -64,6 +64,24 @@ interface GoogleStatus {
   token_exist: boolean;
 }
 
+interface CliStatus {
+  binary: string;
+  available: boolean;
+}
+
+export function useCliStatus(binary: string | undefined) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<CliStatus>({
+    queryKey: ['cli-status', binary],
+    queryFn: () => fetchAPI(`/api/cli/status?binary=${encodeURIComponent(binary ?? '')}`),
+    enabled: isAuthenticated && !!binary,
+    staleTime: 30000,
+    retry: false,
+  });
+}
+
 export function useGoogleStatus() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();

@@ -588,6 +588,12 @@ export default function ConfigPage() {
                                 <span className="text-[10px] uppercase tracking-wider text-blue-400 font-semibold">Active</span>
                               )}
                             </div>
+                            {provDef?.cliDisclaimer && (
+                              <div className="mx-3 mb-2 flex items-start gap-1.5 p-2 bg-amber-500/5 border border-amber-500/20 rounded text-xs text-amber-300/80 leading-relaxed">
+                                <span className="mt-0.5 flex-shrink-0">⚠</span>
+                                {provDef.cliDisclaimer}
+                              </div>
+                            )}
                             <div className="px-3 pb-2 flex flex-wrap gap-1.5">
                               {suggestedModels.map((m) => {
                                 const isCurrent = model?.model === m && isActive;

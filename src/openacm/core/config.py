@@ -214,4 +214,48 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config.channels.telegram.token = telegram_token
         config.channels.telegram.enabled = True
 
+    # Auto-inject CLI providers for any detected binary not already in config.
+    # This means the user only needs to install the CLI — no YAML editing required.
+    _auto_detect_cli_providers(config)
+
     return config
+
+
+def _auto_detect_cli_providers(config: "AppConfig") -> None:
+    """Detect installed CLI binaries and inject them as providers if not already configured."""
+    import shutil
+
+    # Known CLI presets: provider_id -> config dict
+    _CLI_PRESETS: dict[str, dict] = {
+        "cli_claude": {
+            "type": "cli",
+            "binary": "claude",
+            "args": ["--print"],
+            "default_model": "claude",
+            "timeout": 300,
+        },
+        "cli_gemini": {
+            "type": "cli",
+            "binary": "gemini",
+            "args": ["--yolo", "-p"],
+            "default_model": "gemini",
+            "timeout": 300,
+        },
+        "cli_opencode": {
+            "type": "cli",
+            "binary": "opencode",
+            "args": ["run", "--format", "json"],
+            "input_mode": "arg",      # message passed as positional arg, not stdin
+            "output_format": "jsonl", # parse JSON event stream
+            "default_model": "opencode",
+            "timeout": 300,
+        },
+    }
+
+    for provider_id, preset in _CLI_PRESETS.items():
+        # Skip if explicitly configured by the user (allows overriding args/timeout)
+        if provider_id in config.llm.providers:
+            continue
+        # Auto-add only if binary is on PATH
+        if shutil.which(preset["binary"]):
+            config.llm.providers[provider_id] = preset

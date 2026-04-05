@@ -28,6 +28,7 @@
 | [Roadmap](./18-roadmap.md) | What's coming next |
 | [Cron Scheduler](./19-cron-scheduler.md) | Background job scheduler — recurring tasks, cron expressions, API |
 | [Token Optimization](./20-token-optimization.md) | Multi-layer token reduction system — local router, semantic tools, output compressor, compaction |
+| [CLI Providers](./21-cli-providers.md) | Connect via CLI binaries (claude, gemini) — no API key required |
 
 ---
 

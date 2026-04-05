@@ -324,13 +324,19 @@ def create_app() -> FastAPI:
     # Providers that don't need an API key
     _NO_KEY_PROVIDERS = {"ollama"}
 
+    def _is_cli_provider_id(provider_id: str) -> bool:
+        """Return True if a provider_id is a CLI-type provider in config."""
+        if not _config:
+            return False
+        return _config.llm.providers.get(provider_id, {}).get("type") == "cli"
+
     def _get_provider_status() -> dict[str, bool]:
         """Derive provider status dynamically from config, using {ID}_API_KEY convention."""
         if not _config:
             return {}
         result: dict[str, bool] = {}
         for provider_id in _config.llm.providers:
-            if provider_id in _NO_KEY_PROVIDERS:
+            if provider_id in _NO_KEY_PROVIDERS or _is_cli_provider_id(provider_id):
                 result[provider_id] = True
             elif provider_id in _custom_provider_ids:
                 # Custom providers are always "configured" — user added them deliberately.
@@ -368,6 +374,7 @@ def create_app() -> FastAPI:
             return {"needs_setup": True}
         # Check if ANY provider has a real key configured (derived dynamically from config)
         provider_statuses = _get_provider_status()
+        # Ollama alone doesn't count as "configured" — but API-key providers and CLI providers do
         keyed_configured = any(
             ok for pid, ok in provider_statuses.items() if pid not in _NO_KEY_PROVIDERS
         )
@@ -728,6 +735,13 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         return {"running": False, "models": []}
+
+    @app.get("/api/cli/status")
+    async def get_cli_status(binary: str = "claude"):
+        """Check if a CLI binary is installed and on PATH."""
+        import shutil
+        available = shutil.which(binary) is not None
+        return {"binary": binary, "available": available}
 
     _DEBUG_MODE_FILE = Path("data/debug_mode")
 

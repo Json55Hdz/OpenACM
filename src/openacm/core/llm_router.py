@@ -122,6 +122,15 @@ class LLMRouter:
                 tool_choice_mode="auto",
                 max_tools_per_call=None,
             )
+        # CLI providers — tool calling via text injection, no native tool schema
+        if self._is_cli_provider():
+            return ProviderProfile(
+                name=provider,
+                needs_tool_enforcement=False,
+                tool_choice_mode="auto",
+                max_tools_per_call=10,
+            )
+
         # Unknown / custom — conservative defaults
         return ProviderProfile(
             name=provider,
@@ -213,6 +222,13 @@ class LLMRouter:
         if provider in self.config.providers:
             return self.config.providers[provider].get("base_url")
         return None
+
+    def _is_cli_provider(self) -> bool:
+        """Return True if the current provider is a CLI-type provider (no API key needed)."""
+        provider = self._current_provider
+        if provider in self.config.providers:
+            return self.config.providers[provider].get("type") == "cli"
+        return False
 
     def _is_custom_provider(self) -> bool:
         """Check if current provider is a custom one (not natively supported by LiteLLM)."""
@@ -623,7 +639,18 @@ class LLMRouter:
             # Use direct httpx for custom providers (LiteLLM mangles URLs)
             _llm_timeout = self.config.timeout  # configurable via llm.timeout in config/default.yaml
 
-            if self._is_custom_provider():
+            if self._is_cli_provider():
+                from openacm.core.cli_provider import CLIProvider
+                provider_cfg = self.config.providers.get(self._current_provider, {})
+                cli = CLIProvider(provider_cfg)
+                result = await asyncio.wait_for(
+                    cli.chat(messages, tools, temperature, max_tokens),
+                    timeout=provider_cfg.get("timeout", 300),
+                )
+                result["elapsed"] = time.time() - start_time
+                result["model"] = model
+
+            elif self._is_custom_provider():
                 result = await asyncio.wait_for(
                     self._custom_chat(
                         messages, tools, temperature, max_tokens,

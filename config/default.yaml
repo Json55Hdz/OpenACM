@@ -51,6 +51,34 @@ llm:
       #   grok-4-1-fast-reasoning / non-reasoning
       #   grok-4.20-multi-agent-0309
       # Use with your API key (XAI_API_KEY in .env)
+    # ── CLI providers (no API key needed — uses installed CLI binaries) ──────
+    # These are AUTO-DETECTED at startup. If the binary is on PATH, the provider
+    # appears automatically in Settings — no YAML edits needed.
+    #
+    # To OVERRIDE defaults (e.g. change timeout or args), uncomment below:
+    #
+    # cli_claude:
+    #   type: "cli"
+    #   binary: "claude"          # must be on PATH (claude --version to verify)
+    #   args: ["--print"]         # --print = non-interactive, read stdin
+    #   default_model: "claude"
+    #   timeout: 300              # seconds before giving up
+    #
+    # cli_gemini:
+    #   type: "cli"
+    #   binary: "gemini"          # Google Gemini CLI
+    #   args: ["--yolo", "-p"]    # -p reads prompt from stdin
+    #   default_model: "gemini"
+    #   timeout: 300
+    #
+    # cli_opencode:
+    #   type: "cli"
+    #   binary: "opencode"
+    #   args: ["run", "--format", "json"]
+    #   input_mode: "arg"          # message as positional arg (opencode doesn't read stdin)
+    #   output_format: "jsonl"     # parse JSON event stream
+    #   default_model: "opencode"
+    #   timeout: 300
 
 security:
   execution_mode: "confirmation"  # confirmation | auto | yolo

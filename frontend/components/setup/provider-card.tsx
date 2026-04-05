@@ -12,6 +12,7 @@ import {
   Server,
   KeyRound,
   AlertCircle,
+  Terminal,
 } from 'lucide-react';
 
 const t = translations.onboarding.providerSetup;
@@ -21,6 +22,10 @@ interface OllamaStatus {
   models: string[];
 }
 
+interface CliStatus {
+  available: boolean;
+}
+
 interface ProviderCardProps {
   provider: ProviderDefinition;
   isConfigured: boolean;
@@ -28,6 +33,7 @@ interface ProviderCardProps {
   keyValue: string;
   mode?: 'onboarding' | 'config';
   ollamaStatus?: OllamaStatus | null;
+  cliStatus?: CliStatus | null;
 }
 
 export function ProviderCard({
@@ -37,17 +43,33 @@ export function ProviderCard({
   keyValue,
   mode = 'onboarding',
   ollamaStatus,
+  cliStatus,
 }: ProviderCardProps) {
   const [expanded, setExpanded] = useState(false);
   const hasPendingKey = keyValue.trim().length > 0;
 
   const isOllama = provider.id === 'ollama';
+  const isCli = provider.isCli === true;
   const ollamaLoaded = ollamaStatus != null;
   const ollamaRunning = ollamaStatus?.running ?? false;
-  const isExpandable = provider.needsKey || (isOllama && ollamaLoaded);
+  const cliLoaded = cliStatus != null;
+  const cliAvailable = cliStatus?.available ?? false;
+  const isExpandable = provider.needsKey || (isOllama && ollamaLoaded) || (isCli && cliLoaded);
 
   const statusBadge = !provider.needsKey ? (
-    isOllama && ollamaLoaded ? (
+    isCli && cliLoaded ? (
+      cliAvailable ? (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">
+          <CheckCircle size={12} />
+          Installed
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full">
+          <AlertCircle size={12} />
+          Not installed
+        </span>
+      )
+    ) : isOllama && ollamaLoaded ? (
       ollamaRunning ? (
         <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">
           <CheckCircle size={12} />
@@ -84,8 +106,8 @@ export function ProviderCard({
 
   const borderColor = hasPendingKey
     ? 'border-amber-500/40'
-    : isOllama && ollamaLoaded && !ollamaRunning
-    ? 'border-red-500/30'
+    : (isOllama && ollamaLoaded && !ollamaRunning) || (isCli && cliLoaded && !cliAvailable)
+    ? 'border-amber-500/20'
     : 'border-slate-700/50';
 
   return (
@@ -146,6 +168,60 @@ export function ProviderCard({
             <ExternalLink size={12} />
             {t.getApiKey}
           </a>
+        </div>
+      )}
+
+      {expanded && isCli && cliLoaded && (
+        <div className="px-4 pb-4 space-y-3 border-t border-slate-700/50 pt-3">
+          {provider.cliDisclaimer && (
+            <div className="flex items-start gap-2 p-2.5 bg-amber-500/5 border border-amber-500/20 rounded-lg">
+              <AlertCircle size={13} className="text-amber-400 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-amber-300/80 leading-relaxed">{provider.cliDisclaimer}</p>
+            </div>
+          )}
+          {cliAvailable ? (
+            <div className="space-y-1">
+              <p className="text-xs text-green-400 font-medium flex items-center gap-1.5">
+                <Terminal size={12} />
+                <code className="font-mono">{provider.cliBinary}</code> is installed and ready.
+              </p>
+              <p className="text-xs text-slate-400">
+                Make sure you are logged in:{' '}
+                <code className="text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded">
+                  {provider.cliBinary} --help
+                </code>
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-400">
+                <code className="text-slate-300">{provider.cliBinary}</code> is not installed or not on PATH.
+              </p>
+              <ol className="text-xs text-slate-400 space-y-1.5 list-decimal list-inside">
+                {provider.installCmd && (
+                  <li>
+                    Install:{' '}
+                    <code className="text-slate-300 bg-slate-900 px-1.5 py-0.5 rounded">
+                      {provider.installCmd}
+                    </code>
+                  </li>
+                )}
+                <li>Log in and verify with <code className="text-slate-300 bg-slate-900 px-1 py-0.5 rounded">{provider.cliBinary} --help</code></li>
+                <li>Refresh this page — it will appear as Installed</li>
+              </ol>
+              {provider.installUrl && (
+                <a
+                  href={provider.installUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  <ExternalLink size={12} />
+                  Installation guide
+                </a>
+              )}
+            </div>
+          )}
         </div>
       )}
 
