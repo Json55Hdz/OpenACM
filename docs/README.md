@@ -27,6 +27,7 @@
 | [Extending OpenACM](./17-extending.md) | Creating tools, skills, custom channels, MCP servers |
 | [Roadmap](./18-roadmap.md) | What's coming next |
 | [Cron Scheduler](./19-cron-scheduler.md) | Background job scheduler — recurring tasks, cron expressions, API |
+| [Token Optimization](./20-token-optimization.md) | Multi-layer token reduction system — local router, semantic tools, output compressor, compaction |
 
 ---
 

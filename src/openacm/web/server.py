@@ -2048,6 +2048,10 @@ class ChannelShell:
 
         _ANSI = _re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
 
+        # Hard cap: stop collecting after this many characters.
+        # Prevents unbounded RAM growth and terminal flooding from commands like dir /s.
+        MAX_CAPTURE_CHARS = 80_000
+
         def strip_ansi(t: str) -> str:
             return _ANSI.sub("", t).replace("\r", "")
 
@@ -2058,10 +2062,20 @@ class ChannelShell:
             last = clean.splitlines()[-1] if "\n" in clean else clean
             return bool(_re.search(r"[>$#]\s*$", last))
 
+        async def _interrupt_pty() -> None:
+            """Send Ctrl+C to the PTY to kill the currently running command."""
+            try:
+                await self.write("\x03")   # ETX = Ctrl+C
+                await asyncio.sleep(0.3)   # give the shell time to print ^C and show prompt
+            except Exception:
+                pass
+
         async with self._cmd_lock:
             queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
             self._output_listeners.append(queue)
             parts: list[str] = []
+            total_chars = 0
+            output_capped = False
 
             try:
                 await self.write(command + "\r\n")
@@ -2071,11 +2085,25 @@ class ChannelShell:
                 while True:
                     remaining = deadline - asyncio.get_event_loop().time()
                     if remaining <= 0:
+                        # Timeout reached — send Ctrl+C so the process dies and the
+                        # terminal stops flooding. Without this the PTY keeps streaming
+                        # output after we stop listening, overlapping with the next command.
+                        await _interrupt_pty()
                         break
                     try:
                         msg = await asyncio.wait_for(queue.get(), timeout=min(remaining, 0.5))
                         if msg.get("type") == "output":
-                            parts.append(msg.get("data", ""))
+                            chunk = msg.get("data", "")
+                            total_chars += len(chunk)
+
+                            if total_chars <= MAX_CAPTURE_CHARS:
+                                parts.append(chunk)
+                            elif not output_capped:
+                                # Hit the cap — interrupt the command immediately
+                                output_capped = True
+                                await _interrupt_pty()
+                                break
+
                             combined = "".join(parts)
                             if looks_like_prompt(combined) and len(strip_ansi(combined).strip()) > len(command) + 2:
                                 prompt_seen = True
@@ -2096,6 +2124,10 @@ class ChannelShell:
             combined = strip_ansi("".join(parts)).strip()
             if combined.lower().startswith(command.strip().lower()):
                 combined = combined[len(command.strip()):].strip()
+
+            if output_capped:
+                combined += f"\n[output truncated — exceeded {MAX_CAPTURE_CHARS:,} chars. Command was interrupted.]"
+
             return combined or "(sin salida)"
 
     async def stop(self) -> None:

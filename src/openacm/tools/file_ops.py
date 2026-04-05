@@ -23,8 +23,8 @@ from openacm.tools.base import tool
             },
             "max_lines": {
                 "type": "integer",
-                "description": "Maximum number of lines to read (default: 200)",
-                "default": 200,
+                "description": "Maximum number of lines to read (default: 500). Pass a higher value or 0 for the full file.",
+                "default": 500,
             },
         },
         "required": ["path"],
@@ -32,7 +32,7 @@ from openacm.tools.base import tool
     risk_level="medium",
     category="file",
 )
-async def read_file(path: str, max_lines: int = 200, **kwargs) -> str:
+async def read_file(path: str, max_lines: int = 500, **kwargs) -> str:
     """Read file contents."""
     try:
         file_path = Path(path).resolve()
@@ -41,18 +41,20 @@ async def read_file(path: str, max_lines: int = 200, **kwargs) -> str:
         if not file_path.is_file():
             return f"Error: Not a file: {path}"
 
-        # Check file size (max 1MB)
+        # Check file size (max 2MB)
         size = file_path.stat().st_size
-        if size > 1_000_000:
-            return f"Error: File too large ({size:,} bytes). Maximum is 1MB."
+        if size > 2_000_000:
+            return f"Error: File too large ({size:,} bytes). Maximum is 2MB."
 
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
 
         total_lines = len(lines)
-        if total_lines > max_lines:
+
+        # max_lines=0 means read the full file
+        if max_lines > 0 and total_lines > max_lines:
             content = "".join(lines[:max_lines])
-            return f"{content}\n\n[... truncated: showing {max_lines} of {total_lines} lines]"
+            return f"{content}\n\n[... truncated: showing {max_lines} of {total_lines} lines. Pass max_lines=0 for full file.]"
 
         return "".join(lines)
     except PermissionError:

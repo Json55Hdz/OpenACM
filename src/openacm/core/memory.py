@@ -18,7 +18,7 @@ from openacm.storage.database import Database
 log = structlog.get_logger()
 
 # Maximum estimated tokens for conversation context
-MAX_CONTEXT_TOKENS = 16000
+MAX_CONTEXT_TOKENS = 22000  # ~66k chars with //3 estimate ≈ same window as before
 
 # Conversation compaction settings
 COMPACT_THRESHOLD = 25       # Trigger compaction after this many messages
@@ -81,19 +81,19 @@ class MemoryManager:
 
     @staticmethod
     def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
-        """Rough token estimate: 1 token ~ 4 characters."""
+        """Rough token estimate: 1 token ~ 3 characters (accounts for Spanish/English mixed content)."""
         total = 0
         for m in messages:
             content = m.get("content", "")
             if isinstance(content, str):
-                total += len(content) // 4
+                total += len(content) // 3
             elif isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
-                        total += len(part.get("text", "")) // 4
+                        total += len(part.get("text", "")) // 3
             if m.get("tool_calls"):
                 try:
-                    total += len(json.dumps(m["tool_calls"])) // 4
+                    total += len(json.dumps(m["tool_calls"])) // 3
                 except (TypeError, ValueError):
                     total += 50  # fallback estimate per tool call
         return total

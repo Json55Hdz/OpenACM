@@ -660,6 +660,61 @@ class LLMRouter:
                 if max_tokens:
                     kwargs["max_tokens"] = max_tokens
 
+                # Anthropic prompt caching: convert system message and mark last
+                # user message as cacheable to reduce costs on repeated context.
+                if self._current_provider == "anthropic" or (
+                    self._current_model and self._current_model.startswith("claude")
+                ):
+                    kwargs["extra_headers"] = {
+                        "anthropic-beta": "prompt-caching-2024-07-31"
+                    }
+                    cached_msgs: list[dict[str, Any]] = []
+                    for msg in kwargs["messages"]:
+                        if msg.get("role") == "system":
+                            raw = msg.get("content", "")
+                            if isinstance(raw, str):
+                                msg = {
+                                    **msg,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": raw,
+                                            "cache_control": {"type": "ephemeral"},
+                                        }
+                                    ],
+                                }
+                        cached_msgs.append(msg)
+                    # Mark the last user message (before any tool interaction) as
+                    # cacheable so stable conversation history is reused from cache.
+                    last_user_idx = None
+                    for idx in range(len(cached_msgs) - 1, -1, -1):
+                        if cached_msgs[idx].get("role") == "user":
+                            last_user_idx = idx
+                            break
+                    if last_user_idx is not None:
+                        u_msg = cached_msgs[last_user_idx]
+                        raw_u = u_msg.get("content", "")
+                        if isinstance(raw_u, str):
+                            cached_msgs[last_user_idx] = {
+                                **u_msg,
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": raw_u,
+                                        "cache_control": {"type": "ephemeral"},
+                                    }
+                                ],
+                            }
+                        elif isinstance(raw_u, list) and raw_u:
+                            # Already a content block list — attach cache_control to last block
+                            new_blocks = list(raw_u)
+                            new_blocks[-1] = {
+                                **new_blocks[-1],
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                            cached_msgs[last_user_idx] = {**u_msg, "content": new_blocks}
+                    kwargs["messages"] = cached_msgs
+
                 response = await asyncio.wait_for(
                     litellm.acompletion(**kwargs),
                     timeout=_llm_timeout,

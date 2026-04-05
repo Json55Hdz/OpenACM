@@ -120,7 +120,7 @@ class ToolRegistry:
         selected: list[dict[str, Any]] = []
         for i, (name, sim) in enumerate(zip(self._tool_names_order, similarities)):
             if sim >= SEMANTIC_TOOL_THRESHOLD or name in ALWAYS_INCLUDE_TOOLS:
-                selected.append(self.tools[name].to_openai_schema())
+                selected.append(self.tools[name].to_slim_schema())
 
         log.debug(
             "Semantic tool selection",
@@ -309,13 +309,13 @@ class ToolRegistry:
         # No specific intent detected in a longer message → general tools as safety net
         if matched_categories == {"general", "mcp"}:
             return [
-                t.to_openai_schema()
+                t.to_slim_schema()
                 for t in self.tools.values()
                 if t.category in ("general", "mcp")
             ]
 
         filtered = [
-            t.to_openai_schema()
+            t.to_slim_schema()
             for t in self.tools.values()
             if t.category in matched_categories or t.category == "general"
         ]

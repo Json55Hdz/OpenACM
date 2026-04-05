@@ -95,9 +95,15 @@ security:
     - "init 0"
     - "init 6"
   blocked_paths:
+    # OS system directories
     - "C:\\Windows\\System32"
     - "/etc/shadow"
     - "/etc/passwd"
+    # OpenACM project — sensitive files and directories
+    - "config/"           # .env, API keys, encryption keys, Google credentials
+    - "data/openacm.db"   # SQLite database (conversation history, encrypted messages)
+    - "data/vectordb"     # ChromaDB vector store
+    - "data/logs"         # application logs (may contain sensitive output)
   max_command_timeout: 0  # 0 = no limit — wait until command finishes naturally
   max_output_length: 50000
 

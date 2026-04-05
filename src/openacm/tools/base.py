@@ -28,6 +28,40 @@ class ToolDefinition:
             },
         }
 
+    def to_slim_schema(self) -> dict[str, Any]:
+        """Compact schema — first sentence of description only, no param descriptions.
+
+        Used for token-efficient tool injection. The LLM already knows which tool
+        to use (semantic selection already ran); slim schemas save 40-70% of schema
+        tokens without losing functional information.
+        """
+        # Keep only the first sentence of the tool description
+        desc = self.description
+        for sep in (".\n", ". ", "\n"):
+            idx = desc.find(sep)
+            if idx != -1 and idx > 20:  # avoid cutting too early
+                desc = desc[: idx + 1]
+                break
+
+        # Strip 'description' fields from parameter properties — save tokens
+        params = self.parameters
+        props = params.get("properties")
+        if props:
+            slim_props = {
+                k: {pk: pv for pk, pv in v.items() if pk != "description"}
+                for k, v in props.items()
+            }
+            params = {**params, "properties": slim_props}
+
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": desc,
+                "parameters": params,
+            },
+        }
+
 
 # Global list to collect tool definitions from modules
 _registered_tools: list[ToolDefinition] = []

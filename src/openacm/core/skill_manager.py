@@ -225,12 +225,15 @@ created: "{datetime.now().isoformat()}"
 
         self.last_matched_skill_names = [s["name"] for s in relevant_skills]
 
-        # Build prompt with only relevant skills
+        # Build prompt — cap each skill at 1200 chars to avoid token bloat.
+        # Skills are instructional context, not full documentation.
+        MAX_SKILL_CHARS = 1200
         prompts = ["\n# Contexto Especializado (solo para esta consulta):"]
         for skill in relevant_skills:
-            prompts.append(
-                f"\n## {skill['name']}\n{skill['content'][:500]}..."
-            )  # Truncar para no saturar
+            content = skill["content"]
+            if len(content) > MAX_SKILL_CHARS:
+                content = content[:MAX_SKILL_CHARS] + "..."
+            prompts.append(f"\n## {skill['name']}\n{content}")
 
         prompts.append("\n[Usa este contexto solo si es relevante para responder]")
 

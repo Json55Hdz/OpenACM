@@ -37,6 +37,7 @@ _ALWAYS_BLOCKED_PATTERNS: list[re.Pattern] = [
 ]
 
 
+
 class SecurityViolation(Exception):
     """Raised when a security policy is violated."""
     pass
@@ -78,6 +79,19 @@ class SecurityPolicy:
                 reason = f"Command blocked: privilege escalation is not allowed"
                 log.warning("Command blocked (always-blocked)", command=command, pattern=pattern.pattern)
                 return False, reason
+
+        # Block any command that references a path listed in blocked_paths.
+        # check_path() only covers file-op tools — this closes the gap for
+        # shell commands (dir, cat, type, find, ls, cp, rm, etc.).
+        # Normalize slashes so that "config/" matches both "config/.env" and "config\.env".
+        if self.config.blocked_paths:
+            cmd_normalized = command.lower().replace("\\", "/")
+            for blocked in self.config.blocked_paths:
+                blocked_normalized = blocked.lower().replace("\\", "/")
+                if blocked_normalized in cmd_normalized:
+                    reason = f"Access to '{blocked}' is not allowed by security policy."
+                    log.warning("Command blocked (blocked path)", command=command, path=blocked)
+                    return False, reason
 
         # Check user-configured blocked patterns
         for pattern in self._compiled_patterns:

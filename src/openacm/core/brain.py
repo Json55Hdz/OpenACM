@@ -13,6 +13,7 @@ import structlog
 
 from openacm.core.config import AssistantConfig
 from openacm.core.local_router import LocalRouter
+from openacm.core.output_compressor import compress as compress_output, compression_summary
 from openacm.core.events import (
     EVENT_MESSAGE_RECEIVED,
     EVENT_MESSAGE_SENT,
@@ -71,6 +72,10 @@ class Brain:
         self._channel_queue: dict[str, tuple] = {}
         self.workflow_tracker = None  # injected by app.py
         self._pending_suggestions: dict[str, object] = {}  # key: "channel_id:user_id"
+        # System prompt cache — skip get_or_create update when prompt hasn't changed
+        self._system_prompt_hash: dict[str, int] = {}  # channel_key → hash
+        # RAG cache — reuse results when the query is semantically similar
+        self._rag_cache: dict[str, tuple[str, list[str]]] = {}  # channel_key → (query, results)
         # Last N agentic loop traces for debugging
         self._traces: list[dict] = []
         self._MAX_TRACES = 20
@@ -311,10 +316,8 @@ class Brain:
 
         return None
 
-    # Messages older than this index (from the end) get their tool results
-    # and reasoning_content aggressively truncated to save tokens.
-    _RECENT_MSG_WINDOW = 8  # keep full detail for the last N messages
-    _OLD_TOOL_RESULT_MAX = 300  # chars to keep for old tool results
+    # Messages older than this index (from the end) get aggressively stripped to save tokens.
+    _RECENT_MSG_WINDOW = 6  # keep full detail for the last N messages
     _OLD_REASONING_MAX = 0  # strip reasoning_content from old messages entirely
 
     def _prepare_messages_for_llm(
@@ -325,12 +328,13 @@ class Brain:
     ) -> list[dict[str, Any]]:
         """Return a copy of *messages* optimized for the LLM call.
 
-        Optimizations applied:
+        Optimizations applied (only to messages older than _RECENT_MSG_WINDOW):
         1. Tool enforcement injection (for weak providers)
-        2. Truncate old tool results — after the LLM already processed them,
-           keeping the full 6K chars is wasteful. Old results are trimmed to ~300 chars.
-        3. Strip reasoning_content from old messages — these can be thousands of
-           tokens from thinking models (Kimi, DeepSeek) and are never useful in history.
+        2. Null old tool results — content → "" (tool_call_id kept for structure).
+           After the LLM processed a tool result, storing its text is wasteful.
+        3. Strip tool_call arguments from old assistant messages — the JSON args blob
+           can be hundreds of tokens; only the function name + id are needed for context.
+        4. Strip reasoning_content from old messages (thinking models produce huge blobs).
 
         The original list is never mutated (memory stays clean).
         """
@@ -338,35 +342,77 @@ class Brain:
         total = len(messages)
         cutoff = max(0, total - self._RECENT_MSG_WINDOW)
 
+        # Index of the last user message — images in older user messages are replaced
+        # with placeholders since the LLM has already "seen" them.
+        last_user_idx = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1
+        )
+
         prepared = []
         for i, msg in enumerate(messages):
             is_old = i > 0 and i < cutoff  # index 0 = system, always keep
 
-            # Check if this message needs any modification
             needs_copy = False
+            role = msg.get("role")
+
+            # 5. Replace base64 image data in user messages that are not the latest.
+            # Once the LLM has processed an image and responded, re-sending the full
+            # base64 blob on every subsequent call wastes thousands of tokens.
+            if (
+                role == "user"
+                and i != last_user_idx
+                and isinstance(msg.get("content"), list)
+            ):
+                has_image = any(
+                    p.get("type") == "image_url" for p in msg["content"] if isinstance(p, dict)
+                )
+                if has_image:
+                    needs_copy = True
 
             if is_old:
-                # Truncate old tool results
-                if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
-                    content = msg["content"]
-                    if len(content) > self._OLD_TOOL_RESULT_MAX:
-                        needs_copy = True
+                # tool messages: null content entirely — tool_call_id is all that's needed
+                if role == "tool" and msg.get("content"):
+                    needs_copy = True
 
-                # Strip reasoning_content from old messages
+                # assistant messages with tool_calls: strip the arguments JSON blob
+                if role == "assistant" and msg.get("tool_calls"):
+                    needs_copy = True
+
+                # strip reasoning_content from old messages
                 if msg.get("reasoning_content"):
                     needs_copy = True
 
             if needs_copy:
                 msg = msg.copy()
-                if msg.get("role") == "tool" and isinstance(msg.get("content"), str):
-                    content = msg["content"]
-                    if len(content) > self._OLD_TOOL_RESULT_MAX:
-                        msg["content"] = (
-                            content[:self._OLD_TOOL_RESULT_MAX]
-                            + f" [...{len(content)} chars truncated]"
-                        )
-                if msg.get("reasoning_content") and self._OLD_REASONING_MAX == 0:
-                    msg.pop("reasoning_content", None)
+
+                # Replace base64 images with lightweight placeholders
+                if role == "user" and isinstance(msg.get("content"), list):
+                    new_parts = []
+                    for part in msg["content"]:
+                        if isinstance(part, dict) and part.get("type") == "image_url":
+                            file_id = part.get("_file_id", "image")
+                            new_parts.append({"type": "text", "text": f"[IMAGE: {file_id} — already processed]"})
+                        else:
+                            new_parts.append(part)
+                    msg["content"] = new_parts
+
+                if is_old:
+                    if role == "tool":
+                        msg["content"] = ""
+
+                    if role == "assistant" and msg.get("tool_calls"):
+                        slim_calls = []
+                        for tc in msg["tool_calls"]:
+                            fn = tc.get("function", {})
+                            slim_calls.append({
+                                "id": tc.get("id", ""),
+                                "type": tc.get("type", "function"),
+                                "function": {"name": fn.get("name", ""), "arguments": "{}"},
+                            })
+                        msg["tool_calls"] = slim_calls
+
+                    if msg.get("reasoning_content"):
+                        msg.pop("reasoning_content", None)
 
             prepared.append(msg)
 
@@ -540,14 +586,14 @@ class Brain:
         # 2. Agregar contexto de la terminal del usuario si hay historial reciente
         if self.terminal_history:
             recent = [
-                e for e in self.terminal_history[-10:] if e.get("command")
+                e for e in self.terminal_history[-5:] if e.get("command")
             ]
             if recent:
                 term_lines = []
                 for e in recent:
                     output = e.get("output", "").strip()
                     if output:
-                        term_lines.append(f"$ {e['command']}\n{output[:500]}")
+                        term_lines.append(f"$ {e['command']}\n{output[:200]}")
                     else:
                         term_lines.append(f"$ {e['command']}")
                 terminal_ctx = "\n".join(term_lines)
@@ -573,48 +619,65 @@ class Brain:
                         "channel_type": channel_type,
                     })
 
-        # 4. Inyectar tools MCP activas en el system prompt
+        # 4. MCP tools — names only (schemas are already sent to the LLM in the tool list)
         if self.tool_registry:
             mcp_tools = [
                 t for t in self.tool_registry.tools.values() if t.category == "mcp"
             ]
             if mcp_tools:
-                # Group by server name (prefix: mcp__{server}__)
                 servers: dict[str, list[str]] = {}
                 for t in mcp_tools:
                     parts = t.name.split("__", 2)
                     server = parts[1] if len(parts) >= 3 else "unknown"
-                    servers.setdefault(server, []).append(
-                        f"  - `{t.name}`: {t.description.split('] ', 1)[-1]}"
-                    )
-                lines = ["## MCP Connected Servers"]
-                lines.append(
-                    "You have access to external tools from MCP servers. "
-                    "Call them directly by their full name when useful."
+                    servers.setdefault(server, []).append(f"`{t.name}`")
+                srv_list = ", ".join(
+                    f"{srv}: {', '.join(names)}" for srv, names in servers.items()
                 )
-                for srv, tool_lines in servers.items():
-                    lines.append(f"\n### {srv}")
-                    lines.extend(tool_lines)
-                system_prompt = f"{system_prompt}\n\n" + "\n".join(lines)
+                system_prompt = f"{system_prompt}\n\nMCP servers connected: {srv_list}"
 
-        # Get or create conversation with system prompt
-        messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
+        # Get or create conversation with system prompt — skip update if unchanged
+        _sp_key = f"{channel_id}:{user_id}"
+        _sp_hash = hash(system_prompt)
+        if _sp_hash != self._system_prompt_hash.get(_sp_key):
+            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
+            self._system_prompt_hash[_sp_key] = _sp_hash
+        else:
+            messages = await self.memory.get_messages(user_id, channel_id)
 
         # RAG: Query long-term memory for relevant context (score-filtered)
+        # Cache: reuse previous results if the new query shares >60% of words with the last one.
         try:
             from openacm.core.rag import _rag_engine
             from openacm.core.events import EVENT_MEMORY_RECALL
 
             if _rag_engine and _rag_engine.is_ready and content:
-                await self.event_bus.emit(EVENT_MEMORY_RECALL, {
-                    "status": "searching",
-                    "channel_id": channel_id,
-                    "channel_type": channel_type,
-                    "count": 0,
-                })
-                scored_results = await _rag_engine.query_with_scores(content, top_k=5)
-                # Only keep relevant results (cosine distance < 1.0) and limit to 2
-                memories = [doc for doc, dist in scored_results if dist < 1.0][:2]
+                _rag_key = f"{channel_id}:{user_id}"
+                _prev_query, _cached_memories = self._rag_cache.get(_rag_key, ("", []))
+
+                # Simple word-overlap similarity to decide whether to reuse cache
+                def _word_overlap(a: str, b: str) -> float:
+                    wa, wb = set(a.lower().split()), set(b.lower().split())
+                    return len(wa & wb) / max(len(wa | wb), 1)
+
+                _use_cache = (
+                    bool(_cached_memories)
+                    and _word_overlap(content, _prev_query) >= 0.6
+                )
+
+                if _use_cache:
+                    memories = _cached_memories
+                    log.debug("RAG cache hit", channel=channel_id)
+                else:
+                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                        "status": "searching",
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                        "count": 0,
+                    })
+                    scored_results = await _rag_engine.query_with_scores(content, top_k=5)
+                    memories = [doc for doc, dist in scored_results if dist < 1.0][:2]
+                    self._rag_cache[_rag_key] = (content, memories)
+
                 if memories:
                     await self.event_bus.emit(EVENT_MEMORY_RECALL, {
                         "status": "found",
@@ -633,8 +696,7 @@ class Brain:
                     }
                     if len(messages) > 1 and messages[0]["role"] == "system":
                         messages = [
-                            m
-                            for m in messages
+                            m for m in messages
                             if not (
                                 m.get("role") == "system"
                                 and "Long-term memory" in str(m.get("content", ""))
@@ -1102,14 +1164,23 @@ class Brain:
                 _tool_trace["truncated"] = len(str(result)) > 6000
                 _iter_trace["tool_calls"].append(_tool_trace)
 
-                # Add tool result to memory (truncated to avoid token bloat)
+                # Compress tool result before adding to LLM context
                 MAX_TOOL_RESULT_CHARS = 6000
-                result_for_memory = str(result)
-                if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
-                    result_for_memory = (
-                        result_for_memory[: MAX_TOOL_RESULT_CHARS - 100]
-                        + f"\n... [truncated, full output was {len(str(result))} chars]"
+                result_for_memory, _orig_len, _comp_len = compress_output(
+                    str(result), tool_name, tool_args if isinstance(tool_args, dict) else {}
+                )
+                if _orig_len != _comp_len:
+                    log.debug(
+                        "Tool output compressed",
+                        tool=tool_name,
+                        summary=compression_summary(_orig_len, _comp_len),
                     )
+                # Hard cap — if still too large after compression, truncate head+tail
+                if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
+                    head = result_for_memory[:3500]
+                    tail = result_for_memory[-1000:]
+                    omitted = len(result_for_memory) - 4500
+                    result_for_memory = head + f"\n... [{omitted} chars omitted] ...\n" + tail
 
                 await self.memory.add_message(
                     user_id,

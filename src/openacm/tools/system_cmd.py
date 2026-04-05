@@ -111,6 +111,12 @@ async def run_command(
     if not _sandbox:
         return "Error: Sandbox not available"
 
+    # Security check — must happen before PTY or subprocess execution.
+    # sandbox.execute() checks policies internally, but the PTY path bypasses it.
+    allowed, reason = _sandbox.policy.check_command(command)
+    if not allowed:
+        return f"Error: {reason}"
+
     _channel_id = kwargs.get("_channel_id", "web")
 
     # GUI / background commands don't need PTY — launch detached as before.
