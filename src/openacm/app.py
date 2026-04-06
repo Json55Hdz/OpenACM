@@ -62,6 +62,7 @@ class OpenACM:
         self._web_server = None
         self._activity_watcher = None
         self._cron_scheduler = None
+        self._swarm_manager = None
         self._shutdown_event = asyncio.Event()
 
     async def run(self):
@@ -277,6 +278,9 @@ class OpenACM:
         from openacm.tools import cron_tool
         self.tool_registry.register_module(cron_tool)
 
+        from openacm.tools import swarm_tool
+        self.tool_registry.register_module(swarm_tool)
+
         # Stitch tool (optional — requiere STITCH_API_KEY en config/.env)
         try:
             from openacm.tools import stitch_tool
@@ -415,6 +419,19 @@ class OpenACM:
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Cron scheduler skipped: {e}")
 
+        try:
+            from openacm.core.swarm_manager import SwarmManager
+            self._swarm_manager = SwarmManager(
+                database=self.database,
+                llm_router=self.llm_router,
+                tool_registry=self.tool_registry,
+                memory=self.memory,
+                event_bus=self.event_bus,
+            )
+            console.print("  [green]✓[/green] Swarm manager ready")
+        except Exception as e:
+            console.print(f"  [yellow]~[/yellow] Swarm manager skipped: {e}")
+
     async def _init_web(self):
         """Start the web dashboard."""
         try:
@@ -430,6 +447,14 @@ class OpenACM:
                 except Exception:
                     pass
 
+            # Give swarm tool access to the swarm manager
+            if self._swarm_manager:
+                try:
+                    from openacm.tools import swarm_tool as _st
+                    _st._swarm_manager = self._swarm_manager
+                except Exception:
+                    pass
+
             self._web_server = await create_web_server(
                 config=self.config,
                 brain=self.brain,
@@ -441,6 +466,7 @@ class OpenACM:
                 mcp_manager=self._mcp_manager,
                 activity_watcher=self._activity_watcher,
                 cron_scheduler=self._cron_scheduler,
+                swarm_manager=self._swarm_manager,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "

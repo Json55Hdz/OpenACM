@@ -54,6 +54,7 @@ _agent_bot_manager = None
 _mcp_manager = None
 _activity_watcher = None
 _cron_scheduler = None
+_swarm_manager = None
 _custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
 
 
@@ -1889,6 +1890,153 @@ def create_app() -> FastAPI:
             "next_job_at": next_job.next_run if next_job else None,
         }
 
+    # ─── Swarms ───────────────────────────────────────────────
+
+    @app.get("/api/swarms")
+    async def list_swarms():
+        if not _database:
+            return []
+        return await _database.list_swarms()
+
+    @app.post("/api/swarms")
+    async def create_swarm(request: Request):
+        """Create a swarm from multipart form data (name, goal, global_model, files)."""
+        if not _swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        form = await request.form()
+        name = str(form.get("name", "New Swarm"))
+        goal = str(form.get("goal", ""))
+        global_model = str(form.get("global_model", "")) or None
+
+        if not goal.strip():
+            raise HTTPException(400, "goal is required")
+
+        # Collect uploaded files
+        file_contents: list[dict] = []
+        for field_name, field_value in form.multi_items():
+            if hasattr(field_value, "read"):
+                raw = await field_value.read()
+                try:
+                    content = raw.decode("utf-8", errors="replace")
+                except Exception:
+                    content = "(binary file — skipped)"
+                file_contents.append({"filename": field_value.filename or field_name, "content": content})
+
+        swarm = await _swarm_manager.create_swarm(
+            name=name,
+            goal=goal,
+            file_contents=file_contents or None,
+            global_model=global_model,
+        )
+        return swarm
+
+    @app.get("/api/swarms/{swarm_id}")
+    async def get_swarm(swarm_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        swarm = await _database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+        workers = await _database.get_swarm_workers(swarm_id)
+        tasks = await _database.get_swarm_tasks(swarm_id)
+        return {**swarm, "workers": workers, "tasks": tasks}
+
+    @app.delete("/api/swarms/{swarm_id}")
+    async def delete_swarm(swarm_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        ok = await _database.delete_swarm(swarm_id)
+        if not ok:
+            raise HTTPException(404, "Swarm not found")
+        return {"ok": True}
+
+    @app.post("/api/swarms/{swarm_id}/plan")
+    async def plan_swarm(swarm_id: int):
+        if not _swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        swarm = await _database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+        result = await _swarm_manager.plan_swarm(swarm_id)
+        workers = await _database.get_swarm_workers(swarm_id)
+        tasks = await _database.get_swarm_tasks(swarm_id)
+        return {**result, "workers": workers, "tasks": tasks}
+
+    @app.post("/api/swarms/{swarm_id}/start")
+    async def start_swarm(swarm_id: int):
+        if not _swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        swarm = await _database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+        if swarm["status"] not in ("planned", "paused"):
+            raise HTTPException(400, f"Cannot start swarm in '{swarm['status']}' status. Plan it first.")
+        await _swarm_manager.start_swarm(swarm_id)
+        return {"ok": True, "status": "running"}
+
+    @app.post("/api/swarms/{swarm_id}/stop")
+    async def stop_swarm(swarm_id: int):
+        if not _swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        await _swarm_manager.stop_swarm(swarm_id)
+        return {"ok": True, "status": "paused"}
+
+    @app.put("/api/swarms/{swarm_id}/workers/{worker_id}")
+    async def update_swarm_worker(swarm_id: int, worker_id: int, request: Request):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        body = await request.json()
+        allowed = {"name", "role", "description", "system_prompt", "model", "allowed_tools"}
+        updates = {k: v for k, v in body.items() if k in allowed}
+        if not updates:
+            raise HTTPException(400, "No valid fields to update")
+        await _database.update_swarm_worker(worker_id, **updates)
+        workers = await _database.get_swarm_workers(swarm_id)
+        return next((w for w in workers if w["id"] == worker_id), {})
+
+    @app.get("/api/swarms/{swarm_id}/messages")
+    async def get_swarm_messages(swarm_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        return await _database.get_swarm_messages(swarm_id)
+
+    @app.post("/api/swarms/{swarm_id}/message")
+    async def post_swarm_message(swarm_id: int, request: Request):
+        """Send a user message to the swarm (feedback, new instructions, etc.)."""
+        if not _swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        body = await request.json()
+        message = str(body.get("message", "")).strip()
+        if not message:
+            raise HTTPException(400, "message is required")
+        result = await _swarm_manager.send_user_message(swarm_id, message)
+        return {"ok": True, "result": result}
+
+    @app.websocket("/ws/swarms/{swarm_id}")
+    async def ws_swarm(websocket: WebSocket, swarm_id: int):
+        """Real-time updates for a specific swarm."""
+        if not _verify_ws_token(websocket):
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+        await websocket.accept()
+        try:
+            while True:
+                swarm = await _database.get_swarm(swarm_id) if _database else None
+                workers = await _database.get_swarm_workers(swarm_id) if _database else []
+                tasks = await _database.get_swarm_tasks(swarm_id) if _database else []
+                messages = await _database.get_swarm_messages(swarm_id) if _database else []
+                await websocket.send_json({
+                    "swarm": swarm,
+                    "workers": workers,
+                    "tasks": tasks,
+                    "messages": messages,
+                })
+                await asyncio.sleep(2)
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
@@ -2190,15 +2338,17 @@ async def create_web_server(
     mcp_manager=None,
     activity_watcher=None,
     cron_scheduler=None,
+    swarm_manager=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler, _swarm_manager
     _brain = brain
     _database = database
     _event_bus = event_bus
     _tool_registry = tool_registry
     _activity_watcher = activity_watcher
     _cron_scheduler = cron_scheduler
+    _swarm_manager = swarm_manager
     _config = config
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
@@ -2235,6 +2385,24 @@ async def create_web_server(
         EVENT_ROUTER_LEARNED,
         EVENT_TOOL_VALIDATION,
         "memory.recall",
+        # Swarm events — emitted by SwarmManager for every state change
+        "swarm:updated",
+        "swarm:worker_status",
+        "swarm:task_updated",
+        "swarm:message",
+        "swarm:running",
+        "swarm:paused_mid_run",
+        "swarm:stalled",
+        "swarm:round",
+        "swarm:worker_thinking",
+        "swarm:worker_done",
+        "swarm:worker_error",
+        "swarm:plan_ready",
+        "swarm:synthesizing",
+        "swarm:completed",
+        "swarm:user_message",
+        "swarm:task_created",
+        "swarm:orchestrator_reacted",
     ]:
         event_bus.on(evt, on_event)
 

@@ -559,15 +559,18 @@ class LLMRouter:
         stream: bool = False,
         max_retries: int = 3,
         tool_choice: str | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """
         Send a chat completion request with automatic retries on server errors.
 
         Returns dict with: content, tool_calls, usage (tokens), model, etc.
         ``tool_choice`` overrides the provider-profile default when set.
+        ``model_override`` bypasses the current provider/model and uses the given
+        LiteLLM model string directly (e.g. ``"anthropic/claude-opus-4-6"``).
         """
-        model = self._build_model_string()
-        api_base = self._get_api_base()
+        model = model_override or self._build_model_string()
+        api_base = None if model_override else self._get_api_base()
 
         start_time = time.time()
         self._total_requests += 1
@@ -636,8 +639,11 @@ class LLMRouter:
         messages = self._normalize_messages(messages)
 
         try:
-            # Use direct httpx for custom providers (LiteLLM mangles URLs)
-            _llm_timeout = self.config.timeout  # configurable via llm.timeout in config/default.yaml
+            # Per-provider timeout overrides the global default.
+            # Set in config: llm.providers.<id>.timeout (seconds), 0 = no timeout.
+            _provider_cfg = self.config.providers.get(self._current_provider, {})
+            _raw_timeout = _provider_cfg.get("timeout", self.config.timeout)
+            _llm_timeout: float | None = float(_raw_timeout) if _raw_timeout else None
 
             if self._is_cli_provider():
                 from openacm.core.cli_provider import CLIProvider

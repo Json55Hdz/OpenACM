@@ -47,6 +47,7 @@ export const translations = {
     config: 'Configuration',
     routines: 'Mis Rutinas',
     cron: 'Cron Scheduler',
+    swarms: 'Swarms',
     logout: 'Log out',
     menu: 'Menu',
   },

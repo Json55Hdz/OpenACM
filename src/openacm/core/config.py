@@ -32,7 +32,7 @@ class LLMConfig(BaseModel):
 
     default_provider: str = "ollama"
     providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    timeout: float = 300.0  # seconds to wait for any LLM response before timing out
+    timeout: float = 0  # seconds to wait for any LLM response; 0 = no timeout
 
 
 class SecurityConfig(BaseModel):

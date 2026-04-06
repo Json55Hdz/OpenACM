@@ -53,7 +53,7 @@ async def create_agent(
     if not brain or not hasattr(brain, "memory") or not brain.memory:
         return "Error: database not available"
 
-    db = brain.memory._database
+    db = brain.memory.database
     if not db:
         return "Error: database not available"
 

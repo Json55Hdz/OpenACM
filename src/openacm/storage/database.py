@@ -159,7 +159,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 6
+    _SCHEMA_VERSION = 7
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -358,6 +358,67 @@ class Database:
                 );
             """)
             log.info("Migration 4: created app_activities and detected_routines tables")
+
+        # ── Migration 7: swarm tables ──────────────────────────────────────────
+        if current < 7:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS swarms (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name            TEXT    NOT NULL,
+                    goal            TEXT    NOT NULL,
+                    status          TEXT    NOT NULL DEFAULT 'draft',
+                    global_model    TEXT,
+                    workspace_path  TEXT    NOT NULL DEFAULT '',
+                    shared_context  TEXT    NOT NULL DEFAULT '',
+                    context_files   TEXT    NOT NULL DEFAULT '[]',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_swarms_status ON swarms(status);
+
+                CREATE TABLE IF NOT EXISTS swarm_workers (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    swarm_id        INTEGER NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+                    name            TEXT    NOT NULL,
+                    role            TEXT    NOT NULL DEFAULT 'worker',
+                    description     TEXT    NOT NULL DEFAULT '',
+                    system_prompt   TEXT    NOT NULL,
+                    model           TEXT,
+                    allowed_tools   TEXT    NOT NULL DEFAULT 'all',
+                    status          TEXT    NOT NULL DEFAULT 'idle',
+                    workspace_path  TEXT    NOT NULL DEFAULT '',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_swarm_workers_swarm ON swarm_workers(swarm_id);
+
+                CREATE TABLE IF NOT EXISTS swarm_tasks (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    swarm_id        INTEGER NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+                    worker_id       INTEGER REFERENCES swarm_workers(id),
+                    title           TEXT    NOT NULL,
+                    description     TEXT    NOT NULL,
+                    depends_on      TEXT    NOT NULL DEFAULT '[]',
+                    status          TEXT    NOT NULL DEFAULT 'pending',
+                    result          TEXT,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_swarm_tasks_swarm  ON swarm_tasks(swarm_id);
+                CREATE INDEX IF NOT EXISTS idx_swarm_tasks_worker ON swarm_tasks(worker_id);
+
+                CREATE TABLE IF NOT EXISTS swarm_messages (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    swarm_id        INTEGER NOT NULL REFERENCES swarms(id) ON DELETE CASCADE,
+                    from_worker_id  INTEGER REFERENCES swarm_workers(id),
+                    to_worker_id    INTEGER REFERENCES swarm_workers(id),
+                    message_type    TEXT    NOT NULL DEFAULT 'message',
+                    content         TEXT    NOT NULL,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_swarm_msgs_swarm ON swarm_messages(swarm_id);
+                CREATE INDEX IF NOT EXISTS idx_swarm_msgs_to     ON swarm_messages(to_worker_id);
+            """)
+            log.info("Migration 7: created swarm tables")
 
         # Save new version
         await self._db.execute(
@@ -1413,6 +1474,221 @@ class Database:
                 "JOIN cron_jobs j ON j.id = r.job_id "
                 "ORDER BY r.id DESC LIMIT ?",
                 (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ─── Swarms ───────────────────────────────────────────────────────────────
+
+    async def create_swarm(
+        self, name: str, goal: str, global_model: str | None = None
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO swarms (name, goal, global_model) VALUES (?, ?, ?)",
+            (name, goal, global_model),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_swarm(self, swarm_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM swarms WHERE id = ?", (swarm_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_swarms(self) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT s.*, "
+            "(SELECT COUNT(*) FROM swarm_workers w WHERE w.swarm_id = s.id) as worker_count, "
+            "(SELECT COUNT(*) FROM swarm_tasks t WHERE t.swarm_id = s.id) as task_count "
+            "FROM swarms s ORDER BY s.created_at DESC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_swarm(self, swarm_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"name", "goal", "status", "global_model", "workspace_path",
+                   "shared_context", "context_files"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(swarm_id)
+        await self._db.execute(
+            f"UPDATE swarms SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_swarm(self, swarm_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM swarms WHERE id = ?", (swarm_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Swarm Workers ────────────────────────────────────────────────────────
+
+    async def create_swarm_worker(
+        self,
+        swarm_id: int,
+        name: str,
+        role: str,
+        description: str,
+        system_prompt: str,
+        model: str | None,
+        allowed_tools: str,
+        workspace_path: str,
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO swarm_workers "
+            "(swarm_id, name, role, description, system_prompt, model, allowed_tools, workspace_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (swarm_id, name, role, description, system_prompt, model, allowed_tools, workspace_path),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_swarm_workers(self, swarm_id: int) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM swarm_workers WHERE swarm_id = ? ORDER BY id",
+            (swarm_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_swarm_worker(self, worker_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"name", "role", "description", "system_prompt", "model",
+                   "allowed_tools", "status", "workspace_path"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        params.append(worker_id)
+        await self._db.execute(
+            f"UPDATE swarm_workers SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    # ─── Swarm Tasks ──────────────────────────────────────────────────────────
+
+    async def create_swarm_task(
+        self,
+        swarm_id: int,
+        worker_id: int | None,
+        title: str,
+        description: str,
+        depends_on: str = "[]",
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO swarm_tasks (swarm_id, worker_id, title, description, depends_on) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (swarm_id, worker_id, title, description, depends_on),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_swarm_tasks(self, swarm_id: int) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT t.*, w.name as worker_name "
+            "FROM swarm_tasks t "
+            "LEFT JOIN swarm_workers w ON w.id = t.worker_id "
+            "WHERE t.swarm_id = ? ORDER BY t.id",
+            (swarm_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_swarm_task(self, task_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"worker_id", "title", "description", "depends_on", "status", "result"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(task_id)
+        await self._db.execute(
+            f"UPDATE swarm_tasks SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    # ─── Swarm Messages ───────────────────────────────────────────────────────
+
+    async def add_swarm_message(
+        self,
+        swarm_id: int,
+        from_worker_id: int | None,
+        to_worker_id: int | None,
+        content: str,
+        message_type: str = "message",
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO swarm_messages "
+            "(swarm_id, from_worker_id, to_worker_id, content, message_type) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (swarm_id, from_worker_id, to_worker_id, content, message_type),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_swarm_messages(
+        self,
+        swarm_id: int,
+        to_worker_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get messages for a swarm. If to_worker_id given, returns direct + broadcasts."""
+        if not self._db:
+            return []
+        if to_worker_id is not None:
+            cursor = await self._db.execute(
+                "SELECT m.*, fw.name as from_worker_name "
+                "FROM swarm_messages m "
+                "LEFT JOIN swarm_workers fw ON fw.id = m.from_worker_id "
+                "WHERE m.swarm_id = ? AND (m.to_worker_id = ? OR m.to_worker_id IS NULL) "
+                "ORDER BY m.id",
+                (swarm_id, to_worker_id),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT m.*, fw.name as from_worker_name, tw.name as to_worker_name "
+                "FROM swarm_messages m "
+                "LEFT JOIN swarm_workers fw ON fw.id = m.from_worker_id "
+                "LEFT JOIN swarm_workers tw ON tw.id = m.to_worker_id "
+                "WHERE m.swarm_id = ? ORDER BY m.id",
+                (swarm_id,),
             )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]

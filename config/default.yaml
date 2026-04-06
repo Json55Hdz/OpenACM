@@ -22,6 +22,8 @@ assistant:
 
 llm:
   default_provider: "opencode_go"
+  timeout: 0       # global LLM response timeout in seconds; 0 = no timeout (wait forever)
+                   # override per-provider: add timeout: <seconds> under any provider entry
   providers:
     ollama:
       base_url: "http://localhost:11434"
