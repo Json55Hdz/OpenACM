@@ -16,6 +16,7 @@ import {
   Loader2,
   Plug,
   Bug,
+  Smartphone,
 } from 'lucide-react';
 import { useDashboardStore } from '@/stores/dashboard-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -39,6 +40,7 @@ const navItems = [
   { href: '/mcp', label: t.mcp, icon: Plug },
   { href: '/debug', label: t.debug, icon: Bug },
   { href: '/config', label: t.config, icon: Settings },
+  { href: '/remote/host', label: 'Remote Control', icon: Smartphone, external: true },
 ];
 
 export function Sidebar() {
@@ -96,22 +98,37 @@ export function Sidebar() {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+            const isExternal = (item as any).external;
+            const classes = cn(
+              "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
+              isActive 
+                ? "bg-blue-600/20 text-blue-400 border border-blue-600/30" 
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            );
             
             return (
               <li key={item.href}>
-                <Link
-                  href={item.href}
-                  onClick={() => setIsOpen(false)}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
-                    isActive 
-                      ? "bg-blue-600/20 text-blue-400 border border-blue-600/30" 
-                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  )}
-                >
-                  <Icon size={20} />
-                  <span className="font-medium">{item.label}</span>
-                </Link>
+                {isExternal ? (
+                  <a
+                    href={`${item.href}?token=${token || ''}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setIsOpen(false)}
+                    className={classes}
+                  >
+                    <Icon size={20} />
+                    <span className="font-medium">{item.label}</span>
+                  </a>
+                ) : (
+                  <Link
+                    href={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className={classes}
+                  >
+                    <Icon size={20} />
+                    <span className="font-medium">{item.label}</span>
+                  </Link>
+                )}
               </li>
             );
           })}

@@ -59,6 +59,10 @@ dependencies = [
 
     # MCP
     "mcp>=1.0",
+
+    # Remote Control
+    "pyautogui>=0.9",
+    "pyngrok>=7.0",
 ]
 
 [project.optional-dependencies]

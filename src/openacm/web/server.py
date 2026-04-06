@@ -1068,6 +1068,244 @@ def create_app() -> FastAPI:
         finally:
             _ws_clients.discard(websocket)
 
+    # ─── Remote Control ───────────────────────────────────────
+
+    # Signaling state for WebRTC
+    _remote_host_ws: list[WebSocket] = []   # only one host at a time
+    _remote_clients: dict[str, WebSocket] = {}  # clientId -> ws
+
+    @app.get("/remote/host", response_class=HTMLResponse)
+    async def remote_host_page():
+        """Serve the Remote Host page (PC side — captures screen)."""
+        host_file = static_dir / "remote" / "host.html"
+        if host_file.exists():
+            return FileResponse(str(host_file))
+        return HTMLResponse("<h1>Remote host page not found</h1>")
+
+    @app.get("/remote", response_class=HTMLResponse)
+    async def remote_client_page():
+        """Serve the Remote Client page (mobile side — viewer + control)."""
+        client_file = static_dir / "remote" / "index.html"
+        if client_file.exists():
+            return FileResponse(str(client_file))
+        return HTMLResponse("<h1>Remote client page not found</h1>")
+
+    @app.websocket("/ws/remote")
+    async def ws_remote_signaling(websocket: WebSocket):
+        """WebSocket for WebRTC signaling between host and client(s)."""
+        if not _verify_ws_token(websocket):
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+        await websocket.accept()
+
+        role = websocket.query_params.get("role", "client")
+        client_id = secrets.token_hex(8)
+
+        try:
+            if role == "host":
+                _remote_host_ws.clear()
+                _remote_host_ws.append(websocket)
+                log.info("Remote host connected")
+
+                while True:
+                    data = await websocket.receive_json()
+                    msg_type = data.get("type", "")
+
+                    if msg_type == "offer":
+                        # Forward offer to specific client
+                        target = data.get("targetId")
+                        cws = _remote_clients.get(target)
+                        if cws:
+                            try:
+                                await cws.send_json({
+                                    "type": "offer",
+                                    "sdp": data.get("sdp"),
+                                })
+                            except Exception:
+                                pass
+
+                    elif msg_type == "ice-candidate":
+                        target = data.get("targetId")
+                        cws = _remote_clients.get(target)
+                        if cws:
+                            try:
+                                await cws.send_json({
+                                    "type": "ice-candidate",
+                                    "candidate": data.get("candidate"),
+                                })
+                            except Exception:
+                                pass
+
+            else:  # client
+                _remote_clients[client_id] = websocket
+                log.info("Remote client connected", client_id=client_id)
+
+                # Notify host that a new client joined
+                if _remote_host_ws:
+                    try:
+                        await _remote_host_ws[0].send_json({
+                            "type": "client-join",
+                            "clientId": client_id,
+                        })
+                    except Exception:
+                        pass
+
+                while True:
+                    data = await websocket.receive_json()
+                    msg_type = data.get("type", "")
+
+                    if msg_type == "answer":
+                        if _remote_host_ws:
+                            try:
+                                await _remote_host_ws[0].send_json({
+                                    "type": "answer",
+                                    "sdp": data.get("sdp"),
+                                    "clientId": client_id,
+                                })
+                            except Exception:
+                                pass
+
+                    elif msg_type == "ice-candidate":
+                        if _remote_host_ws:
+                            try:
+                                await _remote_host_ws[0].send_json({
+                                    "type": "ice-candidate",
+                                    "candidate": data.get("candidate"),
+                                    "clientId": client_id,
+                                })
+                            except Exception:
+                                pass
+
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            log.error("Remote signaling error", error=str(e))
+        finally:
+            if role == "host":
+                if websocket in _remote_host_ws:
+                    _remote_host_ws.remove(websocket)
+                log.info("Remote host disconnected")
+            else:
+                _remote_clients.pop(client_id, None)
+                # Notify host
+                if _remote_host_ws:
+                    try:
+                        await _remote_host_ws[0].send_json({
+                            "type": "client-leave",
+                            "clientId": client_id,
+                        })
+                    except Exception:
+                        pass
+                log.info("Remote client disconnected", client_id=client_id)
+
+    @app.websocket("/ws/remote-control")
+    async def ws_remote_control(websocket: WebSocket):
+        """WebSocket for receiving control commands from the mobile client."""
+        if not _verify_ws_token(websocket):
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+        await websocket.accept()
+
+        from openacm.web.remote_control import dispatch_command
+
+        log.info("Remote control session started")
+        try:
+            while True:
+                data = await websocket.receive_json()
+                result = await dispatch_command(data)
+                try:
+                    await websocket.send_json(result)
+                except Exception:
+                    pass
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            log.error("Remote control error", error=str(e))
+        finally:
+            log.info("Remote control session ended")
+
+    # ─── API: Remote Control Status ────────────────────────────
+
+    @app.get("/api/remote/status")
+    async def get_remote_status():
+        """Get current remote control session status."""
+        return {
+            "host_connected": len(_remote_host_ws) > 0,
+            "clients_connected": len(_remote_clients),
+            "client_ids": list(_remote_clients.keys()),
+        }
+
+    @app.get("/api/remote/url")
+    async def get_remote_url(token: str = ""):
+        """Get or create the public tunnel URL."""
+        try:
+            import openacm.tools.remote_tool as rt
+            
+            # Start tunnel if not running
+            port = _config.web.port if _config else 47821
+            if not rt._ngrok_tunnel:
+                await rt._start_session(port, token, use_tunnel=True, auto_open=False)
+                
+            if rt._ngrok_tunnel:
+                return {"url": f"{rt._ngrok_tunnel.public_url}/remote?token={token}"}
+                
+            # Fallback to local network IP
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                ip = "localhost"
+            finally:
+                s.close()
+                
+            return {"url": f"http://{ip}:{port}/remote?token={token}"}
+        except Exception as e:
+            port = _config.web.port if _config else 47821
+            return {"url": f"http://localhost:{port}/remote?token={token}", "error": str(e)}
+
+    @app.get("/api/remote/video_feed")
+    async def get_video_feed(token: str = ""):
+        """Stream screen capture as MJPEG (headlessly, no host page required)."""
+        if _dashboard_token and token != _dashboard_token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+            
+        import mss
+        from PIL import Image
+        import io
+        
+        async def frame_generator():
+            try:
+                import openacm.web.remote_control as rc
+                with mss.mss() as sct:
+                    while True:
+                        idx = rc.get_current_monitor_index()
+                        monitor = sct.monitors[idx]
+                        sct_img = sct.grab(monitor)
+                        img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                        
+                        # Resize to 1280p width to save bandwidth for mobile
+                        if img.width > 1280:
+                            img = img.resize((1280, int(img.height * (1280 / img.width))), Image.Resampling.BILINEAR)
+                            
+                        buf = io.BytesIO()
+                        img.save(buf, format="JPEG", quality=65)
+                        frame = buf.getvalue()
+                        
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n'
+                               b'Content-Length: ' + str(len(frame)).encode() + b'\r\n\r\n' + frame + b'\r\n')
+                        
+                        await asyncio.sleep(0.06) # ~15 FPS
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log.error("Video feed error", error=str(e))
+                
+        from fastapi.responses import StreamingResponse
+        return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
+
     # ─── API: Terminal ─────────────────────────────────────────
 
     @app.get("/api/terminal/history")
