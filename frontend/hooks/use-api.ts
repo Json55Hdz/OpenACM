@@ -69,6 +69,25 @@ export function useStats() {
   });
 }
 
+export function useDetailedStats(dateFrom?: string, dateTo?: string) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['detailed-stats', dateFrom, dateTo],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      const qs = params.toString();
+      const data = await fetchAPI(`/api/stats/detailed${qs ? `?${qs}` : ''}`);
+      return data;
+    },
+    enabled: isAuthenticated,
+    refetchInterval: 30000,
+  });
+}
+
 export function useActivityHistory() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();

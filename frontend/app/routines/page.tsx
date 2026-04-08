@@ -18,6 +18,8 @@ import {
   X,
   ShieldCheck,
   ShieldOff,
+  Plus,
+  Settings2,
 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
@@ -27,6 +29,7 @@ import { useAuthStore } from '@/stores/auth-store';
 interface AppInfo {
   app_name: string;
   process_name: string;
+  exe_path?: string;
 }
 
 interface TriggerData {
@@ -47,6 +50,7 @@ interface Routine {
   last_run: string | null;
   run_count: number;
   occurrence_count: number;
+  cron_job_id: number | null;
   created_at: string;
 }
 
@@ -93,7 +97,7 @@ function formatDate(iso: string | null): string {
   } catch { return 'Never'; }
 }
 
-const DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const DAY_LABELS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 
 const STATUS_COLORS: Record<string, string> = {
   pending:  'bg-yellow-500/15 text-yellow-400 border-yellow-500/30',
@@ -155,14 +159,233 @@ function TriggerBadge({ routine }: { routine: Routine }) {
   );
 }
 
+// ─── Edit Routine Modal ───────────────────────────────────
+
+function EditRoutineModal({
+  routine,
+  onClose,
+  onSaved,
+  authHeader,
+}: {
+  routine: Routine;
+  onClose: () => void;
+  onSaved: (updated: Routine) => void;
+  authHeader: Record<string, string>;
+}) {
+  const initialApps = parseJson<AppInfo[]>(routine.apps, []);
+  const initialTrigger = parseJson<TriggerData>(routine.trigger_data, {});
+
+  const [apps, setApps] = useState<AppInfo[]>(initialApps);
+  const [triggerType, setTriggerType] = useState<Routine['trigger_type']>(routine.trigger_type);
+  const [hour, setHour] = useState(initialTrigger.hour ?? 9);
+  const [minute, setMinute] = useState(initialTrigger.minute ?? 0);
+  const [days, setDays] = useState<number[]>(initialTrigger.days_of_week ?? [0, 1, 2, 3, 4]);
+  const [newAppName, setNewAppName] = useState('');
+  const [newProcName, setNewProcName] = useState('');
+  const [newExePath, setNewExePath] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const addApp = () => {
+    const name = newAppName.trim();
+    if (!name) return;
+    setApps(p => [...p, {
+      app_name: name,
+      process_name: newProcName.trim() || name.toLowerCase(),
+      exe_path: newExePath.trim(),
+    }]);
+    setNewAppName('');
+    setNewProcName('');
+    setNewExePath('');
+  };
+
+  const toggleDay = (d: number) =>
+    setDays(p => p.includes(d) ? p.filter(x => x !== d) : [...p, d].sort((a, b) => a - b));
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    const trigger_data = triggerType === 'time_based'
+      ? { hour, minute, days_of_week: days }
+      : {};
+    try {
+      const res = await fetch(`/api/routines/${routine.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeader },
+        body: JSON.stringify({ apps, trigger_type: triggerType, trigger_data }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      onSaved(await res.json());
+      onClose();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg p-6 space-y-5 overflow-y-auto max-h-[90vh]">
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Settings2 size={18} className="text-blue-400" /> Edit Routine
+        </h2>
+
+        {/* Apps list */}
+        <div>
+          <label className="block text-xs text-slate-400 mb-2">Apps</label>
+          <div className="space-y-2 mb-3">
+            {apps.map((app, i) => (
+              <div key={i} className="bg-slate-800 border border-slate-700 rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 text-sm text-slate-200 font-medium truncate">{app.app_name}</span>
+                  <span className="text-xs text-slate-500">{app.process_name}</span>
+                  <button onClick={() => setApps(p => p.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-0.5">
+                    <X size={12} />
+                  </button>
+                </div>
+                <input
+                  className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-blue-500"
+                  placeholder="Exe path (optional, e.g. C:\Program Files\App\app.exe)"
+                  value={app.exe_path || ''}
+                  onChange={e => setApps(p => p.map((a, idx) => idx === i ? { ...a, exe_path: e.target.value } : a))}
+                />
+              </div>
+            ))}
+            {apps.length === 0 && <p className="text-xs text-slate-500 italic">No apps — add one below</p>}
+          </div>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                placeholder="App name (e.g. Chrome)"
+                value={newAppName}
+                onChange={e => setNewAppName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addApp()}
+              />
+              <input
+                className="w-28 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                placeholder="process"
+                value={newProcName}
+                onChange={e => setNewProcName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addApp()}
+              />
+              <button
+                onClick={addApp}
+                className="px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-600/30 text-blue-400 hover:bg-blue-600/30 transition-colors"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+            <input
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              placeholder="Exe path for new app (optional)"
+              value={newExePath}
+              onChange={e => setNewExePath(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {/* Trigger type */}
+        <div>
+          <label className="block text-xs text-slate-400 mb-2">Trigger type</label>
+          <div className="flex gap-2">
+            {(['manual', 'time_based'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTriggerType(t)}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                  triggerType === t
+                    ? 'bg-blue-600/20 border-blue-600/30 text-blue-400'
+                    : 'border-slate-700 text-slate-400 hover:text-slate-300'
+                }`}
+              >
+                {t === 'manual' ? 'Manual' : 'Time-based (auto)'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Time config */}
+        {triggerType === 'time_based' && (
+          <div className="space-y-3 bg-slate-800/50 border border-slate-700 rounded-xl p-4">
+            <div className="flex gap-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Hour (0–23)</label>
+                <input
+                  type="number" min={0} max={23}
+                  className="w-20 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                  value={hour}
+                  onChange={e => setHour(Math.min(23, Math.max(0, Number(e.target.value))))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">Minute</label>
+                <input
+                  type="number" min={0} max={59}
+                  className="w-20 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+                  value={minute}
+                  onChange={e => setMinute(Math.min(59, Math.max(0, Number(e.target.value))))}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-2">Days</label>
+              <div className="flex gap-1.5">
+                {DAY_LABELS.map((label, i) => (
+                  <button
+                    key={i}
+                    onClick={() => toggleDay(i)}
+                    className={`w-9 h-9 rounded-lg text-xs font-semibold transition-colors ${
+                      days.includes(i)
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-slate-500">
+              Activating this routine will create a cron job that runs it automatically at {String(hour).padStart(2, '0')}:{String(minute).padStart(2, '0')}.
+            </p>
+          </div>
+        )}
+
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 text-sm transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex-1 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-60 transition-colors"
+          >
+            {saving ? 'Saving...' : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Routine Card ─────────────────────────────────────────
+
 function RoutineCard({
-  routine, onRun, onToggle, onDelete, onRename,
+  routine, onRun, onToggle, onDelete, onRename, onEdit,
 }: {
   routine: Routine;
   onRun: (id: number) => Promise<void>;
   onToggle: (id: number, status: string) => Promise<void>;
   onDelete: (id: number) => void;
   onRename: (id: number, name: string) => Promise<void>;
+  onEdit: (routine: Routine) => void;
 }) {
   const [running, setRunning] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -247,6 +470,11 @@ function RoutineCard({
         <span>{routine.run_count} runs</span>
         <span>·</span>
         <span>Last: {formatDate(routine.last_run)}</span>
+        {routine.cron_job_id && (
+          <span className="inline-flex items-center gap-1 text-green-400 ml-auto">
+            <Clock size={10} /> auto
+          </span>
+        )}
       </div>
 
       {/* Actions */}
@@ -270,6 +498,14 @@ function RoutineCard({
         </button>
 
         <div className="flex-1" />
+
+        <button
+          onClick={() => onEdit(routine)}
+          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+          title="Edit routine"
+        >
+          <Settings2 size={13} />
+        </button>
 
         <button
           onClick={() => onDelete(routine.id)}
@@ -333,6 +569,7 @@ export default function RoutinesPage() {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -368,7 +605,15 @@ export default function RoutinesPage() {
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     });
-    if (res.ok) fetchAll();
+    if (res.ok) {
+      const updated: Routine = await res.json();
+      showToast(
+        newStatus === 'active'
+          ? updated.cron_job_id ? 'Activated — cron job created' : 'Activated'
+          : 'Deactivated'
+      );
+      fetchAll();
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -516,6 +761,7 @@ export default function RoutinesPage() {
                   onToggle={handleToggle}
                   onDelete={handleDelete}
                   onRename={handleRename}
+                  onEdit={setEditingRoutine}
                 />
               ))}
             </div>
@@ -567,6 +813,19 @@ export default function RoutinesPage() {
           </div>
         )}
       </div>
+
+      {editingRoutine && (
+        <EditRoutineModal
+          routine={editingRoutine}
+          authHeader={headers}
+          onClose={() => setEditingRoutine(null)}
+          onSaved={(updated) => {
+            setRoutines(prev => prev.map(r => r.id === updated.id ? updated : r));
+            setEditingRoutine(null);
+            showToast('Routine updated');
+          }}
+        />
+      )}
     </AppLayout>
   );
 }

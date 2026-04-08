@@ -159,7 +159,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 7
+    _SCHEMA_VERSION = 9
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -269,59 +269,6 @@ class Database:
             """)
             log.info("Migration 3: created workflow_executions and workflow_suggestions tables")
 
-        # ── Migration 6: cron_jobs + cron_job_runs tables ─────────────────────
-        if current < 6:
-            await self._db.executescript("""
-                CREATE TABLE IF NOT EXISTS cron_jobs (
-                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name           TEXT    NOT NULL,
-                    description    TEXT    NOT NULL DEFAULT '',
-                    cron_expr      TEXT    NOT NULL,
-                    action_type    TEXT    NOT NULL,
-                    action_payload TEXT    NOT NULL DEFAULT '{}',
-                    is_enabled     INTEGER NOT NULL DEFAULT 1,
-                    last_run       TEXT,
-                    next_run       TEXT,
-                    run_count      INTEGER NOT NULL DEFAULT 0,
-                    last_status    TEXT    NOT NULL DEFAULT 'pending',
-                    last_output    TEXT,
-                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-                );
-                CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled  ON cron_jobs(is_enabled);
-                CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run);
-
-                CREATE TABLE IF NOT EXISTS cron_job_runs (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_id       INTEGER NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
-                    started_at   TEXT    NOT NULL,
-                    finished_at  TEXT,
-                    status       TEXT    NOT NULL DEFAULT 'running',
-                    output       TEXT,
-                    error        TEXT,
-                    triggered_by TEXT    NOT NULL DEFAULT 'scheduler'
-                );
-                CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id  ON cron_job_runs(job_id);
-                CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_job_runs(started_at);
-            """)
-            log.info("Migration 6: created cron_jobs and cron_job_runs tables")
-
-        # ── Migration 5: add description + chat_mentioned to detected_routines ─
-        if current < 5:
-            try:
-                await self._db.execute(
-                    "ALTER TABLE detected_routines ADD COLUMN description TEXT DEFAULT ''"
-                )
-            except Exception:
-                pass
-            try:
-                await self._db.execute(
-                    "ALTER TABLE detected_routines ADD COLUMN chat_mentioned INTEGER DEFAULT 0"
-                )
-            except Exception:
-                pass
-            log.info("Migration 5: added description and chat_mentioned to detected_routines")
-
         # ── Migration 4: OS activity watcher + detected routines ──────────────
         if current < 4:
             await self._db.executescript("""
@@ -358,6 +305,59 @@ class Database:
                 );
             """)
             log.info("Migration 4: created app_activities and detected_routines tables")
+
+        # ── Migration 5: add description + chat_mentioned to detected_routines ─
+        if current < 5:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE detected_routines ADD COLUMN description TEXT DEFAULT ''"
+                )
+            except Exception:
+                pass
+            try:
+                await self._db.execute(
+                    "ALTER TABLE detected_routines ADD COLUMN chat_mentioned INTEGER DEFAULT 0"
+                )
+            except Exception:
+                pass
+            log.info("Migration 5: added description and chat_mentioned to detected_routines")
+
+        # ── Migration 6: cron_jobs + cron_job_runs tables ─────────────────────
+        if current < 6:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS cron_jobs (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name           TEXT    NOT NULL,
+                    description    TEXT    NOT NULL DEFAULT '',
+                    cron_expr      TEXT    NOT NULL,
+                    action_type    TEXT    NOT NULL,
+                    action_payload TEXT    NOT NULL DEFAULT '{}',
+                    is_enabled     INTEGER NOT NULL DEFAULT 1,
+                    last_run       TEXT,
+                    next_run       TEXT,
+                    run_count      INTEGER NOT NULL DEFAULT 0,
+                    last_status    TEXT    NOT NULL DEFAULT 'pending',
+                    last_output    TEXT,
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled  ON cron_jobs(is_enabled);
+                CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run);
+
+                CREATE TABLE IF NOT EXISTS cron_job_runs (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id       INTEGER NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+                    started_at   TEXT    NOT NULL,
+                    finished_at  TEXT,
+                    status       TEXT    NOT NULL DEFAULT 'running',
+                    output       TEXT,
+                    error        TEXT,
+                    triggered_by TEXT    NOT NULL DEFAULT 'scheduler'
+                );
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_job_id  ON cron_job_runs(job_id);
+                CREATE INDEX IF NOT EXISTS idx_cron_runs_started ON cron_job_runs(started_at);
+            """)
+            log.info("Migration 6: created cron_jobs and cron_job_runs tables")
 
         # ── Migration 7: swarm tables ──────────────────────────────────────────
         if current < 7:
@@ -419,6 +419,79 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_swarm_msgs_to     ON swarm_messages(to_worker_id);
             """)
             log.info("Migration 7: created swarm tables")
+
+        # ── Migration 8: content pipeline tables ──────────────────────────────
+        # Also defensively ensure migration-5 columns exist (they may be missing
+        # on installs that ran migrations 4 & 5 out-of-order in older code).
+        if current < 8:
+            for _col, _sql in [
+                ("description", "ALTER TABLE detected_routines ADD COLUMN description TEXT DEFAULT ''"),
+                ("chat_mentioned", "ALTER TABLE detected_routines ADD COLUMN chat_mentioned INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    await self._db.execute(_sql)
+                except Exception:
+                    pass  # column already exists
+
+        if current < 8:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS content_queue (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_type    TEXT    NOT NULL DEFAULT 'post',
+                    platform        TEXT    NOT NULL DEFAULT 'facebook',
+                    title           TEXT    NOT NULL DEFAULT '',
+                    body            TEXT    NOT NULL DEFAULT '',
+                    media_paths     TEXT    NOT NULL DEFAULT '[]',
+                    metadata        TEXT    NOT NULL DEFAULT '{}',
+                    status          TEXT    NOT NULL DEFAULT 'pending',
+                    swarm_id        INTEGER REFERENCES swarms(id) ON DELETE SET NULL,
+                    approved_at     TEXT,
+                    rejected_at     TEXT,
+                    published_at    TEXT,
+                    publish_error   TEXT,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_content_queue_status   ON content_queue(status);
+                CREATE INDEX IF NOT EXISTS idx_content_queue_platform  ON content_queue(platform);
+                CREATE INDEX IF NOT EXISTS idx_content_queue_created   ON content_queue(created_at);
+
+                CREATE TABLE IF NOT EXISTS swarm_templates (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name            TEXT    NOT NULL UNIQUE,
+                    description     TEXT    NOT NULL DEFAULT '',
+                    goal_template   TEXT    NOT NULL,
+                    workers         TEXT    NOT NULL DEFAULT '[]',
+                    global_model    TEXT,
+                    is_active       INTEGER NOT NULL DEFAULT 1,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_swarm_templates_active ON swarm_templates(is_active);
+
+                CREATE TABLE IF NOT EXISTS social_credentials (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform        TEXT    NOT NULL UNIQUE,
+                    credentials     TEXT    NOT NULL DEFAULT '{}',
+                    is_active       INTEGER NOT NULL DEFAULT 1,
+                    verified_at     TEXT,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            log.info("Migration 8: created content_queue, swarm_templates, social_credentials tables")
+
+        # ── Migration 9: cron_job_id + exe_path ───────────────────────────────
+        if current < 9:
+            for _sql in [
+                "ALTER TABLE detected_routines ADD COLUMN cron_job_id INTEGER",
+                "ALTER TABLE app_activities ADD COLUMN exe_path TEXT NOT NULL DEFAULT ''",
+            ]:
+                try:
+                    await self._db.execute(_sql)
+                except Exception:
+                    pass  # column already exists
+            log.info("Migration 9: added cron_job_id to detected_routines, exe_path to app_activities")
 
         # Save new version
         await self._db.execute(
@@ -623,6 +696,114 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
+
+    async def get_detailed_stats(
+        self,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Return detailed token/cost breakdown: totals, by_model, today, history.
+
+        Args:
+            date_from: ISO date string 'YYYY-MM-DD' (inclusive). None = all time start.
+            date_to:   ISO date string 'YYYY-MM-DD' (inclusive). None = today.
+        """
+        if not self._db:
+            return {}
+
+        # Build WHERE clause for date range filter
+        range_conditions: list[str] = []
+        range_params: list[str] = []
+        if date_from:
+            range_conditions.append("DATE(timestamp) >= ?")
+            range_params.append(date_from)
+        if date_to:
+            range_conditions.append("DATE(timestamp) <= ?")
+            range_params.append(date_to)
+        range_where = ("WHERE " + " AND ".join(range_conditions)) if range_conditions else ""
+
+        # Totals for the selected range
+        cursor = await self._db.execute(
+            f"SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, "
+            f"SUM(total_tokens) as total, SUM(cost) as cost, COUNT(*) as requests "
+            f"FROM llm_usage {range_where}",
+            range_params,
+        )
+        row = await cursor.fetchone()
+        totals = dict(row) if row else {}
+
+        # Today's totals (always fixed — not affected by the range filter)
+        cursor = await self._db.execute(
+            "SELECT SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, "
+            "SUM(total_tokens) as total, SUM(cost) as cost, COUNT(*) as requests "
+            "FROM llm_usage WHERE DATE(timestamp) = DATE('now')"
+        )
+        row = await cursor.fetchone()
+        today = dict(row) if row else {}
+
+        # Per-model breakdown (respects range filter)
+        cursor = await self._db.execute(
+            f"SELECT model, SUM(prompt_tokens) as prompt_tokens, "
+            f"SUM(completion_tokens) as completion_tokens, SUM(total_tokens) as total_tokens, "
+            f"SUM(cost) as cost, COUNT(*) as requests, "
+            f"AVG(elapsed_ms) as avg_elapsed_ms "
+            f"FROM llm_usage {range_where} GROUP BY model ORDER BY total_tokens DESC",
+            range_params,
+        )
+        rows = await cursor.fetchall()
+        by_model = [dict(r) for r in rows]
+
+        # Daily history — show all days within range (or last 90 days if no range)
+        hist_conditions = list(range_conditions)
+        hist_params = list(range_params)
+        if not date_from:
+            hist_conditions.append("timestamp > datetime('now', '-90 days')")
+        hist_where = ("WHERE " + " AND ".join(hist_conditions)) if hist_conditions else ""
+
+        cursor = await self._db.execute(
+            f"SELECT DATE(timestamp) as date, COUNT(*) as requests, "
+            f"SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens, "
+            f"SUM(total_tokens) as tokens, SUM(cost) as cost "
+            f"FROM llm_usage {hist_where} "
+            f"GROUP BY DATE(timestamp) ORDER BY date",
+            hist_params,
+        )
+        rows = await cursor.fetchall()
+        history = [dict(r) for r in rows]
+
+        # Date range of actual data (for UI display)
+        cursor = await self._db.execute(
+            f"SELECT MIN(DATE(timestamp)) as first_date, MAX(DATE(timestamp)) as last_date "
+            f"FROM llm_usage {range_where}",
+            range_params,
+        )
+        row = await cursor.fetchone()
+        data_range = dict(row) if row else {}
+
+        return {
+            "totals": {
+                "prompt_tokens": totals.get("prompt") or 0,
+                "completion_tokens": totals.get("completion") or 0,
+                "total_tokens": totals.get("total") or 0,
+                "cost": round(totals.get("cost") or 0.0, 6),
+                "requests": totals.get("requests") or 0,
+            },
+            "today": {
+                "prompt_tokens": today.get("prompt") or 0,
+                "completion_tokens": today.get("completion") or 0,
+                "total_tokens": today.get("total") or 0,
+                "cost": round(today.get("cost") or 0.0, 6),
+                "requests": today.get("requests") or 0,
+            },
+            "by_model": by_model,
+            "history": history,
+            "filter": {
+                "date_from": date_from,
+                "date_to": date_to,
+                "first_record": data_range.get("first_date"),
+                "last_record": data_range.get("last_date"),
+            },
+        }
 
     async def get_channel_stats(self) -> list[dict[str, Any]]:
         """Get message counts and last activity grouped by user and channel."""
@@ -1051,6 +1232,7 @@ class Database:
         session_end: str,
         day_of_week: int,
         hour_of_day: int,
+        exe_path: str = "",
     ) -> int:
         """Record a single app focus session (sensitive fields encrypted if configured)."""
         if not self._db:
@@ -1058,8 +1240,8 @@ class Database:
         cursor = await self._db.execute(
             "INSERT INTO app_activities "
             "(app_name, window_title, process_name, focus_seconds, "
-            " session_start, session_end, day_of_week, hour_of_day) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " session_start, session_end, day_of_week, hour_of_day, exe_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._e(app_name),
                 self._e(window_title),
@@ -1069,6 +1251,7 @@ class Database:
                 session_end,
                 day_of_week,
                 hour_of_day,
+                exe_path,
             ),
         )
         await self._db.commit()
@@ -1240,7 +1423,8 @@ class Database:
             return False
         allowed = {
             "name", "description", "trigger_type", "trigger_data", "apps",
-            "confidence", "status", "last_run", "run_count", "occurrence_count", "chat_mentioned",
+            "confidence", "status", "last_run", "run_count", "occurrence_count",
+            "chat_mentioned", "cron_job_id",
         }
         _encrypt_fields = {"name", "description", "trigger_data", "apps"}
         updates, params = [], []
@@ -1692,3 +1876,179 @@ class Database:
             )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    # ─── Content Queue ────────────────────────────────────────
+
+    async def create_content_item(
+        self,
+        platform: str,
+        content_type: str,
+        title: str,
+        body: str,
+        media_paths: str = "[]",
+        metadata: str = "{}",
+        swarm_id: int | None = None,
+    ) -> int:
+        if not self._db:
+            return 0
+        ts = datetime.now(timezone.utc).isoformat()
+        cursor = await self._db.execute(
+            "INSERT INTO content_queue "
+            "(platform, content_type, title, body, media_paths, metadata, status, swarm_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (platform, content_type, title, body, media_paths, metadata, swarm_id, ts, ts),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_content_queue(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        if status:
+            cursor = await self._db.execute(
+                "SELECT * FROM content_queue WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM content_queue ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_content_item(self, item_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM content_queue WHERE id = ?", (item_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_content_status(self, item_id: int, status: str, extra: dict | None = None) -> bool:
+        if not self._db:
+            return False
+        ts = datetime.now(timezone.utc).isoformat()
+        field_map = {
+            "approved": "approved_at",
+            "rejected": "rejected_at",
+            "published": "published_at",
+        }
+        updates = ["status = ?", "updated_at = ?"]
+        params: list = [status, ts]
+        if status in field_map:
+            updates.append(f"{field_map[status]} = ?")
+            params.append(ts)
+        if extra and "publish_error" in extra:
+            updates.append("publish_error = ?")
+            params.append(extra["publish_error"])
+        params.append(item_id)
+        await self._db.execute(
+            f"UPDATE content_queue SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_content_item(self, item_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM content_queue WHERE id = ?", (item_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def count_pending_content(self) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) as cnt FROM content_queue WHERE status = 'pending'"
+        )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
+
+    # ─── Swarm Templates ──────────────────────────────────────
+
+    async def create_swarm_template(
+        self,
+        name: str,
+        description: str,
+        goal_template: str,
+        workers: str = "[]",
+        global_model: str | None = None,
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO swarm_templates (name, description, goal_template, workers, global_model) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, description, goal_template, workers, global_model),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_all_swarm_templates(self) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM swarm_templates WHERE is_active = 1 ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_swarm_template(self, template_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM swarm_templates WHERE id = ?", (template_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def delete_swarm_template(self, template_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM swarm_templates WHERE id = ?", (template_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Social Credentials ───────────────────────────────────
+
+    async def get_social_credentials(self, platform: str) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM social_credentials WHERE platform = ? AND is_active = 1",
+            (platform,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_all_social_credentials(self) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT id, platform, is_active, verified_at, created_at, updated_at "
+            "FROM social_credentials ORDER BY platform"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def save_social_credentials(self, platform: str, credentials: str, verified: bool = False) -> bool:
+        if not self._db:
+            return False
+        ts = datetime.now(timezone.utc).isoformat()
+        verified_at = ts if verified else None
+        await self._db.execute(
+            "INSERT INTO social_credentials (platform, credentials, is_active, verified_at, created_at, updated_at) "
+            "VALUES (?, ?, 1, ?, ?, ?) "
+            "ON CONFLICT(platform) DO UPDATE SET credentials = excluded.credentials, "
+            "is_active = 1, verified_at = excluded.verified_at, updated_at = excluded.updated_at",
+            (platform, credentials, verified_at, ts, ts),
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_social_credentials(self, platform: str) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM social_credentials WHERE platform = ?", (platform,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0

@@ -7,6 +7,7 @@ and returns responses. Handles the full agentic loop with safety limits.
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import structlog
@@ -29,6 +30,36 @@ from openacm.core.memory import MemoryManager
 from openacm.core.acm_context import get_openacm_context, get_short_context
 
 log = structlog.get_logger()
+
+# Matches all ANSI/VT100 escape sequences (colors, cursor moves, OSC title-set, etc.)
+# Order matters: longer/more-specific patterns must come first.
+_ANSI_RE = re.compile(
+    r'\x1b(?:'
+    r'\][^\x07\x1b]*(?:\x07|\x1b\\)'   # OSC: ESC ] ... BEL or ST  (e.g. \x1b]0;title\x1b\\)
+    r'|\[[0-?]*[ -/]*[@-~]'            # CSI: ESC [ ... final byte  (e.g. \x1b[1;32m)
+    r'|[@-Z\\-_]'                       # 2-byte Fe/Fs: ESC + single char in range
+    r')'
+)
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI/VT100 escape sequences from terminal output."""
+    return _ANSI_RE.sub("", text)
+
+
+def _clean_tool_call_id(call_id: str) -> str:
+    """
+    Strip Gemini's extended-thinking blob from tool call IDs.
+
+    When a Gemini model runs with thinking enabled, LiteLLM encodes the
+    thinking tokens inside the tool call ID as:
+        call_<hex>__thought__<base64-blob>
+    The blob can be thousands of characters and gets re-sent in every
+    subsequent tool message, burning tokens. We keep only the stable prefix.
+    """
+    if "__thought__" in call_id:
+        call_id = call_id.split("__thought__")[0]
+    return call_id
 
 
 class Brain:
@@ -635,6 +666,14 @@ class Brain:
                 )
                 system_prompt = f"{system_prompt}\n\nMCP servers connected: {srv_list}"
 
+        # 5. Plugin context extensions (each plugin injects its own instructions)
+        try:
+            from openacm.plugins import plugin_manager
+            for ext in plugin_manager.get_context_extensions():
+                system_prompt = f"{system_prompt}\n\n{ext}"
+        except Exception:
+            pass
+
         # Get or create conversation with system prompt — skip update if unchanged
         _sp_key = f"{channel_id}:{user_id}"
         _sp_hash = hash(system_prompt)
@@ -1001,12 +1040,18 @@ class Brain:
             # First, add the assistant message with tool_calls to memory.
             # reasoning_content must be preserved for models like Kimi K2.5 that
             # use thinking mode — they reject histories missing this field.
+            # Clean tool call IDs before storing — strips Gemini __thought__ blobs
+            # that encode extended-thinking tokens and waste thousands of tokens per turn.
+            clean_tool_calls = [
+                {**tc, "id": _clean_tool_call_id(tc["id"])}
+                for tc in response["tool_calls"]
+            ]
             await self.memory.add_message(
                 user_id,
                 channel_id,
                 "assistant",
                 response["content"] or "",
-                tool_calls=response["tool_calls"],
+                tool_calls=clean_tool_calls,
                 reasoning_content=response.get("reasoning_content"),  # "" is valid, None means skip
             )
             messages = await self.memory.get_messages(user_id, channel_id)
@@ -1067,7 +1112,7 @@ class Brain:
             for tool_call in response["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
                 tool_args_str = tool_call["function"]["arguments"]
-                tool_call_id = tool_call["id"]
+                tool_call_id = _clean_tool_call_id(tool_call["id"])
 
                 log.info("Tool call", tool=tool_name, args=tool_args_str[:200])
                 _tool_trace: dict = {
@@ -1167,7 +1212,7 @@ class Brain:
                 # Compress tool result before adding to LLM context
                 MAX_TOOL_RESULT_CHARS = 6000
                 result_for_memory, _orig_len, _comp_len = compress_output(
-                    str(result), tool_name, tool_args if isinstance(tool_args, dict) else {}
+                    _strip_ansi(str(result)), tool_name, tool_args if isinstance(tool_args, dict) else {}
                 )
                 if _orig_len != _comp_len:
                     log.debug(

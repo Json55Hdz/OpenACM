@@ -21,6 +21,14 @@ interface WebSocketMessage {
   partial?: boolean;
   attachments?: string[];
   skills?: string[];
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost: number;
+    requests: number;
+    model: string;
+  };
   // tool.validation fields
   step?: string;
   detail?: string;
@@ -72,6 +80,7 @@ export function useWebSocket() {
           content: data.content || '',
           role: 'assistant',
           attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
+          usage: data.usage,
         });
       } else if (data.type === 'command') {
         storeRef.current.addMessage({

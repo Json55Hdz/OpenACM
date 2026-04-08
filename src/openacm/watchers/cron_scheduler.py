@@ -95,7 +95,7 @@ class CronJob:
     name: str
     description: str
     cron_expr: str
-    action_type: str   # run_skill | run_routine | analyze_patterns | custom_command
+    action_type: str   # run_skill | run_routine | analyze_patterns | custom_command | run_swarm_template
     action_payload: dict
     is_enabled: bool
     last_run: str | None
@@ -120,9 +120,10 @@ class CronScheduler:
 
     POLL_INTERVAL = 30  # seconds
 
-    def __init__(self, database: Any, brain: Any = None):
+    def __init__(self, database: Any, brain: Any = None, swarm_manager: Any = None):
         self._db = database
         self._brain = brain
+        self._swarm_manager = swarm_manager
         self._task: asyncio.Task | None = None
         self._running = False
         self._jobs: dict[int, CronJob] = {}
@@ -245,6 +246,8 @@ class CronScheduler:
                     output = await self._analyze_patterns(job.action_payload)
                 case "custom_command":
                     output = await self._custom_command(job.action_payload)
+                case "run_swarm_template":
+                    output = await self._run_swarm_template(job.action_payload)
                 case _:
                     raise ValueError(f"Unknown action_type: {job.action_type!r}")
         except Exception as exc:
@@ -328,6 +331,54 @@ class CronScheduler:
         analyzer = PatternAnalyzer(self._db, llm_router=llm)
         new_routines = await analyzer.analyze()
         return f"Pattern analysis complete. {len(new_routines)} new routine(s) detected."
+
+    async def _run_swarm_template(self, payload: dict) -> str:
+        """Create and start a swarm from a saved template.
+
+        Payload keys:
+          template_id (int)  — ID of the swarm_templates row
+          goal_override (str) — optional goal text that replaces the template's goal_template
+                                (supports {date} placeholder)
+        """
+        template_id = payload.get("template_id")
+        if not template_id:
+            raise ValueError("template_id is required for run_swarm_template action")
+        if not self._db:
+            raise RuntimeError("Database not available")
+        if not self._swarm_manager:
+            raise RuntimeError("SwarmManager not available")
+
+        template = await self._db.get_swarm_template(int(template_id))
+        if not template:
+            raise ValueError(f"Swarm template {template_id} not found")
+
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        goal_override = payload.get("goal_override", "")
+        goal = goal_override or template["goal_template"]
+        goal = goal.replace("{date}", today)
+
+        # Create swarm from template
+        workers = json.loads(template.get("workers", "[]"))
+        swarm_id = await self._db.create_swarm(
+            name=f"{template['name']} — {today}",
+            goal=goal,
+            global_model=template.get("global_model") or "",
+        )
+        for w in workers:
+            await self._db.create_swarm_worker(
+                swarm_id=swarm_id,
+                name=w["name"],
+                role=w.get("role", "worker"),
+                description=w.get("description", ""),
+                system_prompt=w.get("system_prompt", ""),
+                model=w.get("model"),
+                allowed_tools=w.get("allowed_tools", "all"),
+            )
+
+        # Start the swarm in the background
+        asyncio.create_task(self._swarm_manager.start(swarm_id))
+        return f"Swarm '{template['name']}' started from template (swarm_id={swarm_id}, date={today})"
 
     async def _custom_command(self, payload: dict) -> str:
         command = payload.get("command", "")

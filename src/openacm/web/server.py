@@ -55,6 +55,7 @@ _mcp_manager = None
 _activity_watcher = None
 _cron_scheduler = None
 _swarm_manager = None
+_content_watcher = None
 _custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
 
 
@@ -266,7 +267,45 @@ def create_app() -> FastAPI:
             return []
         return await _database.get_channel_stats()
 
+    @app.get("/api/stats/detailed")
+    async def get_detailed_stats(date_from: str | None = None, date_to: str | None = None):
+        """Get detailed token/cost breakdown: totals, by_model, today, history.
+
+        Query params:
+            date_from: YYYY-MM-DD (inclusive lower bound)
+            date_to:   YYYY-MM-DD (inclusive upper bound)
+        """
+        if not _database:
+            return {}
+        data = await _database.get_detailed_stats(date_from=date_from, date_to=date_to)
+        # Merge in live router totals (not yet persisted to DB) — only when no date filter
+        if _brain and _brain.llm_router and not date_from and not date_to:
+            snap = _brain.llm_router.get_usage_snapshot()
+            data["live"] = snap
+        return data
+
     # ─── API: Tools ───────────────────────────────────────────
+
+    @app.get("/api/plugins/nav")
+    async def get_plugin_nav():
+        """Return nav items contributed by all active plugins (for dynamic sidebar)."""
+        try:
+            from openacm.plugins import plugin_manager
+            return plugin_manager.get_nav_items()
+        except Exception:
+            return []
+
+    @app.get("/api/plugins")
+    async def list_plugins():
+        """Return metadata for all loaded plugins."""
+        try:
+            from openacm.plugins import plugin_manager
+            return [
+                {"name": p.name, "version": p.version, "description": p.description, "author": p.author}
+                for p in plugin_manager.plugins
+            ]
+        except Exception:
+            return []
 
     @app.get("/api/tools")
     async def get_tools():
@@ -1063,6 +1102,10 @@ def create_app() -> FastAPI:
 
                 if _brain:
                     try:
+                        # Snapshot usage counters before the call to compute per-turn delta
+                        _router = _brain.llm_router if _brain else None
+                        usage_before = _router.get_usage_snapshot() if _router else {}
+
                         response = await _brain.process_message(
                             content=content,
                             user_id=target_user,
@@ -1070,6 +1113,20 @@ def create_app() -> FastAPI:
                             channel_type=target_type,
                             attachments=attachments,
                         )
+
+                        # Compute usage delta for this turn
+                        turn_usage: dict = {}
+                        if _router:
+                            usage_after = _router.get_usage_snapshot()
+                            turn_usage = {
+                                "prompt_tokens": usage_after["prompt_tokens"] - usage_before.get("prompt_tokens", 0),
+                                "completion_tokens": usage_after["completion_tokens"] - usage_before.get("completion_tokens", 0),
+                                "total_tokens": usage_after["total_tokens"] - usage_before.get("total_tokens", 0),
+                                "cost": round(usage_after["cost"] - usage_before.get("cost", 0.0), 6),
+                                "requests": usage_after["requests"] - usage_before.get("requests", 0),
+                                "model": _router.current_model or "",
+                            }
+
                         # Strip ATTACHMENT: lines from visible content and send as structured array
                         resp_lines = response.split("\n")
                         attachment_names: list[str] = []
@@ -1088,6 +1145,7 @@ def create_app() -> FastAPI:
                                 "type": "response",
                                 "content": clean_response,
                                 "attachments": attachment_names,
+                                "usage": turn_usage,
                             }
                         )
                     except WebSocketDisconnect:
@@ -1640,6 +1698,17 @@ def create_app() -> FastAPI:
 
     # ─── API: Routines ───────────────────────────────────────
 
+    def _routine_cron_expr(trigger_data: dict) -> str:
+        """Build a cron expression from a routine's trigger_data dict.
+        Days stored as Python weekday (0=Mon); converted to cron (0=Sun, 1=Mon)."""
+        hour = int(trigger_data.get("hour", 9))
+        minute = int(trigger_data.get("minute", 0))
+        days = trigger_data.get("days_of_week", [])
+        if days:
+            cron_days = ",".join(str((d + 1) % 7) for d in sorted(days))
+            return f"{minute} {hour} * * {cron_days}"
+        return f"{minute} {hour} * * *"
+
     @app.get("/api/routines")
     async def get_routines():
         """List all detected routines."""
@@ -1666,19 +1735,67 @@ def create_app() -> FastAPI:
 
     @app.put("/api/routines/{routine_id}")
     async def update_routine(routine_id: int, request: Request):
-        """Update a routine (name, status, trigger_data)."""
+        """Update a routine (name, status, trigger_data, apps).
+        Auto-creates or deletes a cron job when the status changes to/from active."""
         if not _database:
             raise HTTPException(status_code=503, detail="Database not available")
+
+        current = await _database.get_routine(routine_id)
+        if not current:
+            raise HTTPException(status_code=404, detail="Routine not found")
+
+        import json as _json
         data = await request.json()
         allowed = {"name", "status", "trigger_type", "trigger_data", "apps"}
         kwargs = {k: v for k, v in data.items() if k in allowed}
         if "trigger_data" in kwargs and isinstance(kwargs["trigger_data"], dict):
-            import json as _json
             kwargs["trigger_data"] = _json.dumps(kwargs["trigger_data"])
+        if "apps" in kwargs and isinstance(kwargs["apps"], list):
+            kwargs["apps"] = _json.dumps(kwargs["apps"])
+
         ok = await _database.update_routine(routine_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Routine not found")
-        return await _database.get_routine(routine_id)
+
+        updated = await _database.get_routine(routine_id)
+
+        # ── Auto cron management on activate / deactivate ─────────────────────
+        new_status = kwargs.get("status", current.get("status"))
+        old_status = current.get("status")
+
+        if _cron_scheduler and new_status != old_status:
+            if new_status in ("inactive", "pending") and old_status == "active":
+                # Delete the cron job that was driving this routine
+                existing_cron_id = current.get("cron_job_id")
+                if existing_cron_id:
+                    await _database.delete_cron_job(int(existing_cron_id))
+                    await _database.update_routine(routine_id, cron_job_id=None)
+                    await _cron_scheduler._sync_jobs()
+                    updated = await _database.get_routine(routine_id)
+
+            elif new_status == "active":
+                # Create a cron job if the trigger is time-based
+                trigger_type = updated.get("trigger_type", "manual")
+                if trigger_type == "time_based":
+                    try:
+                        trigger_data = _json.loads(updated.get("trigger_data") or "{}")
+                        cron_expr = _routine_cron_expr(trigger_data)
+                        job = await _database.create_cron_job(
+                            name=f"Rutina: {updated.get('name', 'Rutina')}",
+                            description=f"Ejecuta automáticamente la rutina #{routine_id}",
+                            cron_expr=cron_expr,
+                            action_type="run_routine",
+                            action_payload={"routine_id": routine_id},
+                            is_enabled=True,
+                        )
+                        if job:
+                            await _database.update_routine(routine_id, cron_job_id=job["id"])
+                            await _cron_scheduler._sync_jobs()
+                            updated = await _database.get_routine(routine_id)
+                    except Exception as _exc:
+                        log.warning("Failed to create cron job for routine", error=str(_exc))
+
+        return updated
 
     @app.delete("/api/routines/{routine_id}")
     async def delete_routine(routine_id: int):
@@ -2037,6 +2154,190 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
+    # ─── Content Queue ────────────────────────────────────────
+
+    @app.get("/api/content/queue")
+    async def list_content_queue(status: str = "", limit: int = 50):
+        if not _database:
+            return []
+        items = await _database.get_content_queue(status=status or None, limit=limit)
+        pending_count = await _database.count_pending_content()
+        return {"items": items, "pending_count": pending_count}
+
+    @app.post("/api/content/queue/{item_id}/approve")
+    async def approve_content(item_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        item = await _database.get_content_item(item_id)
+        if not item:
+            raise HTTPException(404, "Content item not found")
+        await _database.update_content_status(item_id, "approved")
+        await broadcast_event("content:approved", {"item_id": item_id})
+        return {"ok": True, "status": "approved"}
+
+    @app.post("/api/content/queue/{item_id}/reject")
+    async def reject_content(item_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        item = await _database.get_content_item(item_id)
+        if not item:
+            raise HTTPException(404, "Content item not found")
+        await _database.update_content_status(item_id, "rejected")
+        await broadcast_event("content:rejected", {"item_id": item_id})
+        return {"ok": True, "status": "rejected"}
+
+    @app.delete("/api/content/queue/{item_id}")
+    async def delete_content_item(item_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        ok = await _database.delete_content_item(item_id)
+        if not ok:
+            raise HTTPException(404, "Content item not found")
+        return {"ok": True}
+
+    @app.get("/api/content/pending-count")
+    async def content_pending_count():
+        if not _database:
+            return {"count": 0}
+        count = await _database.count_pending_content()
+        return {"count": count}
+
+    @app.get("/api/content/sessions")
+    async def list_content_sessions(date: str = ""):
+        import os as _os
+        from pathlib import Path as _Path
+        workspace = _Path(_os.environ.get("OPENACM_WORKSPACE", "workspace"))
+        base = workspace / "content" / "sessions"
+        if not base.exists():
+            return {"dates": [], "sessions": []}
+        if date:
+            session_dir = base / date
+            if not session_dir.exists():
+                return {"dates": [], "sessions": []}
+            import json as _json
+            sessions = []
+            for f in sorted(session_dir.glob("*.json")):
+                try:
+                    sessions.append(_json.loads(f.read_text()))
+                except Exception:
+                    pass
+            return {"dates": [date], "sessions": sessions}
+        dates = sorted(d.name for d in base.iterdir() if d.is_dir())
+        return {"dates": dates, "sessions": []}
+
+    # ─── Swarm Templates ──────────────────────────────────────
+
+    @app.get("/api/swarm-templates")
+    async def list_swarm_templates():
+        if not _database:
+            return []
+        return await _database.get_all_swarm_templates()
+
+    @app.post("/api/swarm-templates")
+    async def create_swarm_template(request: Request):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        body = await request.json()
+        if not body.get("name") or not body.get("goal_template"):
+            raise HTTPException(400, "name and goal_template are required")
+        import json as _json
+        tmpl_id = await _database.create_swarm_template(
+            name=body["name"],
+            description=body.get("description", ""),
+            goal_template=body["goal_template"],
+            workers=_json.dumps(body.get("workers", [])),
+            global_model=body.get("global_model") or None,
+        )
+        tmpl = await _database.get_swarm_template(tmpl_id)
+        return tmpl
+
+    @app.delete("/api/swarm-templates/{tmpl_id}")
+    async def delete_swarm_template(tmpl_id: int):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        ok = await _database.delete_swarm_template(tmpl_id)
+        if not ok:
+            raise HTTPException(404, "Template not found")
+        return {"ok": True}
+
+    # ─── Social Credentials ───────────────────────────────────
+
+    @app.get("/api/social/credentials")
+    async def list_social_credentials():
+        if not _database:
+            return []
+        # Return without the raw credential values (just status)
+        return await _database.get_all_social_credentials()
+
+    @app.post("/api/social/credentials")
+    async def save_social_credentials(request: Request):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        import json as _json
+        body = await request.json()
+        platform = body.get("platform", "")
+        credentials = body.get("credentials", {})
+        if platform not in ("facebook", "reddit"):
+            raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
+        await _database.save_social_credentials(platform, _json.dumps(credentials))
+        return {"ok": True, "platform": platform}
+
+    @app.post("/api/social/credentials/{platform}/verify")
+    async def verify_social_credentials(platform: str):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        if platform not in ("facebook", "reddit"):
+            raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
+        import json as _json
+        row = await _database.get_social_credentials(platform)
+        if not row:
+            raise HTTPException(404, f"No credentials saved for {platform}")
+        creds = _json.loads(row["credentials"])
+
+        if platform == "facebook":
+            token = creds.get("page_access_token", "")
+            if not token:
+                raise HTTPException(400, "page_access_token missing from saved credentials")
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get("https://graph.facebook.com/me", params={"access_token": token})
+                if r.status_code == 200:
+                    name = r.json().get("name", "?")
+                    await _database.save_social_credentials(platform, _json.dumps(creds), verified=True)
+                    return {"ok": True, "message": f"Authenticated as '{name}'"}
+                err = r.json().get("error", {}).get("message", r.text[:200])
+                return {"ok": False, "message": err}
+            except Exception as exc:
+                return {"ok": False, "message": str(exc)}
+
+        elif platform == "reddit":
+            try:
+                import praw  # type: ignore[import]
+                reddit = praw.Reddit(
+                    client_id=creds["client_id"],
+                    client_secret=creds["client_secret"],
+                    username=creds["username"],
+                    password=creds["password"],
+                    user_agent=creds.get("user_agent", "OpenACM/1.0"),
+                )
+                me = reddit.user.me()
+                await _database.save_social_credentials(platform, _json.dumps(creds), verified=True)
+                return {"ok": True, "message": f"Authenticated as u/{me.name}"}
+            except ImportError:
+                return {"ok": False, "message": "praw not installed — run: pip install praw"}
+            except Exception as exc:
+                return {"ok": False, "message": str(exc)[:300]}
+
+    @app.delete("/api/social/credentials/{platform}")
+    async def delete_social_credentials(platform: str):
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        ok = await _database.delete_social_credentials(platform)
+        if not ok:
+            raise HTTPException(404, f"No credentials for {platform}")
+        return {"ok": True}
+
     # ─── Catch-all SPA route (MUST be last) ─────────────────
 
     @app.get("/{full_path:path}", response_class=HTMLResponse)
@@ -2056,6 +2357,17 @@ def create_app() -> FastAPI:
         if root_index.exists():
             return FileResponse(str(root_index))
         return HTMLResponse("<h1>OpenACM</h1><p>Static files not found. Run build first.</p>")
+
+    # ─── Plugin API routes ────────────────────────────────────
+    # Plugins are started before create_app() is called, so their routers
+    # are already available here. Each router is mounted under /api/.
+    try:
+        from openacm.plugins import plugin_manager
+        for router in plugin_manager.get_api_routers():
+            app.include_router(router, prefix="/api")
+            log.debug("Plugin API router mounted", prefix="/api")
+    except Exception as exc:
+        log.warning("Failed to mount plugin API routers", error=str(exc))
 
     return app
 
@@ -2339,9 +2651,10 @@ async def create_web_server(
     activity_watcher=None,
     cron_scheduler=None,
     swarm_manager=None,
+    content_watcher=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler, _swarm_manager
+    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler, _swarm_manager, _content_watcher
     _brain = brain
     _database = database
     _event_bus = event_bus
@@ -2349,6 +2662,7 @@ async def create_web_server(
     _activity_watcher = activity_watcher
     _cron_scheduler = cron_scheduler
     _swarm_manager = swarm_manager
+    _content_watcher = content_watcher
     _config = config
     _command_processor = CommandProcessor(brain, database)
     _channels = channels or []
@@ -2403,6 +2717,10 @@ async def create_web_server(
         "swarm:user_message",
         "swarm:task_created",
         "swarm:orchestrator_reacted",
+        # Content pipeline events
+        "content:session_screenshot",
+        "content:approved",
+        "content:rejected",
     ]:
         event_bus.on(evt, on_event)
 

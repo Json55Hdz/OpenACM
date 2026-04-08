@@ -42,6 +42,7 @@ class WindowInfo:
     app_name: str
     window_title: str
     process_name: str
+    exe_path: str = field(default="")
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, WindowInfo):
@@ -126,6 +127,7 @@ class ActivityWatcher:
                 app_name=self._current.app_name,
                 window_title=self._current.window_title[:255],
                 process_name=self._current.process_name,
+                exe_path=self._current.exe_path,
                 focus_seconds=focus_seconds,
                 session_start=self._session_start.isoformat(),
                 session_end=end.isoformat(),
@@ -167,6 +169,7 @@ class ActivityWatcher:
         # PID → process name
         pid = wt.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        exe_path = ""
         try:
             proc = psutil.Process(pid.value)
             process_name = proc.name()
@@ -174,11 +177,15 @@ class ActivityWatcher:
             if process_name.lower().replace(".exe", "") in _IGNORE_APPS:
                 return None
             app_name = process_name.replace(".exe", "").replace("_", " ").title()
+            try:
+                exe_path = proc.exe()
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                pass
         except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError):
             app_name = "Unknown"
             process_name = "unknown"
 
-        return WindowInfo(app_name=app_name, window_title=window_title, process_name=process_name)
+        return WindowInfo(app_name=app_name, window_title=window_title, process_name=process_name, exe_path=exe_path)
 
     def _get_macos(self) -> Optional[WindowInfo]:
         import subprocess

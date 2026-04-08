@@ -33,6 +33,71 @@ log = structlog.get_logger()
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
 
+# ── Token pricing table (USD per 1M tokens) ─────────────────────────────────
+# Format: model_prefix_lowercase → (input_price, output_price)
+_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-4":        (15.00, 75.00),
+    "claude-sonnet-4":      (3.00,  15.00),
+    "claude-haiku-4":       (0.80,   4.00),
+    "claude-3-5-sonnet":    (3.00,  15.00),
+    "claude-3-5-haiku":     (0.80,   4.00),
+    "claude-3-opus":        (15.00, 75.00),
+    "claude-3-sonnet":      (3.00,  15.00),
+    "claude-3-haiku":       (0.25,   1.25),
+    "gpt-4o-mini":          (0.15,   0.60),
+    "gpt-4o":               (2.50,  10.00),
+    "gpt-4-turbo":          (10.00, 30.00),
+    "gpt-4":                (30.00, 60.00),
+    "gpt-3.5-turbo":        (0.50,   1.50),
+    "o1-mini":              (3.00,  12.00),
+    "o1":                   (15.00, 60.00),
+    "gemini-1.5-pro":       (1.25,   5.00),
+    "gemini-1.5-flash":     (0.075,  0.30),
+    "gemini-2.0-flash":     (0.10,   0.40),
+    "deepseek-chat":        (0.27,   1.10),
+    "deepseek-coder":       (0.27,   1.10),
+    # Local / free models
+    "llama":                (0.00,   0.00),
+    "mistral":              (0.00,   0.00),
+    "qwen":                 (0.00,   0.00),
+    "phi":                  (0.00,   0.00),
+    "gemma":                (0.00,   0.00),
+    "codellama":            (0.00,   0.00),
+}
+
+
+def _count_tokens(model: str, messages: list | None = None, text: str | None = None) -> int:
+    """
+    Count tokens using LiteLLM's token_counter (wraps tiktoken + model-specific
+    tokenizers for Claude, Gemini, etc.).  Falls back to char/4 if unavailable.
+
+    Pass `messages` to count a full prompt (system + history + tools).
+    Pass `text` to count a completion string.
+    """
+    try:
+        if messages is not None:
+            return litellm.token_counter(model=model, messages=messages)
+        if text is not None:
+            return litellm.token_counter(model=model, text=text)
+    except Exception:
+        pass
+    # Hard fallback: ~4 chars per token (works for English/code, rough for other langs)
+    src = (text or "") if text else "".join(
+        (m.get("content") or "") if isinstance(m.get("content"), str)
+        else "".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict))
+        for m in (messages or [])
+    )
+    return max(1, len(src) // 4)
+
+
+def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """Return estimated USD cost for a request based on model pricing."""
+    model_lower = model.lower()
+    for prefix, (in_price, out_price) in _MODEL_PRICING.items():
+        if prefix in model_lower:
+            return (prompt_tokens * in_price + completion_tokens * out_price) / 1_000_000
+    return 0.0
+
 
 class LLMRouter:
     """Unified LLM interface using LiteLLM."""
@@ -43,6 +108,8 @@ class LLMRouter:
         self._current_provider = config.default_provider
         self._current_model: str | None = None
         self._total_tokens = 0
+        self._total_prompt_tokens = 0
+        self._total_completion_tokens = 0
         self._total_cost = 0.0
         self._total_requests = 0
         self._database: Any = None  # Set later for persistence
@@ -514,14 +581,16 @@ class LLMRouter:
         captured_reasoning = "".join(reasoning_parts)
         full_content = "".join(content_parts)
 
-        # Build token usage from stream data, or estimate if provider didn't send it.
-        # Estimation: ~3.5 chars/token for output; prompt tokens unknown so we use 0.
+        # Build token usage from stream data; use litellm token_counter when missing.
         prompt_tokens = stream_usage.get("prompt_tokens", 0)
         completion_tokens = stream_usage.get("completion_tokens", 0)
         total_tokens = stream_usage.get("total_tokens", 0)
+        if prompt_tokens == 0:
+            prompt_tokens = _count_tokens(model, messages=messages)
+        if completion_tokens == 0:
+            output_text = full_content + "".join(reasoning_parts)
+            completion_tokens = _count_tokens(model, text=output_text) if output_text else 1
         if total_tokens == 0:
-            # Fallback estimate from output length so the counter is never stuck at 0
-            completion_tokens = max(1, len(full_content + "".join(reasoning_parts)) // 4)
             total_tokens = prompt_tokens + completion_tokens
 
         log.debug(
@@ -759,13 +828,29 @@ class LLMRouter:
                 choice = response.choices[0]
                 message = choice.message
 
+                api_pt = getattr(response.usage, "prompt_tokens", 0) or 0
+                api_ct = getattr(response.usage, "completion_tokens", 0) or 0
+                api_tt = getattr(response.usage, "total_tokens", 0) or 0
+
+                # Some providers return 0 — count precisely with litellm token_counter
+                if api_pt == 0:
+                    api_pt = _count_tokens(model, messages=messages)
+                if api_ct == 0:
+                    out_text = (message.content or "") + "".join(
+                        (tc.function.arguments or "") + (tc.function.name or "")
+                        for tc in (getattr(message, "tool_calls", None) or [])
+                    )
+                    api_ct = _count_tokens(model, text=out_text) if out_text else 1
+                if api_tt == 0:
+                    api_tt = api_pt + api_ct
+
                 result = {
                     "content": message.content or "",
                     "tool_calls": [],
                     "usage": {
-                        "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
-                        "completion_tokens": getattr(response.usage, "completion_tokens", 0),
-                        "total_tokens": getattr(response.usage, "total_tokens", 0),
+                        "prompt_tokens": api_pt,
+                        "completion_tokens": api_ct,
+                        "total_tokens": api_tt,
                     },
                     "model": model,
                     "elapsed": elapsed,
@@ -787,13 +872,26 @@ class LLMRouter:
                     ]
 
             # Track totals
+            pt = result["usage"]["prompt_tokens"]
+            ct = result["usage"]["completion_tokens"]
+            cost = _estimate_cost(model, pt, ct)
+            result["usage"]["cost"] = cost
+            result["usage"]["elapsed_ms"] = int(result["elapsed"] * 1000)
+
             self._total_tokens += result["usage"]["total_tokens"]
+            self._total_prompt_tokens += pt
+            self._total_completion_tokens += ct
+            self._total_cost += cost
+            self._total_requests += 1
 
             await self.event_bus.emit(
                 EVENT_LLM_RESPONSE,
                 {
                     "model": model,
+                    "prompt_tokens": pt,
+                    "completion_tokens": ct,
                     "tokens": result["usage"]["total_tokens"],
+                    "cost": cost,
                     "elapsed": result["elapsed"],
                     "has_tool_calls": bool(result["tool_calls"]),
                 },
@@ -805,10 +903,11 @@ class LLMRouter:
                     await self._database.log_llm_usage(
                         model=self._current_model or model,
                         provider=self._current_provider,
-                        prompt_tokens=result["usage"]["prompt_tokens"],
-                        completion_tokens=result["usage"]["completion_tokens"],
+                        prompt_tokens=pt,
+                        completion_tokens=ct,
                         total_tokens=result["usage"]["total_tokens"],
                         elapsed_ms=int(result["elapsed"] * 1000),
+                        cost=cost,
                     )
                 except Exception:
                     pass  # Never block a response due to a DB write error
@@ -877,7 +976,19 @@ class LLMRouter:
         return {
             "total_requests": self._total_requests,
             "total_tokens": self._total_tokens,
+            "total_prompt_tokens": self._total_prompt_tokens,
+            "total_completion_tokens": self._total_completion_tokens,
             "total_cost": self._total_cost,
             "current_model": self.current_model,
             "current_provider": self._current_provider,
+        }
+
+    def get_usage_snapshot(self) -> dict[str, Any]:
+        """Return a snapshot of cumulative usage counters (for delta computation)."""
+        return {
+            "prompt_tokens": self._total_prompt_tokens,
+            "completion_tokens": self._total_completion_tokens,
+            "total_tokens": self._total_tokens,
+            "cost": self._total_cost,
+            "requests": self._total_requests,
         }

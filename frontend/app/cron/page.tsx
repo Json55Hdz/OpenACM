@@ -27,7 +27,7 @@ const t = translations.cron;
 
 // ─── Types ───────────────────────────────────────────────
 
-type ActionType = 'run_skill' | 'run_routine' | 'analyze_patterns' | 'custom_command';
+type ActionType = 'run_skill' | 'run_routine' | 'analyze_patterns' | 'custom_command' | 'run_swarm_template';
 type JobStatus = 'pending' | 'success' | 'error' | 'running';
 
 interface CronJob {
@@ -133,10 +133,11 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 const ACTION_STYLES: Record<ActionType, string> = {
-  run_skill:        'bg-purple-500/15 text-purple-400 border border-purple-500/30',
-  run_routine:      'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30',
-  analyze_patterns: 'bg-orange-500/15 text-orange-400 border border-orange-500/30',
-  custom_command:   'bg-slate-500/15 text-slate-400 border border-slate-500/30',
+  run_skill:           'bg-purple-500/15 text-purple-400 border border-purple-500/30',
+  run_routine:         'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30',
+  analyze_patterns:    'bg-orange-500/15 text-orange-400 border border-orange-500/30',
+  custom_command:      'bg-slate-500/15 text-slate-400 border border-slate-500/30',
+  run_swarm_template:  'bg-amber-500/15 text-amber-400 border border-amber-500/30',
 };
 
 // ─── Action Payload Editor ────────────────────────────────
@@ -205,6 +206,35 @@ function PayloadEditor({
             />
             <span className="text-xs text-slate-400">{t.shellMode}</span>
           </label>
+        </div>
+      );
+    case 'run_swarm_template':
+      return (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Template ID</label>
+            <input
+              type="number"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              placeholder="Swarm template ID (create one in the API)"
+              value={String(payload.template_id ?? '')}
+              onChange={e => onChange({ ...payload, template_id: parseInt(e.target.value) || 0 })}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Goal Override (optional)</label>
+            <textarea
+              rows={2}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              placeholder="Leave empty to use template goal. Use {date} placeholder."
+              value={String(payload.goal_override ?? '')}
+              onChange={e => onChange({ ...payload, goal_override: e.target.value })}
+            />
+          </div>
+          <p className="text-xs text-slate-500">
+            Creates a new swarm instance from the template every time this job fires.
+            Use the <code className="bg-slate-800 px-1 rounded">/api/swarm-templates</code> endpoint to manage templates.
+          </p>
         </div>
       );
   }

@@ -63,6 +63,8 @@ class OpenACM:
         self._activity_watcher = None
         self._cron_scheduler = None
         self._swarm_manager = None
+        self._content_watcher = None  # kept for server.py compat; plugins manage their own
+        self._plugin_manager = None
         self._shutdown_event = asyncio.Event()
 
     async def run(self):
@@ -281,6 +283,12 @@ class OpenACM:
         from openacm.tools import swarm_tool
         self.tool_registry.register_module(swarm_tool)
 
+        from openacm.tools import code_editor
+        self.tool_registry.register_module(code_editor)
+
+        # Content tools are now registered by the ContentAutomationPlugin via plugin_manager
+        # (see _init_plugins). Keep nothing here for content.
+
         # Stitch tool (optional — requiere STITCH_API_KEY en config/.env)
         try:
             from openacm.tools import stitch_tool
@@ -432,6 +440,13 @@ class OpenACM:
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Swarm manager skipped: {e}")
 
+        # Pass swarm_manager to cron scheduler so run_swarm_template works
+        if self._cron_scheduler and self._swarm_manager:
+            self._cron_scheduler._swarm_manager = self._swarm_manager
+
+        # Start all registered plugins (they manage their own watchers/tools/keywords)
+        await self._start_plugins()
+
     async def _init_web(self):
         """Start the web dashboard."""
         try:
@@ -467,6 +482,7 @@ class OpenACM:
                 activity_watcher=self._activity_watcher,
                 cron_scheduler=self._cron_scheduler,
                 swarm_manager=self._swarm_manager,
+                content_watcher=self._content_watcher,
             )
             console.print(
                 f"  [green]✓[/green] Web dashboard at "
@@ -475,6 +491,35 @@ class OpenACM:
             )
         except Exception as e:
             console.print(f"  [red]✗[/red] Web dashboard failed: {e}")
+
+    async def _start_plugins(self) -> None:
+        """Load builtin plugins and start them all."""
+        from openacm.plugins import plugin_manager
+        from pathlib import Path as _Path
+
+        self._plugin_manager = plugin_manager
+
+        # Auto-discover plugins in openacm.plugins.*
+        plugin_manager.load_builtin_plugins()
+
+        # Start each plugin with the full app context
+        await plugin_manager.start_all(
+            config=self.config,
+            database=self.database,
+            event_bus=self.event_bus,
+            llm_router=self.llm_router,
+            brain=self.brain,
+            tool_registry=self.tool_registry,
+            skill_manager=self.skill_manager,
+            activity_watcher=self._activity_watcher,
+            cron_scheduler=self._cron_scheduler,
+            swarm_manager=self._swarm_manager,
+            workspace_root=_Path(self.config.storage.workspace_path),
+        )
+
+        loaded = [p.name for p in plugin_manager.plugins]
+        if loaded:
+            console.print(f"  [green]✓[/green] Plugins: {', '.join(loaded)}")
 
     async def _console_loop(self):
         """Interactive console for direct chatting."""
@@ -581,6 +626,13 @@ class OpenACM:
         if self._activity_watcher:
             try:
                 await self._activity_watcher.stop()
+            except Exception:
+                pass
+
+        # Stop all plugins (they manage their own watchers/connections)
+        if self._plugin_manager:
+            try:
+                await self._plugin_manager.stop_all()
             except Exception:
                 pass
 

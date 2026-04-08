@@ -31,6 +31,7 @@ ALWAYS_INCLUDE_TOOLS = {
     "run_command",
     "read_file",
     "write_file",
+    "edit_file",
     "web_search",
 }
 
@@ -155,6 +156,15 @@ class ToolRegistry:
             "archivo", "carpeta", "leer", "escribir", "guardar", "lista",
             "pdf", "excel", "word", "pptx", "powerpoint", "xlsx", "docx",
             "csv", "zip", "download", "descargar", "adjunto", "adjuntar",
+            # Code editor tools
+            "edit", "edita", "editar", "modifica", "modificar", "cambia", "cambiar",
+            "reemplaza", "replace", "refactor", "refactoriza",
+            "función", "funcion", "clase", "class", "método", "metodo", "method",
+            "línea", "linea", "line", "outline", "estructura", "structure",
+            "busca en", "search in", "grep", "find in",
+            "lint", "linter", "error de sintaxis", "syntax error",
+            "arregla el código", "fix the code", "fix code",
+            "code", "código", "codigo", "implement", "implementa",
         ],
         "web": [
             "search", "browse", "url", "website", "navigate", "click",
@@ -213,6 +223,14 @@ class ToolRegistry:
             "scan devices", "escanear dispositivos",
         ],
     }
+
+    def register_plugin_keywords(self, keywords: dict[str, list[str]]) -> None:
+        """Allow plugins to register their own intent keyword categories at runtime."""
+        for category, kws in keywords.items():
+            if category in self.INTENT_KEYWORDS:
+                self.INTENT_KEYWORDS[category] = list(self.INTENT_KEYWORDS[category]) + list(kws)
+            else:
+                self.INTENT_KEYWORDS[category] = list(kws)
 
     def get_tools_schema(self) -> list[dict[str, Any]]:
         """Get all tools in OpenAI function calling format."""

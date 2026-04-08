@@ -34,8 +34,14 @@ import {
   BrainCircuit,
   Trash2,
   ShieldCheck,
+  ChevronDown,
+  ChevronUp,
+  DollarSign,
+  ArrowUp,
+  ArrowDown,
+  Info,
 } from 'lucide-react';
-import type { ValidationStep } from '@/stores/chat-store';
+import type { ValidationStep, MessageUsage } from '@/stores/chat-store';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
@@ -247,17 +253,94 @@ function MessageContent({ content, token }: { content: string; token: string | n
   );
 }
 
+// ── Token Badge (debug mode only) ────────────────────────────────────────────
+
+function fmt(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function TokenBadge({ usage }: { usage: MessageUsage }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors group"
+      >
+        <span className="flex items-center gap-0.5">
+          <ArrowUp size={9} className="text-blue-400" />
+          {fmt(usage.prompt_tokens)}
+        </span>
+        <span className="flex items-center gap-0.5">
+          <ArrowDown size={9} className="text-purple-400" />
+          {fmt(usage.completion_tokens)}
+        </span>
+        {usage.cost > 0 && (
+          <span className="flex items-center gap-0.5 text-amber-500">
+            <DollarSign size={9} />
+            {usage.cost < 0.001 ? '<$0.001' : `$${usage.cost.toFixed(4)}`}
+          </span>
+        )}
+        <Info size={9} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+        {open ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+      </button>
+
+      {open && (
+        <div className="mt-1 bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] space-y-1.5 text-slate-400 font-mono max-w-xs">
+          <div className="flex justify-between">
+            <span className="text-slate-500">Model</span>
+            <span className="text-slate-200">{usage.model || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Input tokens</span>
+            <span className="text-blue-400">{usage.prompt_tokens.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500">Output tokens</span>
+            <span className="text-purple-400">{usage.completion_tokens.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between border-t border-slate-700 pt-1.5">
+            <span className="text-slate-500">Total tokens</span>
+            <span className="text-white">{usage.total_tokens.toLocaleString()}</span>
+          </div>
+          {usage.cost > 0 && (
+            <div className="flex justify-between">
+              <span className="text-slate-500">Est. cost</span>
+              <span className="text-amber-400">
+                ${usage.cost < 0.000001 ? '< $0.000001' : usage.cost.toFixed(6)}
+              </span>
+            </div>
+          )}
+          {usage.requests > 1 && (
+            <div className="flex justify-between">
+              <span className="text-slate-500">LLM calls</span>
+              <span>{usage.requests}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MessageBubble({
   content,
   role,
   badge,
   attachments,
-  toolCall
+  toolCall,
+  usage,
+  debugMode,
 }: {
   content: string;
   role: 'user' | 'assistant' | 'error' | 'system';
   badge?: string;
   attachments?: Array<{ id?: string; name: string; type: string }>;
+  usage?: MessageUsage;
+  debugMode?: boolean;
   toolCall?: {
     tool: string;
     arguments: string;
@@ -372,6 +455,10 @@ function MessageBubble({
             </div>
           )}
         </div>
+
+        {debugMode && !isUser && !isError && usage && usage.total_tokens > 0 && (
+          <TokenBadge usage={usage} />
+        )}
       </div>
     </div>
   );
@@ -413,6 +500,9 @@ export default function ChatPage() {
   const [inputValue, setInputValue] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [debugMode] = useState(() =>
+    typeof window !== 'undefined' && localStorage.getItem('openacm_debug_mode') === 'true'
+  );
 
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -896,6 +986,8 @@ export default function ChatPage() {
                       badge={msg.badge}
                       attachments={msg.attachments}
                       toolCall={msg.toolCall}
+                      usage={msg.usage}
+                      debugMode={debugMode}
                     />
                   );
                 })

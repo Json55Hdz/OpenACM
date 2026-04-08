@@ -61,7 +61,8 @@ class PatternAnalyzer:
             if routine:
                 saved.append(routine)
 
-        log.info("PatternAnalyzer: done", new_routines=len(saved), patterns_found=len(patterns))
+        merged = await self._deduplicate_existing()
+        log.info("PatternAnalyzer: done", new_routines=len(saved), patterns_found=len(patterns), merged=merged)
         return saved
 
     async def _enrich_with_llm(self, pattern: dict[str, Any]) -> None:
@@ -157,10 +158,13 @@ class PatternAnalyzer:
         # Aggregate focus time per app in this session
         app_focus: dict[str, float] = defaultdict(float)
         app_process: dict[str, str] = {}
+        app_exe: dict[str, str] = {}
         for act in acts:
             name = act.get("app_name", "Unknown")
             app_focus[name] += act.get("focus_seconds", 0)
             app_process[name] = act.get("process_name", name.lower())
+            if act.get("exe_path"):
+                app_exe[name] = act["exe_path"]
 
         return {
             "start": start_str,
@@ -168,6 +172,7 @@ class PatternAnalyzer:
             "day_of_week": dow,
             "app_focus": dict(app_focus),
             "app_process": app_process,
+            "app_exe": app_exe,
         }
 
     # ─── Pattern detection ─────────────────────────────────────
@@ -218,7 +223,7 @@ class PatternAnalyzer:
 
         # Also collect full-session sets (up to 5 apps) that repeat
         set_data: dict[frozenset, dict] = defaultdict(
-            lambda: {"count": 0, "hours": [], "days": [], "app_process": {}}
+            lambda: {"count": 0, "hours": [], "days": [], "app_process": {}, "app_exe": {}}
         )
         for sess in session_sets:
             key = frozenset(sess["apps"])
@@ -226,6 +231,7 @@ class PatternAnalyzer:
             set_data[key]["hours"].append(sess["hour"])
             set_data[key]["days"].append(sess["day_of_week"])
             set_data[key]["app_process"].update(sess["app_process"])
+            set_data[key]["app_exe"].update(sess.get("app_exe", {}))
 
         patterns: list[dict[str, Any]] = []
         seen_keys: set[frozenset] = set()
@@ -246,6 +252,7 @@ class PatternAnalyzer:
                 self._build_pattern(
                     apps=sorted(list(app_set)),
                     app_process=data["app_process"],
+                    app_exe=data.get("app_exe", {}),
                     count=data["count"],
                     hours=data["hours"],
                     days=data["days"],
@@ -274,6 +281,7 @@ class PatternAnalyzer:
                 self._build_pattern(
                     apps=apps,
                     app_process={},
+                    app_exe={},
                     count=data["count"],
                     hours=data["hours"],
                     days=data["days"],
@@ -289,16 +297,19 @@ class PatternAnalyzer:
         count: int,
         hours: list[int],
         days: list[int],
+        app_exe: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         avg_hour = sum(hours) / len(hours) if hours else 12
         is_time = self._is_time_consistent(hours)
         common_days = self._common_days(days)
         confidence = min(0.97, 0.30 + count * 0.07)
+        app_exe = app_exe or {}
 
         apps_payload = [
             {
                 "app_name": app,
                 "process_name": app_process.get(app, app.lower().replace(" ", "_")),
+                "exe_path": app_exe.get(app, ""),
             }
             for app in apps
         ]
@@ -372,8 +383,71 @@ class PatternAnalyzer:
 
     # ─── DB persistence ───────────────────────────────────────
 
+    @staticmethod
+    def _jaccard(a: frozenset, b: frozenset) -> float:
+        """Jaccard similarity between two sets."""
+        if not a and not b:
+            return 1.0
+        union = len(a | b)
+        return len(a & b) / union if union else 0.0
+
+    async def _deduplicate_existing(self) -> int:
+        """
+        Merge routines in the DB that share >= 70% app overlap (Jaccard).
+        Keeps the one with the highest occurrence_count; deletes the rest.
+        Returns number of routines deleted.
+        """
+        all_routines = await self._db.get_all_routines()
+        if len(all_routines) < 2:
+            return 0
+
+        # Sort best-first (highest occurrence_count) so we keep the "richest" entry
+        all_routines.sort(key=lambda r: r.get("occurrence_count", 0), reverse=True)
+
+        kept: list[tuple[dict, frozenset]] = []
+        merged_count = 0
+
+        for routine in all_routines:
+            try:
+                stored_apps = json.loads(routine.get("apps", "[]"))
+                app_names: frozenset = frozenset(
+                    a["app_name"] if isinstance(a, dict) else a
+                    for a in stored_apps
+                )
+            except Exception:
+                kept.append((routine, frozenset()))
+                continue
+
+            if not app_names:
+                kept.append((routine, frozenset()))
+                continue
+
+            similar_entry = next(
+                ((k, k_apps) for k, k_apps in kept if self._jaccard(app_names, k_apps) >= 0.70),
+                None,
+            )
+
+            if similar_entry:
+                winner, _ = similar_entry
+                new_count = max(
+                    winner.get("occurrence_count", 0),
+                    routine.get("occurrence_count", 0),
+                )
+                await self._db.update_routine(winner["id"], occurrence_count=new_count)
+                await self._db.delete_routine(routine["id"])
+                merged_count += 1
+                log.info(
+                    "PatternAnalyzer: merged duplicate routine",
+                    kept_id=winner["id"],
+                    deleted_id=routine["id"],
+                )
+            else:
+                kept.append((routine, app_names))
+
+        return merged_count
+
     async def _upsert_routine(self, pattern: dict[str, Any]) -> dict[str, Any] | None:
-        """Save pattern as routine; skip if same app set already exists."""
+        """Save pattern as routine; skip if same or similar (>=70% Jaccard) app set already exists."""
         existing = await self._db.get_routine_by_apps(pattern["apps"])
         if existing:
             # Just bump the occurrence count
@@ -383,6 +457,24 @@ class PatternAnalyzer:
                 confidence=max(existing.get("confidence", 0.0), pattern["confidence"]),
             )
             return None
+
+        # Also block near-duplicates via Jaccard similarity
+        new_app_set: frozenset = frozenset(pattern["apps"])
+        for r in await self._db.get_all_routines():
+            try:
+                stored = json.loads(r.get("apps", "[]"))
+                r_apps: frozenset = frozenset(
+                    a["app_name"] if isinstance(a, dict) else a for a in stored
+                )
+            except Exception:
+                continue
+            if self._jaccard(new_app_set, r_apps) >= 0.70:
+                await self._db.update_routine(
+                    r["id"],
+                    occurrence_count=max(r.get("occurrence_count", 0), pattern["occurrence_count"]),
+                    confidence=max(r.get("confidence", 0.0), pattern["confidence"]),
+                )
+                return None
 
         routine_id = await self._db.create_routine(
             name=pattern["name"],

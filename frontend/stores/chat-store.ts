@@ -6,6 +6,15 @@ export interface ValidationStep {
   detail: string;
 }
 
+export interface MessageUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost: number;
+  requests: number;
+  model: string;
+}
+
 interface Message {
   id: string;
   content: string;
@@ -13,6 +22,7 @@ interface Message {
   timestamp: Date;
   attachments?: Attachment[];
   badge?: string;
+  usage?: MessageUsage;
   toolCall?: {
     tool: string;
     arguments: string;

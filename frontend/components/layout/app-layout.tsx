@@ -1,6 +1,6 @@
 'use client';
 
-import { Sidebar } from './Sidebar';
+import { Sidebar } from './sidebar';
 import { useWebSocket } from '@/hooks/use-websocket';
 
 // WebSocket is initialized here (app root) so it stays alive across all page
