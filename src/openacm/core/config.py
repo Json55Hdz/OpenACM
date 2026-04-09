@@ -148,11 +148,22 @@ def _resolve_env_vars(data: Any) -> Any:
     return data
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge override into base. Dicts are merged; other types are replaced."""
+    result = dict(base)
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
 def load_config(config_path: str | Path | None = None) -> AppConfig:
     """
     Load configuration from YAML file + environment variables.
 
-    Priority: env vars > .env file > YAML config > defaults
+    Priority: env vars > .env file > local.yaml > default.yaml > defaults
     """
     root = _find_project_root()
 
@@ -161,7 +172,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     if env_file.exists():
         load_dotenv(env_file)
 
-    # Load YAML config
+    # Load base YAML config (default.yaml — committed, no personal data)
     if config_path is None:
         config_path = root / "config" / "default.yaml"
     else:
@@ -171,6 +182,13 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     if config_path.exists():
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+
+    # Load local overrides (local.yaml — gitignored, personal/machine-specific)
+    local_path = root / "config" / "local.yaml"
+    if local_path.exists():
+        with open(local_path, "r", encoding="utf-8") as f:
+            local_data = yaml.safe_load(f) or {}
+        data = _deep_merge(data, local_data)
 
     # Resolve environment variables in values
     data = _resolve_env_vars(data)

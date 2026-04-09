@@ -63,10 +63,10 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     except Exception as e:
         log.error("Failed to save profile to RAG", error=str(e))
 
-    # Guardar en config.yaml permanentemente
+    # Guardar en local.yaml (gitignored — personal data never goes to default.yaml)
     root = _find_project_root()
-    config_file = root / "config" / "default.yaml"
-    
+    config_file = root / "config" / "local.yaml"
+
     data = {}
     if config_file.exists():
         try:
@@ -80,11 +80,11 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     assistant_config["name"] = assistant_name
     assistant_config["onboarding_completed"] = True
 
-    # Get the base system prompt: prefer A.system_prompt, fall back to assistant.system_prompt
-    base_section = data.get("assistant", {})
+    # Get the base system prompt: prefer local A.system_prompt, then in-memory brain config
+    # (which has the full merged default+local prompt), then hard fallback.
     original_prompt = (
         assistant_config.get("system_prompt")
-        or base_section.get("system_prompt")
+        or (_brain.config.system_prompt if _brain else None)
         or "You are a helpful AI assistant."
     )
 

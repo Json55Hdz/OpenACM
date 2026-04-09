@@ -378,8 +378,22 @@ export function useWebSocket() {
     useChatStore.getState().setSendMessageFn(sendMessage);
     useChatStore.getState().setCancelMessageFn(cancelMessage);
 
+    // Guard against any spurious idle transition while waiting for a response.
+    // Lottie-web registers its own visibilitychange listener that can fire onComplete
+    // with a stale closure (isLooping=false) when switching tabs, resetting the state.
+    // Whenever tamagotchi goes idle while isWaitingResponse is still true, restore it.
+    const unsubscribeTamaGuard = useTamagotchiStore.subscribe((tama) => {
+      if (tama.agentState === 'idle') {
+        const { isWaitingResponse, thinkingLabel } = useChatStore.getState();
+        if (isWaitingResponse) {
+          useTamagotchiStore.getState().setAgentState(thinkingLabel ? 'working' : 'thinking');
+        }
+      }
+    });
+
     return () => {
       unsubscribe();
+      unsubscribeTamaGuard();
       // Only clear timers on unmount — WS connections stay alive
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
       if (eventsReconnectRef.current) clearTimeout(eventsReconnectRef.current);

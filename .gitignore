@@ -23,6 +23,10 @@ config/activity.key
 # User-defined custom LLM providers (may contain API keys)
 config/custom_providers.json
 
+# Personal/local config — machine-specific overrides, never commit
+config/local.yaml
+user_profile.json
+
 # Data
 data/
 *.db

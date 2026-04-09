@@ -67,6 +67,9 @@ export function TamagotchiWidget({ size = 120, showLabel = false }: TamagotchiWi
   }, [agentState, activeSkin]);
 
   const isLooping = LOOPING_STATES.includes(agentState);
+  // Keep a ref so the onComplete callback never has a stale isLooping value
+  const isLoopingRef = useRef(isLooping);
+  isLoopingRef.current = isLooping;
 
   return (
     <div className="flex flex-col items-center">
@@ -76,7 +79,7 @@ export function TamagotchiWidget({ size = 120, showLabel = false }: TamagotchiWi
           loop={isLooping}
           autoplay
           style={{ width: size, height: size }}
-          onComplete={() => { if (!isLooping) setAgentState('idle'); }}
+          onComplete={() => { if (!isLoopingRef.current) setAgentState('idle'); }}
         />
       ) : (
         <CSSFallback state={agentState} size={size} />
