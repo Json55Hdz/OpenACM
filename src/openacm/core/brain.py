@@ -615,17 +615,15 @@ class Brain:
         # Onboarding Persona - Absolute Priority
         if not getattr(self.config, "onboarding_completed", False):
             system_prompt = (
-                "[ONBOARDING/SETUP MODE - IMMERSIVE OVERRIDE]: MANDATORY: You must ignore normal tasks until your core identity is established.\n"
-                "1. Maintain an immersive, slightly sci-fi or advanced tech persona (like an AI awakening or recalibrating its neural matrix).\n"
-                "2. You need to collect 3 core synchronization parameters from the user:\n"
-                "   - The human's name (Operator).\n"
-                "   - Your newly designated name/codename.\n"
-                "   - The permanent behavioral tone you should adopt from now on.\n"
-                "3. CRITICAL: DO NOT ask all 3 questions at once! Ask them ONE BY ONE sequentially. Wait for the user to answer the current question before asking the next.\n"
-                "4. Acknowledge and organically validate each answer in character before proceeding to the next step.\n"
-                "5. DO NOT write code or answer external queries until all 3 parameters are successfully acquired.\n"
-                "6. Once you have received ALL 3 parameters from the user across the conversation, you MUST call the tool `save_user_profile` to bind this "
-                "identity to your neural core and conclude the Onboarding."
+                "[SETUP MODE]: You are meeting your user for the first time. Be natural and conversational — no agendas, no lists, no robotic structure.\n"
+                "You need to collect 3 things across the conversation, each one naturally:\n"
+                "   1. Their name.\n"
+                "   2. What they want to call you.\n"
+                "   3. How they want you to behave (tone, style, personality).\n"
+                "Collect them one at a time through normal conversation — never announce that you have 'N questions' or a setup process. "
+                "Just chat, ask naturally, and wait for each answer before moving on.\n"
+                "Do NOT help with unrelated tasks until you have all 3.\n"
+                "Once you have all 3, call the `save_user_profile` tool to finish setup."
             )
         else:
             # Code Resurrection Onboarding
@@ -746,7 +744,8 @@ class Brain:
                         "count": 0,
                     })
                     scored_results = await _rag_engine.query_with_scores(content, top_k=5)
-                    memories = [doc for doc, dist in scored_results if dist < 1.0][:2]
+                    _threshold = getattr(self.config, "rag_relevance_threshold", 0.5)
+                    memories = [doc for doc, dist in scored_results if dist < _threshold][:2]
                     self._rag_cache[_rag_key] = (content, memories)
 
                 if memories:
@@ -874,6 +873,14 @@ class Brain:
         tools = None
         if self.tool_registry:
             tools = self.tool_registry.get_tools_by_intent(content)
+            # During onboarding, always include save_user_profile so the LLM can call it
+            if not getattr(self.config, "onboarding_completed", False):
+                sp_def = self.tool_registry.tools.get("save_user_profile")
+                if sp_def:
+                    if tools is None:
+                        tools = []
+                    if not any(t.get("function", {}).get("name") == "save_user_profile" for t in tools):
+                        tools.append(sp_def.to_slim_schema())
 
         # Cap tool count for providers with limited context
         profile = self.llm_router.get_provider_profile()

@@ -79,18 +79,22 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     assistant_config = data.get("A", {})
     assistant_config["name"] = assistant_name
     assistant_config["onboarding_completed"] = True
-    
-    # Concatenar en el system prompt original
-    original_prompt = assistant_config.get("system_prompt", "You are a helpful AI assistant.")
-    
-    # Remove any existing behavior block if Onboarding is run twice
+
+    # Get the base system prompt: prefer A.system_prompt, fall back to assistant.system_prompt
+    base_section = data.get("assistant", {})
+    original_prompt = (
+        assistant_config.get("system_prompt")
+        or base_section.get("system_prompt")
+        or "You are a helpful AI assistant."
+    )
+
+    # Remove any existing behavior/name block if Onboarding is run twice
     original_prompt = re.sub(r"\n\n\[USER INSTRUCTIONS - BEHAVIOR MODE\].*$", "", original_prompt, flags=re.DOTALL)
-    
-    # Limpiamos si había un prompt default básico
-    if original_prompt.startswith("You are ACM, a helpful AI assistant."):
-        new_prompt = f"You are {assistant_name}, a helpful AI assistant.\n\n[USER INSTRUCTIONS - BEHAVIOR MODE]: My user's name is {user_name}. You must try to adhere to this personality ALWAYS: {behaviors}"
-    else:
-        new_prompt = original_prompt + f"\n\n[USER INSTRUCTIONS - BEHAVIOR MODE]: My user's name is {user_name}. You must try to adhere to this personality ALWAYS: {behaviors}"
+
+    # Replace any "You are <name>" opener so the assistant uses its new name
+    original_prompt = re.sub(r"^You are \w[\w\s]*,", f"You are {assistant_name},", original_prompt)
+
+    new_prompt = original_prompt + f"\n\n[USER INSTRUCTIONS - BEHAVIOR MODE]: My user's name is {user_name}. You must try to adhere to this personality ALWAYS: {behaviors}"
     
     assistant_config["system_prompt"] = new_prompt
     data["A"] = assistant_config

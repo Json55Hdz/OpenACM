@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
@@ -216,7 +218,37 @@ function MessageContent({ content, token }: { content: string; token: string | n
 
   return (
     <div>
-      {cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>}
+      {cleanText && (
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
+            h1: ({ children }) => <h1 className="text-xl font-bold text-white mt-4 mb-2 first:mt-0">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-lg font-semibold text-white mt-3 mb-1.5 first:mt-0">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-base font-semibold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h3>,
+            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+            em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
+            ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-2 pl-2">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-2 pl-2">{children}</ol>,
+            li: ({ children }) => <li className="text-slate-200">{children}</li>,
+            code: ({ children, className }) => {
+              const isBlock = className?.includes('language-');
+              return isBlock
+                ? <code className="block bg-slate-950 text-green-300 rounded-lg px-4 py-3 my-2 text-sm font-mono overflow-x-auto whitespace-pre">{children}</code>
+                : <code className="bg-slate-800 text-blue-300 rounded px-1.5 py-0.5 text-sm font-mono">{children}</code>;
+            },
+            pre: ({ children }) => <>{children}</>,
+            blockquote: ({ children }) => <blockquote className="border-l-2 border-blue-500 pl-3 my-2 text-slate-400 italic">{children}</blockquote>,
+            a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">{children}</a>,
+            hr: () => <hr className="border-slate-700 my-3" />,
+            table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-sm border-collapse w-full">{children}</table></div>,
+            th: ({ children }) => <th className="border border-slate-600 px-3 py-1.5 bg-slate-800 text-left font-semibold text-slate-200">{children}</th>,
+            td: ({ children }) => <td className="border border-slate-700 px-3 py-1.5 text-slate-300">{children}</td>,
+          }}
+        >
+          {cleanText}
+        </ReactMarkdown>
+      )}
       {mediaMatches.length > 0 && (
         <div className={cn("space-y-2", cleanText && "mt-3")}>
           {mediaMatches.map(({ filename }, idx) => {
@@ -417,7 +449,9 @@ function MessageBubble({
             ? "bg-blue-600 text-white rounded-tr-sm"
             : isError
               ? "bg-red-500/20 text-red-200 border border-red-500/30 rounded-tl-sm"
-              : "bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-sm"
+              : isSystem
+                ? "bg-slate-900/80 text-slate-300 border border-slate-600/50 rounded-tl-sm text-sm"
+                : "bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-sm"
         )}>
           <MessageContent content={content} token={token} />
 
@@ -486,6 +520,8 @@ export default function ChatPage() {
 
   const sendMessage = useChatStore((s) => s.sendMessageFn);
   const cancelMessage = useChatStore((s) => s.cancelMessageFn);
+  const pendingOnboardingGreeting = useChatStore((s) => s.pendingOnboardingGreeting);
+  const setPendingOnboardingGreeting = useChatStore((s) => s.setPendingOnboardingGreeting);
   const { data: conversations } = useConversations();
   const { data: history, isFetching: isLoadingHistory } = useConversationHistory(currentTarget.channel, currentTarget.user);
   const chatCommand = useChatCommand();
@@ -555,6 +591,15 @@ export default function ChatPage() {
     }
   }, [history, currentTarget.channel, currentTarget.user, setMessages]);
   
+  // Consume pending onboarding greeting — add it once history has been loaded
+  // (or immediately if there's no history to load). Clear after showing.
+  useEffect(() => {
+    if (pendingOnboardingGreeting === null) return;
+    if (isLoadingHistory) return; // wait for history to settle first
+    addMessage({ content: pendingOnboardingGreeting, role: 'assistant' });
+    setPendingOnboardingGreeting(null);
+  }, [pendingOnboardingGreeting, isLoadingHistory, addMessage, setPendingOnboardingGreeting]);
+
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

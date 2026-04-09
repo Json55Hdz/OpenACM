@@ -26,6 +26,7 @@ class AssistantConfig(BaseModel):
     max_context_messages: int = 50
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
+    rag_relevance_threshold: float = 0.5  # Cosine distance cutoff for RAG recall (0=identical, 1=unrelated)
 
 
 class LLMConfig(BaseModel):
@@ -175,11 +176,16 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     data = _resolve_env_vars(data)
 
     # Map YAML structure to config models
-    # The YAML uses "A" for assistant config
+    # "A" key is written by save_user_profile (user profile + onboarding state)
+    # "assistant" key is the default.yaml key for base config
+    # When both exist, merge them: base "assistant" provides defaults, "A" overrides
     config_data = {}
 
-    if "A" in data:
-        config_data["assistant"] = data["A"]
+    if "A" in data or "assistant" in data:
+        base = dict(data.get("assistant", {}))
+        override = dict(data.get("A", {}))
+        base.update(override)  # A overrides assistant fields
+        config_data["assistant"] = base
     if "llm" in data:
         config_data["llm"] = data["llm"]
     if "security" in data:

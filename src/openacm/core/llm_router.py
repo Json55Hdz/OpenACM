@@ -35,37 +35,6 @@ litellm.set_verbose = False
 
 # ── Token pricing table (USD per 1M tokens) ─────────────────────────────────
 # Format: model_prefix_lowercase → (input_price, output_price)
-_MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "claude-opus-4":        (15.00, 75.00),
-    "claude-sonnet-4":      (3.00,  15.00),
-    "claude-haiku-4":       (0.80,   4.00),
-    "claude-3-5-sonnet":    (3.00,  15.00),
-    "claude-3-5-haiku":     (0.80,   4.00),
-    "claude-3-opus":        (15.00, 75.00),
-    "claude-3-sonnet":      (3.00,  15.00),
-    "claude-3-haiku":       (0.25,   1.25),
-    "gpt-4o-mini":          (0.15,   0.60),
-    "gpt-4o":               (2.50,  10.00),
-    "gpt-4-turbo":          (10.00, 30.00),
-    "gpt-4":                (30.00, 60.00),
-    "gpt-3.5-turbo":        (0.50,   1.50),
-    "o1-mini":              (3.00,  12.00),
-    "o1":                   (15.00, 60.00),
-    "gemini-1.5-pro":       (1.25,   5.00),
-    "gemini-1.5-flash":     (0.075,  0.30),
-    "gemini-2.0-flash":     (0.10,   0.40),
-    "deepseek-chat":        (0.27,   1.10),
-    "deepseek-coder":       (0.27,   1.10),
-    # Local / free models
-    "llama":                (0.00,   0.00),
-    "mistral":              (0.00,   0.00),
-    "qwen":                 (0.00,   0.00),
-    "phi":                  (0.00,   0.00),
-    "gemma":                (0.00,   0.00),
-    "codellama":            (0.00,   0.00),
-}
-
-
 def _count_tokens(model: str, messages: list | None = None, text: str | None = None) -> int:
     """
     Count tokens using LiteLLM's token_counter (wraps tiktoken + model-specific
@@ -90,12 +59,51 @@ def _count_tokens(model: str, messages: list | None = None, text: str | None = N
     return max(1, len(src) // 4)
 
 
+# Maps internal provider names → litellm pricing prefix
+_PROVIDER_PRICING_PREFIX: dict[str, str] = {
+    "anthropic": "anthropic",
+    "gemini": "gemini",
+    "openrouter": "openrouter",
+    "xai": "xai",
+    "deepinfra": "deepinfra",
+    "fireworks": "fireworks_ai",
+    "together": "together_ai",
+    "groq": "groq",
+    "mistral": "mistral",
+    "cohere": "cohere",
+    "perplexity": "perplexity",
+    "vertex_ai": "vertex_ai",
+    "bedrock": "bedrock",
+    "azure": "azure",
+}
+
+
 def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """Return estimated USD cost for a request based on model pricing."""
-    model_lower = model.lower()
-    for prefix, (in_price, out_price) in _MODEL_PRICING.items():
-        if prefix in model_lower:
-            return (prompt_tokens * in_price + completion_tokens * out_price) / 1_000_000
+    """Return estimated USD cost using LiteLLM's built-in pricing database.
+
+    Lookup order:
+    1. Exact key (e.g. 'xai/grok-3-beta' or 'anthropic/claude-sonnet-4-6')
+    2. Bare model name (e.g. 'grok-4o', 'gpt-4o')
+    3. Suffix match for any key ending with '/<bare_name>'
+       — catches custom-provider models like kimi-k2.5 → azure_ai/kimi-k2.5
+    """
+    try:
+        bare = model.split("/")[-1] if "/" in model else model
+        pricing = litellm.model_cost.get(model) or litellm.model_cost.get(bare)
+        if not pricing:
+            suffix = f"/{bare}"
+            for k, v in litellm.model_cost.items():
+                if k.endswith(suffix):
+                    pricing = v
+                    break
+        if pricing:
+            return (
+                pricing.get("input_cost_per_token", 0.0) * prompt_tokens
+                + pricing.get("output_cost_per_token", 0.0) * completion_tokens
+            )
+    except Exception:
+        pass
+    log.debug("No pricing data for model — cost reported as 0", model=model)
     return 0.0
 
 
@@ -282,6 +290,20 @@ class LLMRouter:
                 return model
 
         return "openai/llama3.2"  # fallback Ollama OpenAI-compat
+
+    def _pricing_model_key(self) -> str:
+        """Return the litellm.model_cost key that matches this provider+model for pricing.
+
+        This is distinct from _build_model_string() which adds 'openai/' for custom
+        OpenAI-compat endpoints.  For pricing we want 'xai/grok-3-beta', not 'openai/grok-3-beta'.
+        """
+        provider = self._current_provider.lower()
+        model = self._current_model or ""
+        prefix = _PROVIDER_PRICING_PREFIX.get(provider)
+        if prefix:
+            return f"{prefix}/{model}" if "/" not in model else model
+        # OpenAI and unknown providers: try bare name (gpt-4o is in model_cost without prefix)
+        return model
 
     def _get_api_base(self) -> str | None:
         """Get API base URL for current provider."""
@@ -874,7 +896,8 @@ class LLMRouter:
             # Track totals
             pt = result["usage"]["prompt_tokens"]
             ct = result["usage"]["completion_tokens"]
-            cost = _estimate_cost(model, pt, ct)
+            pricing_key = self._pricing_model_key()
+            cost = _estimate_cost(pricing_key, pt, ct)
             result["usage"]["cost"] = cost
             result["usage"]["elapsed_ms"] = int(result["elapsed"] * 1000)
 
@@ -901,7 +924,7 @@ class LLMRouter:
             if self._database:
                 try:
                     await self._database.log_llm_usage(
-                        model=self._current_model or model,
+                        model=pricing_key,
                         provider=self._current_provider,
                         prompt_tokens=pt,
                         completion_tokens=ct,

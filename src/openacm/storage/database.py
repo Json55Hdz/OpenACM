@@ -159,7 +159,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 9
+    _SCHEMA_VERSION = 12
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -492,6 +492,149 @@ class Database:
                 except Exception:
                     pass  # column already exists
             log.info("Migration 9: added cron_job_id to detected_routines, exe_path to app_activities")
+
+        if current < 10:
+            # Backfill cost=0 rows in llm_usage using litellm's pricing database.
+            # Before this fix, _estimate_cost always returned 0 for unknown models.
+            try:
+                import litellm as _litellm
+
+                def _reprice(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+                    try:
+                        model_key = model.split("/")[-1] if "/" in model else model
+                        pricing = _litellm.model_cost.get(model_key) or _litellm.model_cost.get(model)
+                        if not pricing:
+                            # Suffix match: grok-3-beta → xai/grok-3-beta, kimi-k2.5 → azure_ai/kimi-k2.5
+                            suffix = f"/{model_key}"
+                            for k, v in _litellm.model_cost.items():
+                                if k.endswith(suffix):
+                                    pricing = v
+                                    break
+                        if pricing:
+                            return (
+                                pricing.get("input_cost_per_token", 0.0) * prompt_tokens
+                                + pricing.get("output_cost_per_token", 0.0) * completion_tokens
+                            )
+                    except Exception:
+                        pass
+                    return 0.0
+
+                cursor = await self._db.execute(
+                    "SELECT id, model, prompt_tokens, completion_tokens FROM llm_usage WHERE cost = 0 AND total_tokens > 0"
+                )
+                rows = await cursor.fetchall()
+                updated = 0
+                for row in rows:
+                    new_cost = _reprice(row["model"], row["prompt_tokens"], row["completion_tokens"])
+                    if new_cost > 0:
+                        await self._db.execute(
+                            "UPDATE llm_usage SET cost = ? WHERE id = ?",
+                            (new_cost, row["id"]),
+                        )
+                        updated += 1
+                if updated:
+                    log.info("Migration 10: backfilled LLM usage costs", updated=updated, total=len(rows))
+                else:
+                    log.info("Migration 10: no cost rows to backfill", checked=len(rows))
+            except Exception as e:
+                log.warning("Migration 10: cost backfill failed (non-fatal)", error=str(e))
+
+        if current < 11:
+            # Re-run cost backfill using provider+model exact key (no guessing).
+            # Old rows store bare model names; join with provider column to reconstruct
+            # the canonical litellm pricing key (e.g. xai/grok-3-beta, anthropic/claude-...).
+            try:
+                import litellm as _litellm
+
+                _PRICING_PREFIX = {
+                    "anthropic": "anthropic", "gemini": "gemini", "openrouter": "openrouter",
+                    "xai": "xai", "deepinfra": "deepinfra", "fireworks": "fireworks_ai",
+                    "together": "together_ai", "groq": "groq", "mistral": "mistral",
+                    "cohere": "cohere", "perplexity": "perplexity",
+                }
+
+                def _reprice_v2(provider: str, model: str, prompt_tokens: int, completion_tokens: int) -> float:
+                    try:
+                        # Build canonical pricing key from provider+model
+                        prefix = _PRICING_PREFIX.get((provider or "").lower())
+                        bare = model.split("/")[-1] if "/" in model else model
+                        candidates = []
+                        if prefix:
+                            candidates.append(f"{prefix}/{bare}")
+                        candidates += [model, bare]
+                        pricing = None
+                        for key in candidates:
+                            pricing = _litellm.model_cost.get(key)
+                            if pricing:
+                                break
+                        if pricing:
+                            return (
+                                pricing.get("input_cost_per_token", 0.0) * prompt_tokens
+                                + pricing.get("output_cost_per_token", 0.0) * completion_tokens
+                            )
+                    except Exception:
+                        pass
+                    return 0.0
+
+                cursor = await self._db.execute(
+                    "SELECT id, provider, model, prompt_tokens, completion_tokens FROM llm_usage WHERE cost = 0 AND total_tokens > 0"
+                )
+                rows = await cursor.fetchall()
+                updated = 0
+                for row in rows:
+                    new_cost = _reprice_v2(row["provider"], row["model"], row["prompt_tokens"], row["completion_tokens"])
+                    if new_cost > 0:
+                        await self._db.execute(
+                            "UPDATE llm_usage SET cost = ? WHERE id = ?",
+                            (new_cost, row["id"]),
+                        )
+                        updated += 1
+                if updated:
+                    log.info("Migration 11: re-backfilled costs with suffix matching", updated=updated, total=len(rows))
+            except Exception as e:
+                log.warning("Migration 11: cost re-backfill failed (non-fatal)", error=str(e))
+
+        if current < 12:
+            # Final backfill: adds suffix matching for custom-provider models (e.g. opencode_go/kimi-k2.5)
+            try:
+                import litellm as _litellm
+
+                def _reprice_v3(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+                    try:
+                        bare = model.split("/")[-1] if "/" in model else model
+                        pricing = _litellm.model_cost.get(model) or _litellm.model_cost.get(bare)
+                        if not pricing:
+                            suffix = f"/{bare}"
+                            for k, v in _litellm.model_cost.items():
+                                if k.endswith(suffix):
+                                    pricing = v
+                                    break
+                        if pricing:
+                            return (
+                                pricing.get("input_cost_per_token", 0.0) * prompt_tokens
+                                + pricing.get("output_cost_per_token", 0.0) * completion_tokens
+                            )
+                    except Exception:
+                        pass
+                    return 0.0
+
+                cursor = await self._db.execute(
+                    "SELECT id, model, prompt_tokens, completion_tokens FROM llm_usage WHERE cost = 0 AND total_tokens > 0"
+                )
+                rows = await cursor.fetchall()
+                updated = 0
+                for row in rows:
+                    new_cost = _reprice_v3(row["model"], row["prompt_tokens"], row["completion_tokens"])
+                    if new_cost > 0:
+                        await self._db.execute(
+                            "UPDATE llm_usage SET cost = ? WHERE id = ?",
+                            (new_cost, row["id"]),
+                        )
+                        updated += 1
+                if updated:
+                    log.info("Migration 12: backfilled costs for custom-provider models", updated=updated, total=len(rows))
+            except Exception as e:
+                log.warning("Migration 12: backfill failed (non-fatal)", error=str(e))
 
         # Save new version
         await self._db.execute(

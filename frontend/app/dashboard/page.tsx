@@ -28,6 +28,7 @@ import {
   Calendar,
   ChevronDown,
   X,
+  HelpCircle,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 
@@ -233,7 +234,19 @@ function ModelBreakdownTable({ models }: { models: Array<{
             <span className="text-xs text-slate-300 font-mono truncate max-w-[200px]">{m.model}</span>
             <div className="flex items-center gap-3 text-xs text-slate-500">
               <span>{m.requests} calls</span>
-              {m.cost > 0 && <span className="text-amber-400">${m.cost.toFixed(4)}</span>}
+              {m.cost > 0
+                ? <span className="text-amber-400">${m.cost.toFixed(4)}</span>
+                : (
+                  <span className="relative group flex items-center gap-0.5 text-slate-600 cursor-help">
+                    <HelpCircle size={11} />
+                    <span>no price</span>
+                    <span className="pointer-events-none absolute bottom-full right-0 mb-1.5 w-56 rounded-lg bg-slate-700 border border-slate-600 px-3 py-2 text-xs text-slate-200 leading-snug opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-lg">
+                      <span className="font-semibold text-white block mb-1">No pricing data</span>
+                      <span className="text-slate-400">&ldquo;{m.model}&rdquo; isn&apos;t in LiteLLM&apos;s pricing database yet — cost can&apos;t be calculated automatically for this model.</span>
+                    </span>
+                  </span>
+                )
+              }
             </div>
           </div>
           <div className="flex gap-1 h-1.5">

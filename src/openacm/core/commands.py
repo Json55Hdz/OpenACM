@@ -23,14 +23,14 @@ class CommandResult:
 
 # Canonical command list shown by /help
 COMMANDS_HELP = (
-    "/new     — Start a new conversation (clear history)\n"
-    "/clear   — Same as /new\n"
-    "/reset   — Emergency reset: clears history + fixes broken tool state\n"
-    "/help    — Show this help\n"
-    "/model   — Show current model\n"
-    "/model <name> — Switch to a different model (persisted)\n"
-    "/stats   — Show usage statistics\n"
-    "/export  — Export current conversation as text"
+    "**Available commands**\n\n"
+    "- `/new` · `/clear` — Start a new conversation\n"
+    "- `/reset` — Emergency reset: clears history + fixes broken tool state\n"
+    "- `/help` — Show this help\n"
+    "- `/model` — Show current model\n"
+    "- `/model <name>` — Switch to a different model (persisted)\n"
+    "- `/stats` — Show usage statistics\n"
+    "- `/export` — Export current conversation as text"
 )
 
 
@@ -89,7 +89,7 @@ class CommandProcessor:
             provider = router.current_provider
             return CommandResult(
                 handled=True,
-                text=f"Current model: {model} (provider: {provider})",
+                text=f"Current model: `{model}` (provider: `{provider}`)",
             )
 
         # Change model
@@ -98,7 +98,7 @@ class CommandProcessor:
         await self._persist_model(router.current_model, router.current_provider)
         return CommandResult(
             handled=True,
-            text=f"Model changed to: {router.current_model} (provider: {router.current_provider})",
+            text=f"Model changed to `{router.current_model}` (provider: `{router.current_provider}`)",
         )
 
     async def _persist_model(self, model: str, provider: str) -> None:
@@ -118,14 +118,17 @@ class CommandProcessor:
         router_stats = self.brain.llm_router.get_stats()
 
         text = (
-            f"Messages: {stats.get('total_messages', 0)}\n"
-            f"Messages today: {stats.get('messages_today', 0)}\n"
-            f"Total tokens: {stats.get('total_tokens', 0)}\n"
-            f"Tokens today: {stats.get('tokens_today', 0)}\n"
-            f"Tool executions: {stats.get('total_tool_calls', 0)}\n"
-            f"Active conversations (24h): {stats.get('active_conversations', 0)}\n"
-            f"Session requests: {router_stats.get('total_requests', 0)}\n"
-            f"Current model: {router_stats.get('current_model', 'unknown')}"
+            f"**Usage stats**\n\n"
+            f"| Metric | Value |\n"
+            f"|---|---|\n"
+            f"| Messages (total) | {stats.get('total_messages', 0)} |\n"
+            f"| Messages today | {stats.get('messages_today', 0)} |\n"
+            f"| Tokens (total) | {stats.get('total_tokens', 0):,} |\n"
+            f"| Tokens today | {stats.get('tokens_today', 0):,} |\n"
+            f"| Tool executions | {stats.get('total_tool_calls', 0)} |\n"
+            f"| Active conversations (24h) | {stats.get('active_conversations', 0)} |\n"
+            f"| Session requests | {router_stats.get('total_requests', 0)} |\n"
+            f"| Current model | `{router_stats.get('current_model', 'unknown')}` |"
         )
         return CommandResult(handled=True, text=text, data=stats)
 

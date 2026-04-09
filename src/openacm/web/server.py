@@ -297,6 +297,23 @@ def create_app() -> FastAPI:
             data["live"] = snap
         return data
 
+    @app.get("/api/memory/stats")
+    async def get_memory_stats():
+        """Return RAG memory stats: total docs, breakdown by type, folder size."""
+        from openacm.core.rag import _rag_engine
+        if not _rag_engine or not _rag_engine.is_ready:
+            return {"status": "unavailable", "total": 0, "by_type": {}, "size_bytes": 0}
+        return await _rag_engine.get_stats()
+
+    @app.delete("/api/memory/all")
+    async def clear_all_memory():
+        """Delete ALL documents from the RAG vector store."""
+        from openacm.core.rag import _rag_engine
+        if not _rag_engine or not _rag_engine.is_ready:
+            return {"status": "unavailable", "deleted": 0}
+        deleted = await _rag_engine.clear_all()
+        return {"status": "ok", "deleted": deleted}
+
     # ─── API: Tools ───────────────────────────────────────────
 
     @app.get("/api/plugins/nav")
@@ -841,6 +858,38 @@ def create_app() -> FastAPI:
             log.warning("Failed to persist resurrection paths", error=str(e))
         return {"paths": list(_config.resurrection_paths)}
 
+    @app.get("/api/config/rag_threshold")
+    async def get_rag_threshold():
+        """Get the current RAG relevance threshold."""
+        if not _config:
+            return {"threshold": 0.5}
+        return {"threshold": getattr(_config.assistant, "rag_relevance_threshold", 0.5)}
+
+    @app.post("/api/config/rag_threshold")
+    async def set_rag_threshold(request: Request):
+        """Set the RAG relevance threshold and persist to config.yaml."""
+        if not _config:
+            raise HTTPException(status_code=503, detail="Config not available")
+        data = await request.json()
+        threshold = float(data.get("threshold", 0.5))
+        threshold = max(0.1, min(0.95, threshold))  # clamp to [0.1, 0.95]
+        _config.assistant.rag_relevance_threshold = threshold
+        # Persist to yaml
+        root = _find_project_root()
+        config_file = root / "config" / "default.yaml"
+        cfg_data = {}
+        if config_file.exists():
+            import yaml as _yaml
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg_data = _yaml.safe_load(f) or {}
+        if "A" not in cfg_data:
+            cfg_data["A"] = {}
+        cfg_data["A"]["rag_relevance_threshold"] = threshold
+        import yaml as _yaml
+        with open(config_file, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+        return {"threshold": threshold}
+
     @app.post("/api/config/verbose_channels")
     async def set_verbose_channels(request: Request):
         """Set whether external channels receive tool execution logs."""
@@ -1150,32 +1199,44 @@ def create_app() -> FastAPI:
                 _onboarding_triggered_flags[session_key] = True
                 if _brain and _database:
                     async def _trigger_onboarding_greeting():
+                        _user = "web"
+                        _channel = "web"
+                        _channel_type = "web"
                         try:
                             # Determine if user is completely new or if this is a post-update flow
-                            hist = await _database.get_conversation(target_user, target_channel, limit=1)
+                            hist = await _database.get_conversation(_user, _channel, limit=1)
                             is_new_user = len(hist) == 0
-                            
-                            if is_new_user:
-                                prompt_text = "[SYSTEM]: The user just booted you up for the very first time. Step into character: you are an advanced AI entity awakening on their local machine. Introduce yourself with a touch of narrative 'lore' (e.g., systems initializing, neural pathways connecting). Explain that to finalize synchronization, you need to establish 3 core parameters. Ask them ONLY the FIRST question for now: What is their designation/name? Wait for their response before asking the next."
-                            else:
-                                prompt_text = "[SYSTEM]: Start the Onboarding interview NOW. Step into character: tell the user that a recent major system architecture update has scrambled your core identity matrix. To re-synchronize, you need to recalibrate your behavioral invariants in 3 steps. Ask them ONLY the FIRST question for now: What is their designation/name? Wait for their response before asking the next."
 
+                            if is_new_user:
+                                user_instruction = "Introduce yourself as OpenACM. Be brief and natural — no bullet points, no agenda. Just say hi, mention what you are in one sentence, and ask the user their name casually at the end."
+                            else:
+                                user_instruction = "Greet the user. Mention briefly that after a system update you need to re-learn a few things about them. Then casually ask their name."
+
+                            # Call the LLM directly — bypasses RAG recall and conversation history
+                            # so stale memory can't pollute the first onboarding message.
+                            onboarding_system = (
+                                "[SETUP MODE]: You are meeting your user for the first time. "
+                                "Be natural and conversational — no agendas, no lists, no robotic structure. "
+                                "Collect their name, what they want to call you, and how they want you to behave "
+                                "across the conversation, one thing at a time through normal chat. "
+                                "Never announce that you have 'N questions' or a setup process."
+                            )
                             # Let the frontend mount before sending the message
                             await asyncio.sleep(1.0)
-                            response = await _brain.process_message(
-                                content=prompt_text,
-                                user_id=target_user,
-                                channel_id=target_channel,
-                                channel_type=target_type,
-                                is_transparent=True
+                            result = await _brain.llm_router.chat(
+                                messages=[
+                                    {"role": "system", "content": onboarding_system},
+                                    {"role": "user", "content": user_instruction},
+                                ]
                             )
+                            response = result.get("content", "")
                             from fastapi.websockets import WebSocketState
                             if websocket.client_state == WebSocketState.CONNECTED:
                                 await websocket.send_json({
-                                    "type": "response",
+                                    "type": "onboarding.greeting",
                                     "content": response,
-                                    "attachments": [],
-                                    "usage": {}
+                                    "channel_id": _channel,
+                                    "user_id": _user,
                                 })
                         except Exception as e:
                             log.error("Failed to auto-trigger onboarding greeting", error=str(e))

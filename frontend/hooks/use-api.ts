@@ -430,6 +430,30 @@ export function useCurrentModel() {
   });
 }
 
+export function useMemoryStats() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery({
+    queryKey: ['memory-stats'],
+    queryFn: async () => fetchAPI('/api/memory/stats'),
+    enabled: isAuthenticated,
+    refetchInterval: 30000,
+  });
+}
+
+export function useClearMemory() {
+  const { fetchAPI } = useAPI();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () => fetchAPI('/api/memory/all', { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['memory-stats'] });
+    },
+  });
+}
+
 export function useMediaFiles() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();

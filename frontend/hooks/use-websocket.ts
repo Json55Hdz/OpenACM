@@ -91,7 +91,11 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       const data: WebSocketMessage = JSON.parse(event.data);
 
-      if (data.type === 'response') {
+      if (data.type === 'onboarding.greeting') {
+        // Store the greeting — app-layout navigates to /chat via Next.js router (no reload)
+        // and the chat page adds the greeting to messages on mount.
+        storeRef.current.setPendingOnboardingGreeting(data.content || '');
+      } else if (data.type === 'response') {
         resetSpinner();
         storeRef.current.addMessage({
           content: data.content || '',

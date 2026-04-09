@@ -80,6 +80,9 @@ interface ChatState {
   setRouterLearning: (learning: boolean) => void;
   setActiveSkillNames: (names: string[]) => void;
   setMemoryRecall: (state: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null) => void;
+  // Pending onboarding greeting — set by WS handler, consumed by /chat page
+  pendingOnboardingGreeting: string | null;
+  setPendingOnboardingGreeting: (content: string | null) => void;
   // Stable sendMessage/cancelMessage functions injected by the global WS hook
   sendMessageFn: ((msg: string, attachments?: string[]) => boolean) | null;
   setSendMessageFn: (fn: ((msg: string, attachments?: string[]) => boolean) | null) => void;
@@ -99,6 +102,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isRouterLearning: false,
   activeSkillNames: [],
   memoryRecall: null,
+  pendingOnboardingGreeting: null,
   sendMessageFn: null,
   cancelMessageFn: null,
 
@@ -190,6 +194,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),
   setMemoryRecall: (state) => set({ memoryRecall: state }),
+  setPendingOnboardingGreeting: (content) => set({ pendingOnboardingGreeting: content }),
   setSendMessageFn: (fn) => set({ sendMessageFn: fn }),
   setCancelMessageFn: (fn) => set({ cancelMessageFn: fn }),
 }));

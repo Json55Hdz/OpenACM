@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
-import { useConfig, useAPI } from '@/hooks/use-api';
+import { useConfig, useAPI, useMemoryStats, useClearMemory } from '@/hooks/use-api';
 import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth, useCustomProviders, useAddCustomProvider, useUpdateCustomProvider, useDeleteCustomProvider } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
@@ -36,6 +36,11 @@ import {
   Archive,
   FolderOpen,
   AlertTriangle,
+  Brain,
+  MessageSquare,
+  Code2,
+  Lightbulb,
+  Database,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { clsx, type ClassValue } from 'clsx';
@@ -74,6 +79,75 @@ function ConfigSection({
     </div>
   );
 }
+
+function RagThresholdControl({ fetchAPI }: { fetchAPI: (url: string, opts?: RequestInit) => Promise<unknown> }) {
+  const [threshold, setThreshold] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchAPI('/api/config/rag_threshold').then((data: unknown) => {
+      const d = data as { threshold?: number };
+      if (typeof d?.threshold === 'number') setThreshold(d.threshold);
+    }).catch(() => {});
+  }, [fetchAPI]);
+
+  const save = async (val: number) => {
+    setSaving(true);
+    try {
+      await fetchAPI('/api/config/rag_threshold', {
+        method: 'POST',
+        body: JSON.stringify({ threshold: val }),
+      });
+      toast.success('Relevance threshold saved');
+    } catch {
+      toast.error('Failed to save threshold');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (threshold === null) return null;
+
+  const label = threshold <= 0.3
+    ? 'Very strict — only near-identical matches'
+    : threshold <= 0.5
+    ? 'Balanced — recommended'
+    : threshold <= 0.7
+    ? 'Loose — more context, more noise'
+    : 'Very loose — almost everything gets recalled';
+
+  return (
+    <div className="space-y-2 pt-1 border-t border-slate-800">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-300">Recall relevance threshold</p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Cosine distance cutoff for long-term memory recall. Lower = stricter (fewer but more accurate results). Higher = more context but may pull in unrelated memories.
+          </p>
+        </div>
+        <span className="text-sm font-mono text-blue-400 ml-4 shrink-0">{threshold.toFixed(2)}</span>
+      </div>
+      <input
+        type="range"
+        min={0.1}
+        max={0.95}
+        step={0.05}
+        value={threshold}
+        onChange={(e) => setThreshold(parseFloat(e.target.value))}
+        onMouseUp={(e) => save(parseFloat((e.target as HTMLInputElement).value))}
+        onTouchEnd={(e) => save(parseFloat((e.target as HTMLInputElement).value))}
+        className="w-full accent-blue-500"
+        disabled={saving}
+      />
+      <div className="flex justify-between text-[10px] text-slate-600">
+        <span>0.1 — strict</span>
+        <span className="text-slate-400 italic">{label}</span>
+        <span>0.95 — loose</span>
+      </div>
+    </div>
+  );
+}
+
 
 function InfoRow({
   label,
@@ -288,6 +362,27 @@ export default function ConfigPage() {
       return updated;
     });
   };
+  const { data: memoryStats } = useMemoryStats();
+  const clearMemory = useClearMemory();
+
+  const handleClearMemory = async () => {
+    if (!window.confirm('¿Estás seguro de que quieres borrar TODA la memoria RAG? Esta acción no se puede deshacer.')) return;
+    try {
+      const result = await clearMemory.mutateAsync();
+      toast.success(`Memoria borrada — ${result?.deleted ?? 0} documentos eliminados`);
+    } catch {
+      toast.error('Error al borrar la memoria');
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  };
+
   const { data: providerStatus } = useProviderStatus();
   const { data: googleStatus } = useGoogleStatus();
   const { data: customProviders = [] } = useCustomProviders();
@@ -1189,6 +1284,72 @@ export default function ConfigPage() {
               </div>
             </div>
           </ConfigSection>
+        </div>
+
+        {/* RAG Memory */}
+        <div className="mt-6">
+        <ConfigSection
+          title="RAG Memory"
+          subtitle="Vector memory engine — stores notes, conversation fragments, and archived code for long-term recall"
+          icon={Brain}
+        >
+          {memoryStats?.status === 'unavailable' ? (
+            <p className="text-sm text-slate-500">RAG engine unavailable or not yet initialized.</p>
+          ) : (
+            <div className="space-y-5">
+              {/* Summary row */}
+              <div className="flex flex-wrap gap-4">
+                <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg">
+                  <Database size={16} className="text-blue-400" />
+                  <span className="text-sm text-slate-300">
+                    <span className="font-semibold text-white">{memoryStats?.total ?? 0}</span> documents
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg">
+                  <FolderOpen size={16} className="text-slate-400" />
+                  <span className="text-sm text-slate-300">
+                    <span className="font-semibold text-white">{formatBytes(memoryStats?.size_bytes ?? 0)}</span> on disk
+                  </span>
+                </div>
+              </div>
+
+              {/* Breakdown by type */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { key: 'note', label: 'Notes & facts', Icon: Lightbulb, color: 'text-yellow-400' },
+                  { key: 'conversation', label: 'Conversations', Icon: MessageSquare, color: 'text-green-400' },
+                  { key: 'code_archive', label: 'Archived code', Icon: Code2, color: 'text-purple-400' },
+                ].map(({ key, label, Icon, color }) => {
+                  const count = memoryStats?.by_type?.[key] ?? 0;
+                  return (
+                    <div key={key} className="flex items-center gap-3 px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg">
+                      <Icon size={18} className={color} />
+                      <div>
+                        <p className="text-xs text-slate-500">{label}</p>
+                        <p className="text-sm font-semibold text-white">{count}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Relevance threshold */}
+              <RagThresholdControl fetchAPI={fetchAPI} />
+
+              {/* Clear button */}
+              <div className="pt-2 border-t border-slate-800">
+                <button
+                  onClick={handleClearMemory}
+                  disabled={clearMemory.isPending || (memoryStats?.total ?? 0) === 0}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600/15 hover:bg-red-600/25 disabled:opacity-40 text-red-400 border border-red-600/30 rounded-lg text-sm transition-colors"
+                >
+                  <Trash2 size={15} />
+                  Clear all memory
+                </button>
+              </div>
+            </div>
+          )}
+        </ConfigSection>
         </div>
 
         {/* System Info Footer */}

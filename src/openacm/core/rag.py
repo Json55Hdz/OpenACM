@@ -281,14 +281,62 @@ class RAGEngine:
             chunks.append(current_chunk)
 
         return [c for c in chunks if c.strip()]
-""" 
-async def get_stats(self) -> dict:
-    if not self._ready:
-        return {"status": "unavailable"}
-    collection = _get_collection()
-    return {
-        "status": "ready",
-        "documents": collection.count(),
-        "model": EMBEDDING_MODEL,
-    }
-"""
+
+    async def get_stats(self) -> dict:
+        """Return stats about stored memory: total docs, breakdown by type, folder size."""
+        import asyncio
+        import os
+
+        if not self._ready:
+            return {"status": "unavailable", "total": 0, "by_type": {}, "size_bytes": 0}
+
+        collection = _get_collection()
+
+        def _compute():
+            total = collection.count()
+            by_type: dict[str, int] = {}
+            for type_name in ("note", "conversation", "code_archive"):
+                try:
+                    result = collection.get(where={"type": type_name}, include=[])
+                    by_type[type_name] = len(result["ids"])
+                except Exception:
+                    by_type[type_name] = 0
+            # Sum up any remaining types not in the list above
+            known = sum(by_type.values())
+            other = total - known
+            if other > 0:
+                by_type["other"] = other
+
+            # Folder size
+            size_bytes = 0
+            persist = Path(PERSIST_DIR)
+            if persist.exists():
+                for f in persist.rglob("*"):
+                    if f.is_file():
+                        try:
+                            size_bytes += f.stat().st_size
+                        except OSError:
+                            pass
+            return {"status": "ready", "total": total, "by_type": by_type, "size_bytes": size_bytes}
+
+        return await asyncio.to_thread(_compute)
+
+    async def clear_all(self) -> int:
+        """Delete ALL documents from the vector store. Returns count of deleted docs."""
+        import asyncio
+        if not self._ready:
+            return 0
+        collection = _get_collection()
+
+        def _do_clear():
+            total = collection.count()
+            if total == 0:
+                return 0
+            # Get all IDs then delete them
+            result = collection.get(include=[])
+            ids = result.get("ids", [])
+            if ids:
+                collection.delete(ids=ids)
+            return total
+
+        return await asyncio.to_thread(_do_clear)

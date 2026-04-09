@@ -51,6 +51,11 @@ class MemoryManager:
         """Generate a unique key for a user/channel pair."""
         return f"{channel_id}:{user_id}"
 
+    async def clear(self, user_id: str, channel_id: str) -> None:
+        """Drop the in-memory cache for a conversation (DB rows are kept)."""
+        key = self._key(user_id, channel_id)
+        self._cache.pop(key, None)
+
     @staticmethod
     def _content_for_db(content: Any) -> str:
         """Serialize message content to a clean, human-readable DB string.
