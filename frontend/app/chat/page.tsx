@@ -557,6 +557,9 @@ export default function ChatPage() {
 
     if (history && Array.isArray(history)) {
       loadedKeyRef.current = key;
+      // If we already have in-memory messages for this conversation (restored from
+      // the per-conversation cache), keep them — they have usage/token data.
+      if (useChatStore.getState().messages.length > 0) return;
       if (history.length > 0) {
         const visible = history
           .filter((msg: { role: string; content: string }) => {
@@ -761,7 +764,6 @@ export default function ChatPage() {
   };
   
   const selectConversation = (conv: Conversation) => {
-    // Reset history tracking so it reloads for the new conversation
     const newKey = `${conv.channel_id}:${conv.user_id}`;
     if (loadedKeyRef.current !== newKey) {
       loadedKeyRef.current = '';
@@ -776,7 +778,6 @@ export default function ChatPage() {
   const startNewConversation = () => {
     const newUserId = `web_${Date.now()}`;
     loadedKeyRef.current = '';
-    setMessages([]);
     setTarget({
       channel: 'web',
       user: newUserId,

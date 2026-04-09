@@ -53,6 +53,10 @@ interface ChatTarget {
 
 interface ChatState {
   messages: Message[];
+  // Per-conversation caches: key = "channel:userId"
+  savedMessages: Record<string, Message[]>;
+  savedWaiting: Record<string, boolean>;
+  savedThinkingLabel: Record<string, string | null>;
   currentTarget: ChatTarget;
   isWaitingResponse: boolean;
   thinkingLabel: string | null;
@@ -64,13 +68,16 @@ interface ChatState {
   activeSkillNames: string[];
   memoryRecall: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null;
 
-  addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
+  // forKey: if provided and different from currentTarget, add to savedMessages instead
+  addMessage: (message: Omit<Message, 'id' | 'timestamp'>, forKey?: string) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
   upsertValidationStep: (tool: string, step: ValidationStep, done?: boolean, passed?: boolean) => void;
   clearMessages: () => void;
   setTarget: (target: ChatTarget) => void;
   setWaitingResponse: (waiting: boolean) => void;
   setThinkingLabel: (label: string | null) => void;
+  // Reset waiting state — forKey resets a background conversation instead of current
+  resetWaiting: (forKey?: string) => void;
   addAttachment: (attachment: Attachment) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
@@ -92,6 +99,9 @@ interface ChatState {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
+  savedMessages: {},
+  savedWaiting: {},
+  savedThinkingLabel: {},
   currentTarget: { channel: 'web', user: 'web', title: 'Web Local' },
   isWaitingResponse: false,
   thinkingLabel: null,
@@ -106,13 +116,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessageFn: null,
   cancelMessageFn: null,
 
-  addMessage: (message) => {
+  addMessage: (message, forKey) => {
+    const state = get();
+    const currentKey = `${state.currentTarget.channel}:${state.currentTarget.user}`;
+    const targetKey = forKey ?? currentKey;
+
     const newMessage: Message = {
       ...message,
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       timestamp: new Date(),
     };
-    set((state) => ({ messages: [...state.messages, newMessage] }));
+
+    if (targetKey === currentKey) {
+      set((s) => ({ messages: [...s.messages, newMessage] }));
+    } else {
+      // Response arrived for a different conversation — store it there
+      set((s) => ({
+        savedMessages: {
+          ...s.savedMessages,
+          [targetKey]: [...(s.savedMessages[targetKey] ?? []), newMessage],
+        },
+      }));
+    }
   },
 
   setMessages: (messages) => {
@@ -164,32 +189,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   setTarget: (target) => {
-    const current = get().currentTarget;
-    // Same conversation — don't clear messages
-    if (current.channel === target.channel && current.user === target.user) {
+    const state = get();
+    const oldKey = `${state.currentTarget.channel}:${state.currentTarget.user}`;
+    const newKey = `${target.channel}:${target.user}`;
+
+    // Same conversation — just update title etc., no save/restore
+    if (oldKey === newKey) {
       set({ currentTarget: target });
       return;
     }
-    set({ currentTarget: target, messages: [] });
+
+    // Save current state under the old key, restore saved state for new key
+    const savedMessages = { ...state.savedMessages, [oldKey]: state.messages };
+    const savedWaiting = { ...state.savedWaiting, [oldKey]: state.isWaitingResponse };
+    const savedThinkingLabel = { ...state.savedThinkingLabel, [oldKey]: state.thinkingLabel };
+
+    set({
+      currentTarget: target,
+      messages: savedMessages[newKey] ?? [],
+      savedMessages,
+      isWaitingResponse: savedWaiting[newKey] ?? false,
+      thinkingLabel: savedThinkingLabel[newKey] ?? null,
+      savedWaiting,
+      savedThinkingLabel,
+    });
   },
-  
+
   setWaitingResponse: (waiting) => set({ isWaitingResponse: waiting }),
   setThinkingLabel: (label) => set({ thinkingLabel: label }),
-  
-  addAttachment: (attachment) => 
+
+  resetWaiting: (forKey) => {
+    const state = get();
+    const currentKey = `${state.currentTarget.channel}:${state.currentTarget.user}`;
+    if (!forKey || forKey === currentKey) {
+      set({ isWaitingResponse: false, thinkingLabel: null });
+    } else {
+      set((s) => ({
+        savedWaiting: { ...s.savedWaiting, [forKey]: false },
+        savedThinkingLabel: { ...s.savedThinkingLabel, [forKey]: null },
+      }));
+    }
+  },
+
+  addAttachment: (attachment) =>
     set((state) => ({ currentAttachments: [...state.currentAttachments, attachment] })),
-  
+
   removeAttachment: (id) =>
-    set((state) => ({ 
-      currentAttachments: state.currentAttachments.filter(a => a.id !== id) 
+    set((state) => ({
+      currentAttachments: state.currentAttachments.filter(a => a.id !== id)
     })),
-  
+
   clearAttachments: () => set({ currentAttachments: [] }),
-  
+
   setShowToolLogs: (show) => set({ showToolLogs: show }),
-  
+
   setWs: (ws) => set({ ws }),
-  
+
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),

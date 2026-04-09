@@ -3,6 +3,7 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore, authStore } from '@/stores/auth-store';
+import { useTamagotchiStore } from '@/stores/tamagotchi-store';
 import { toast } from 'sonner';
 
 interface WebSocketMessage {
@@ -49,12 +50,11 @@ export function useWebSocket() {
     }
   };
 
-  const resetSpinner = (reason?: string) => {
+  const resetSpinner = (reason?: string, forKey?: string) => {
     clearThinkingTimeout();
-    storeRef.current.setWaitingResponse(false);
-    storeRef.current.setThinkingLabel(null);
+    storeRef.current.resetWaiting(forKey);
     if (reason) {
-      storeRef.current.addMessage({ content: reason, role: 'error' });
+      storeRef.current.addMessage({ content: reason, role: 'error' }, forKey);
     }
   };
 
@@ -63,6 +63,14 @@ export function useWebSocket() {
   useEffect(() => {
     return useChatStore.subscribe((state) => {
       storeRef.current = state;
+    });
+  }, []);
+
+  // Live ref to tamagotchi store — same pattern, no stale closures
+  const tamaRef = useRef(useTamagotchiStore.getState());
+  useEffect(() => {
+    return useTamagotchiStore.subscribe((state) => {
+      tamaRef.current = state;
     });
   }, []);
 
@@ -96,39 +104,58 @@ export function useWebSocket() {
         // and the chat page adds the greeting to messages on mount.
         storeRef.current.setPendingOnboardingGreeting(data.content || '');
       } else if (data.type === 'response') {
-        resetSpinner();
+        // Route to the correct conversation even if user has switched chats
+        const forKey = data.channel_id && data.user_id
+          ? `${data.channel_id}:${data.user_id}`
+          : undefined;
+        resetSpinner(undefined, forKey);
+        tamaRef.current.setAgentState('success');
         storeRef.current.addMessage({
           content: data.content || '',
           role: 'assistant',
           attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
           usage: data.usage,
-        });
+        }, forKey);
       } else if (data.type === 'command') {
         storeRef.current.addMessage({
           content: data.content || '',
           role: 'system',
         });
       } else if (data.type === 'error') {
-        resetSpinner();
+        const forKey = data.channel_id && data.user_id
+          ? `${data.channel_id}:${data.user_id}`
+          : undefined;
+        resetSpinner(undefined, forKey);
+        tamaRef.current.setAgentState('error');
         storeRef.current.addMessage({
           content: data.content || 'Unknown error',
           role: 'error',
-        });
+        }, forKey);
       }
     };
 
     ws.onclose = () => {
       chatWsRef.current = null;
-      resetSpinner(); // prevent infinite spinner on dropped connection
-      // Clear any pending reconnect before scheduling a new one
+      // Don't reset the spinner immediately — the brain may still be processing and
+      // will buffer the response for delivery on reconnect. Only reset if the connection
+      // stays down for more than 12 seconds (3 reconnect attempts × ~3s each).
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
       if (authStore.getState().token) {
         chatReconnectRef.current = setTimeout(connectChatWs, 3000);
+        // Safety-net spinner reset: fires only if reconnection keeps failing
+        setTimeout(() => {
+          if (!chatWsRef.current || chatWsRef.current.readyState !== WebSocket.OPEN) {
+            resetSpinner('Connection lost. The response may have been buffered — try sending your message again.');
+          }
+        }, 12000);
+      } else {
+        resetSpinner();
       }
     };
 
     ws.onerror = () => {
-      resetSpinner();
+      // Don't reset spinner on error — onclose fires right after and handles reconnect.
+      // Resetting here would clear the thinking indicator even though the brain is still processing.
     };
   }, []); // Stable — reads everything from refs/stores
 
@@ -218,12 +245,16 @@ export function useWebSocket() {
         if (status === 'start') {
           storeRef.current.setWaitingResponse(true);
           storeRef.current.setThinkingLabel(null);
+          tamaRef.current.setAgentState('thinking');
         } else if (status === 'tool_running' && data.message) {
           storeRef.current.setThinkingLabel(data.message);
+          tamaRef.current.setAgentState('working');
         } else if (status === 'queued' && data.message) {
           storeRef.current.setThinkingLabel(data.message);
+          tamaRef.current.setAgentState('thinking');
         } else if (status === 'done' || status === 'error') {
           resetSpinner();
+          tamaRef.current.setAgentState(status === 'done' ? 'success' : 'error');
         }
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;

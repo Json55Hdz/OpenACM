@@ -58,6 +58,11 @@ _swarm_manager = None
 _content_watcher = None
 _custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
 _onboarding_triggered_flags: dict[str, bool] = {}  # Track if onboarding was triggered for a channel
+# All currently connected chat WebSocket clients (web channel only).
+_chat_ws_clients: set = set()
+# Buffer for a response that couldn't be delivered to any active client.
+# Replayed to the next client that connects.
+_pending_chat_response: dict | None = None
 
 
 # ─── Custom Provider Helpers (module-level so create_web_server can call them) ──
@@ -1189,7 +1194,17 @@ def create_app() -> FastAPI:
             await websocket.close(code=4001, reason="Unauthorized")
             return
         await websocket.accept()
-        
+        global _pending_chat_response
+        _chat_ws_clients.add(websocket)
+
+        # Replay any response buffered while no client was connected
+        if _pending_chat_response is not None:
+            try:
+                await websocket.send_json(_pending_chat_response)
+                _pending_chat_response = None
+            except Exception:
+                pass
+
         # Auto-trigger Onboarding Greeting if disabled (even for existing users)
         # Note: at connect time we don't have the explicit target channel from the JSON payload, 
         # so we assume the default 'web' context.
@@ -1333,14 +1348,29 @@ def create_app() -> FastAPI:
                                 clean_lines.append(line)
                         clean_response = "\n".join(clean_lines).strip()
 
-                        await websocket.send_json(
-                            {
-                                "type": "response",
-                                "content": clean_response,
-                                "attachments": attachment_names,
-                                "usage": turn_usage,
-                            }
-                        )
+                        payload = {
+                            "type": "response",
+                            "content": clean_response,
+                            "attachments": attachment_names,
+                            "usage": turn_usage,
+                            "user_id": target_user,
+                            "channel_id": target_channel,
+                        }
+                        delivered = False
+                        # Try original connection first, then any other active client
+                        for target in [websocket] + [c for c in _chat_ws_clients if c is not websocket]:
+                            try:
+                                await target.send_json(payload)
+                                delivered = True
+                                break
+                            except Exception:
+                                continue
+                        if not delivered:
+                            # No live client at all — buffer for the next connect
+                            _pending_chat_response = payload
+                        if target is not websocket:
+                            # Original WS is dead — exit its handler
+                            return
                     except WebSocketDisconnect:
                         return
                     except Exception as e:
@@ -1349,6 +1379,8 @@ def create_app() -> FastAPI:
                                 {
                                     "type": "error",
                                     "content": str(e),
+                                    "user_id": target_user,
+                                    "channel_id": target_channel,
                                 }
                             )
                         except (WebSocketDisconnect, Exception):
@@ -1359,10 +1391,14 @@ def create_app() -> FastAPI:
                         {
                             "type": "error",
                             "content": "Brain not available",
+                            "user_id": target_user,
+                            "channel_id": target_channel,
                         }
                     )
         except WebSocketDisconnect:
             pass
+        finally:
+            _chat_ws_clients.discard(websocket)
 
     # ─── WebSocket: Terminal ─────────────────────────────────
 
