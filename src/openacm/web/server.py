@@ -57,6 +57,7 @@ _cron_scheduler = None
 _swarm_manager = None
 _content_watcher = None
 _custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
+_onboarding_triggered_flags: dict[str, bool] = {}  # Track if onboarding was triggered for a channel
 
 
 # ─── Custom Provider Helpers (module-level so create_web_server can call them) ──
@@ -115,11 +116,22 @@ def _make_provider_id(name: str, existing: list[dict]) -> str:
     return candidate
 
 
+def _get_version() -> str:
+    """Read version from pyproject.toml — single source of truth."""
+    try:
+        import tomllib
+        pyproject = Path(__file__).parent.parent.parent.parent / "pyproject.toml"
+        with open(pyproject, "rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except Exception:
+        return "0.0.0"
+
+
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
     app = FastAPI(
         title="OpenACM Dashboard",
-        version="0.1.0",
+        version=_get_version(),
         docs_url="/api/docs",
     )
 
@@ -211,6 +223,7 @@ def create_app() -> FastAPI:
     async def system_info():
         """Basic system info flags (encryption status, etc.)."""
         return {
+            "version": _get_version(),
             "messages_encrypted": _database.messages_encrypted if _database else False,
         }
 
@@ -750,6 +763,84 @@ def create_app() -> FastAPI:
             "confidence_threshold": _brain.local_router.confidence_threshold,
         }
 
+    # ─── Code Resurrection API ────────────────────────────────
+
+    @app.get("/api/config/resurrection_paths")
+    async def get_resurrection_paths():
+        """Get current Code Resurrection paths and watcher status."""
+        if not _config:
+            return {"paths": [], "indexed_files": 0}
+        paths = list(getattr(_config, "resurrection_paths", []))
+        # Read progress from state file
+        indexed_count = 0
+        try:
+            state_file = Path("data/resurrection_state.json")
+            if state_file.exists():
+                with open(state_file, "r") as f:
+                    indexed_count = len(json.load(f))
+        except Exception:
+            pass
+        return {"paths": paths, "indexed_files": indexed_count}
+
+    @app.post("/api/config/resurrection_paths")
+    async def add_resurrection_path_api(request: Request):
+        """Add a path to Code Resurrection."""
+        if not _config:
+            raise HTTPException(status_code=503, detail="Config not available")
+        data = await request.json()
+        new_path = data.get("path", "").strip()
+        if not new_path:
+            raise HTTPException(status_code=400, detail="path is required")
+        p = Path(new_path).resolve()
+        if not p.exists() or not p.is_dir():
+            raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory: {new_path}")
+        str_path = str(p)
+        if str_path not in _config.resurrection_paths:
+            _config.resurrection_paths.append(str_path)
+            # Persist to YAML
+            try:
+                from openacm.core.config import _find_project_root
+                import yaml
+                config_file = _find_project_root() / "config" / "default.yaml"
+                cfg_data = {}
+                if config_file.exists():
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        cfg_data = yaml.safe_load(f) or {}
+                cfg_data["resurrection_paths"] = list(_config.resurrection_paths)
+                config_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(config_file, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+            except Exception as e:
+                log.warning("Failed to persist resurrection paths", error=str(e))
+        return {"paths": list(_config.resurrection_paths)}
+
+    @app.delete("/api/config/resurrection_paths")
+    async def remove_resurrection_path_api(request: Request):
+        """Remove a path from Code Resurrection."""
+        if not _config:
+            raise HTTPException(status_code=503, detail="Config not available")
+        data = await request.json()
+        rm_path = data.get("path", "").strip()
+        if not rm_path:
+            raise HTTPException(status_code=400, detail="path is required")
+        _config.resurrection_paths = [p for p in _config.resurrection_paths if p != rm_path]
+        # Persist to YAML
+        try:
+            from openacm.core.config import _find_project_root
+            import yaml
+            config_file = _find_project_root() / "config" / "default.yaml"
+            cfg_data = {}
+            if config_file.exists():
+                with open(config_file, "r", encoding="utf-8") as f:
+                    cfg_data = yaml.safe_load(f) or {}
+            cfg_data["resurrection_paths"] = list(_config.resurrection_paths)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_file, "w", encoding="utf-8") as f:
+                yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+        except Exception as e:
+            log.warning("Failed to persist resurrection paths", error=str(e))
+        return {"paths": list(_config.resurrection_paths)}
+
     @app.post("/api/config/verbose_channels")
     async def set_verbose_channels(request: Request):
         """Set whether external channels receive tool execution logs."""
@@ -1049,6 +1140,47 @@ def create_app() -> FastAPI:
             await websocket.close(code=4001, reason="Unauthorized")
             return
         await websocket.accept()
+        
+        # Auto-trigger Onboarding Greeting if disabled (even for existing users)
+        # Note: at connect time we don't have the explicit target channel from the JSON payload, 
+        # so we assume the default 'web' context.
+        session_key = "web-web"
+        if not _onboarding_triggered_flags.get(session_key, False):
+            if _config and getattr(_config.assistant, "onboarding_completed", False) is False:
+                _onboarding_triggered_flags[session_key] = True
+                if _brain and _database:
+                    async def _trigger_onboarding_greeting():
+                        try:
+                            # Determine if user is completely new or if this is a post-update flow
+                            hist = await _database.get_conversation(target_user, target_channel, limit=1)
+                            is_new_user = len(hist) == 0
+                            
+                            if is_new_user:
+                                prompt_text = "[SYSTEM]: The user just booted you up for the very first time. Step into character: you are an advanced AI entity awakening on their local machine. Introduce yourself with a touch of narrative 'lore' (e.g., systems initializing, neural pathways connecting). Explain that to finalize synchronization, you need to establish 3 core parameters. Ask them ONLY the FIRST question for now: What is their designation/name? Wait for their response before asking the next."
+                            else:
+                                prompt_text = "[SYSTEM]: Start the Onboarding interview NOW. Step into character: tell the user that a recent major system architecture update has scrambled your core identity matrix. To re-synchronize, you need to recalibrate your behavioral invariants in 3 steps. Ask them ONLY the FIRST question for now: What is their designation/name? Wait for their response before asking the next."
+
+                            # Let the frontend mount before sending the message
+                            await asyncio.sleep(1.0)
+                            response = await _brain.process_message(
+                                content=prompt_text,
+                                user_id=target_user,
+                                channel_id=target_channel,
+                                channel_type=target_type,
+                                is_transparent=True
+                            )
+                            from fastapi.websockets import WebSocketState
+                            if websocket.client_state == WebSocketState.CONNECTED:
+                                await websocket.send_json({
+                                    "type": "response",
+                                    "content": response,
+                                    "attachments": [],
+                                    "usage": {}
+                                })
+                        except Exception as e:
+                            log.error("Failed to auto-trigger onboarding greeting", error=str(e))
+                    
+                    asyncio.create_task(_trigger_onboarding_greeting())
 
         try:
             while True:

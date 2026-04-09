@@ -33,6 +33,9 @@ import {
   Server,
   X,
   Wand2,
+  Archive,
+  FolderOpen,
+  AlertTriangle,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { clsx, type ClassValue } from 'clsx';
@@ -106,6 +109,12 @@ function InfoRow({
 
 export default function ConfigPage() {
   const router = useRouter();
+  const { fetchAPI } = useAPI();
+  const [appVersion, setAppVersion] = useState('');
+  useEffect(() => {
+    fetchAPI('/api/system/info').then(d => { if (d.version) setAppVersion(`v${d.version}`); }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { config, model, isLoading } = useConfig();
   const setModelMut = useSetModel();
   const saveSetup = useSaveSetup();
@@ -116,7 +125,6 @@ export default function ConfigPage() {
   const [routerStats, setRouterStats] = useState<Record<string, unknown> | null>(null);
   const [routerLoading, setRouterLoading] = useState(false);
 
-  const { fetchAPI } = useAPI();
 
   const toggleDebugMode = async (next: boolean) => {
     setIsVerbose(next);
@@ -179,6 +187,59 @@ export default function ConfigPage() {
       });
     } catch { /* silent */ }
   };
+  // Code Resurrection state
+  const [resurrectionPaths, setResurrectionPaths] = useState<string[]>([]);
+  const [resurrectionIndexed, setResurrectionIndexed] = useState(0);
+  const [newResurrectionPath, setNewResurrectionPath] = useState('');
+  const [resurrectionLoading, setResurrectionLoading] = useState(false);
+
+  useEffect(() => {
+    fetchAPI('/api/config/resurrection_paths')
+      .then(d => {
+        setResurrectionPaths(d.paths ?? []);
+        setResurrectionIndexed(d.indexed_files ?? 0);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleAddResurrectionPath = async () => {
+    const path = newResurrectionPath.trim();
+    if (!path) return;
+    setResurrectionLoading(true);
+    try {
+      const data = await fetchAPI('/api/config/resurrection_paths', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      setResurrectionPaths(data.paths ?? []);
+      setNewResurrectionPath('');
+      toast.success('Path added — watcher will index it during idle time');
+    } catch {
+      toast.error('Failed to add path — check that it exists on disk');
+    } finally {
+      setResurrectionLoading(false);
+    }
+  };
+
+  const handleRemoveResurrectionPath = async (path: string) => {
+    setResurrectionLoading(true);
+    try {
+      const data = await fetchAPI('/api/config/resurrection_paths', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      setResurrectionPaths(data.paths ?? []);
+      toast.success('Path removed');
+    } catch {
+      toast.error('Failed to remove path');
+    } finally {
+      setResurrectionLoading(false);
+    }
+  };
+
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [telegramToken, setTelegramToken] = useState('');
@@ -1015,6 +1076,83 @@ export default function ConfigPage() {
             </div>
           </ConfigSection>
 
+          {/* Code Resurrection */}
+          <div className="lg:col-span-2">
+            <ConfigSection
+              title="Code Resurrection"
+              subtitle="Second Code Brain — indexes your old projects locally so OpenACM can reference your past solutions"
+              icon={Archive}
+            >
+              <div className="space-y-4">
+                {/* Stats bar */}
+                <div className="flex items-center gap-4 p-3 bg-slate-800/50 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
+                    <span className="text-slate-400">Files indexed:</span>
+                    <span className="font-mono text-violet-400 font-semibold">{resurrectionIndexed.toLocaleString()}</span>
+                  </div>
+                  <span className="text-slate-700">·</span>
+                  <div className="text-xs text-slate-500">Indexing runs silently when OpenACM is idle</div>
+                </div>
+
+                {/* Privacy warning */}
+                <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300/90">
+                  <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
+                  <div className="space-y-1">
+                    <p><strong>.env</strong>, <strong>.pem</strong> and <strong>.key</strong> files are skipped automatically. All other indexed code stays in your local database — but if a snippet gets retrieved during a conversation with a cloud LLM, it will be included in that prompt.</p>
+                    <p className="text-amber-400/70">If old code has hardcoded tokens or passwords inside regular source files, those lines could reach the cloud. Use a local model (Ollama) for sensitive repos.</p>
+                  </div>
+                </div>
+
+                {/* Paths list */}
+                {resurrectionPaths.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {resurrectionPaths.map((p) => (
+                      <div key={p} className="flex items-center justify-between px-3 py-2 bg-slate-800/40 border border-slate-700/40 rounded-lg">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FolderOpen size={14} className="text-violet-400 flex-shrink-0" />
+                          <span className="text-xs font-mono text-slate-300 truncate">{p}</span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveResurrectionPath(p)}
+                          disabled={resurrectionLoading}
+                          className="ml-3 p-1 text-slate-600 hover:text-red-400 transition-colors flex-shrink-0"
+                          title="Remove"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6 text-slate-600 text-sm">
+                    No paths configured yet. Add a root folder to start indexing.
+                  </div>
+                )}
+
+                {/* Add path input */}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={newResurrectionPath}
+                    onChange={(e) => setNewResurrectionPath(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddResurrectionPath()}
+                    placeholder="e.g. D:\UnityProjects or /home/user/repos"
+                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                  />
+                  <button
+                    onClick={handleAddResurrectionPath}
+                    disabled={!newResurrectionPath.trim() || resurrectionLoading}
+                    className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
+                  >
+                    {resurrectionLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    Add
+                  </button>
+                </div>
+              </div>
+            </ConfigSection>
+          </div>
+
           {/* JSON Config */}
           <ConfigSection title={tc.fullConfig} icon={Terminal}>
             <div className="space-y-4">
@@ -1057,7 +1195,7 @@ export default function ConfigPage() {
         <div className="mt-8 p-4 bg-slate-900 rounded-xl border border-slate-800">
           <div className="flex flex-wrap items-center justify-between gap-4 text-sm text-slate-500">
             <div className="flex items-center gap-4">
-              <span>OpenACM v0.1.0</span>
+              <span>OpenACM {appVersion || 'v0.1.0'}</span>
               <span>·</span>
               <span>Next.js 16</span>
               <span>·</span>

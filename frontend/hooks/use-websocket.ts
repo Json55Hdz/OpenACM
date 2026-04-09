@@ -40,6 +40,23 @@ export function useWebSocket() {
   const chatReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventsReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearThinkingTimeout = () => {
+    if (thinkingTimeoutRef.current) {
+      clearTimeout(thinkingTimeoutRef.current);
+      thinkingTimeoutRef.current = null;
+    }
+  };
+
+  const resetSpinner = (reason?: string) => {
+    clearThinkingTimeout();
+    storeRef.current.setWaitingResponse(false);
+    storeRef.current.setThinkingLabel(null);
+    if (reason) {
+      storeRef.current.addMessage({ content: reason, role: 'error' });
+    }
+  };
 
   // Keep a live ref to the store so callbacks never need to re-create
   const storeRef = useRef(useChatStore.getState());
@@ -73,9 +90,9 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       const data: WebSocketMessage = JSON.parse(event.data);
-      storeRef.current.setWaitingResponse(false);
 
       if (data.type === 'response') {
+        resetSpinner();
         storeRef.current.addMessage({
           content: data.content || '',
           role: 'assistant',
@@ -88,6 +105,7 @@ export function useWebSocket() {
           role: 'system',
         });
       } else if (data.type === 'error') {
+        resetSpinner();
         storeRef.current.addMessage({
           content: data.content || 'Unknown error',
           role: 'error',
@@ -97,6 +115,7 @@ export function useWebSocket() {
 
     ws.onclose = () => {
       chatWsRef.current = null;
+      resetSpinner(); // prevent infinite spinner on dropped connection
       // Clear any pending reconnect before scheduling a new one
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
       if (authStore.getState().token) {
@@ -105,7 +124,7 @@ export function useWebSocket() {
     };
 
     ws.onerror = () => {
-      storeRef.current.setWaitingResponse(false);
+      resetSpinner();
     };
   }, []); // Stable — reads everything from refs/stores
 
@@ -200,8 +219,7 @@ export function useWebSocket() {
         } else if (status === 'queued' && data.message) {
           storeRef.current.setThinkingLabel(data.message);
         } else if (status === 'done' || status === 'error') {
-          storeRef.current.setWaitingResponse(false);
-          storeRef.current.setThinkingLabel(null);
+          resetSpinner();
         }
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
@@ -284,6 +302,11 @@ export function useWebSocket() {
       };
       chatWsRef.current.send(JSON.stringify(payload));
       storeRef.current.setWaitingResponse(true);
+      // Safety net: if no response in 3 min, reset spinner automatically
+      clearThinkingTimeout();
+      thinkingTimeoutRef.current = setTimeout(() => {
+        resetSpinner('The response took too long or the connection was interrupted. Please try again.');
+      }, 3 * 60 * 1000);
       return true;
     }
     return false;

@@ -456,7 +456,7 @@ function MessageBubble({
           )}
         </div>
 
-        {debugMode && !isUser && !isError && usage && usage.total_tokens > 0 && (
+        {!isUser && !isError && usage && usage.total_tokens > 0 && (
           <TokenBadge usage={usage} />
         )}
       </div>

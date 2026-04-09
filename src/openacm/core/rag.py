@@ -121,6 +121,18 @@ class RAGEngine:
         except Exception as e:
             log.error("RAG ingest failed", error=str(e))
 
+    async def delete_by_metadata(self, filter_dict: dict[str, Any]):
+        """Delete items from the vector store based on metadata filters."""
+        if not self._ready:
+            return
+
+        import asyncio
+        collection = _get_collection()
+        try:
+            await asyncio.to_thread(collection.delete, where=filter_dict)
+        except Exception as e:
+            log.error("RAG delete_by_metadata failed", error=str(e))
+
     async def query(self, question: str, top_k: int = 5) -> list[str]:
         """
         Query the vector store for relevant fragments.

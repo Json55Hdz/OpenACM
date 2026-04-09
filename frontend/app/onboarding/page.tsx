@@ -545,6 +545,7 @@ function OnboardingContent() {
                     <span>Continue</span><ArrowRight size={18} />
                   </button>
                 )}
+
               </div>
             </div>
           )}

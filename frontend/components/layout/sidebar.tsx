@@ -71,11 +71,12 @@ export function Sidebar() {
   const [isRestarting, setIsRestarting] = useState(false);
   const [pendingContent, setPendingContent] = useState(0);
   const [pluginItems, setPluginItems] = useState<PluginNavItem[]>([]);
+  const [version, setVersion] = useState<string>('');
   const pathname = usePathname();
   const isOnline = useChatStore((state) => state.wsConnected);
   const token = useAuthStore((s) => s.token);
 
-  // Load plugin nav items once on mount
+  // Load plugin nav items + version once on mount
   useEffect(() => {
     const fetchPluginNav = async () => {
       try {
@@ -88,7 +89,17 @@ export function Sidebar() {
         }
       } catch { /* ignore — plugins are optional */ }
     };
+    const fetchVersion = async () => {
+      try {
+        const res = await fetch('/api/system/info');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.version) setVersion(`v${data.version}`);
+        }
+      } catch { /* ignore */ }
+    };
     if (token) fetchPluginNav();
+    fetchVersion();
   }, [token]);
 
   // Poll for pending content count (from plugins that register a badge)
@@ -183,7 +194,7 @@ export function Sidebar() {
         {/* Header */}
         <div className="py-5 px-3 border-b border-slate-800 flex flex-col items-center">
           <img src="/static/logo-transparent.png" alt="OpenACM" width={110} height={110} className="rounded-xl" />
-          <span className="text-xs text-slate-500 mt-1">v0.1.0</span>
+          <span className="text-xs text-slate-500 mt-1">{version || 'v0.1.0'}</span>
         </div>
 
         {/* Navigation */}

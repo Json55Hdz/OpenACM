@@ -22,6 +22,7 @@ class AssistantConfig(BaseModel):
 
     name: str = "ACM"
     system_prompt: str = "You are ACM, a helpful AI assistant."
+    onboarding_completed: bool = False
     max_context_messages: int = 50
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
@@ -116,6 +117,7 @@ class AppConfig(BaseModel):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     local_router: LocalRouterConfig = Field(default_factory=LocalRouterConfig)
+    resurrection_paths: list[str] = Field(default_factory=list)
 
 
 # ─── Config Loading ──────────────────────────────────────────
@@ -200,6 +202,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config_data["storage"] = data["storage"]
     if "local_router" in data:
         config_data["local_router"] = data["local_router"]
+    if "resurrection_paths" in data:
+        config_data["resurrection_paths"] = data["resurrection_paths"]
 
     # Make paths absolute relative to project root
     config = AppConfig(**config_data)

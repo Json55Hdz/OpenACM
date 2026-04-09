@@ -62,6 +62,7 @@ class OpenACM:
         self._web_server = None
         self._activity_watcher = None
         self._cron_scheduler = None
+        self._resurrection_watcher = None
         self._swarm_manager = None
         self._content_watcher = None  # kept for server.py compat; plugins manage their own
         self._plugin_manager = None
@@ -260,6 +261,8 @@ class OpenACM:
             python_kernel,
             skill_creator,
             blender_tool,
+            add_resurrection_path,
+            onboarding_tools,
         )
 
         self.tool_registry.register_module(system_cmd)
@@ -273,6 +276,8 @@ class OpenACM:
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(blender_tool)
+        self.tool_registry.register_module(add_resurrection_path)
+        self.tool_registry.register_module(onboarding_tools)
 
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)
@@ -412,6 +417,17 @@ class OpenACM:
             console.print("  [green]✓[/green] Activity watcher running")
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Activity watcher skipped: {e}")
+
+        try:
+            from openacm.watchers.resurrection_watcher import ResurrectionWatcher
+            from openacm.core import rag
+            self._resurrection_watcher = ResurrectionWatcher(
+                self.config, self.event_bus, rag._rag_engine, self.database
+            )
+            await self._resurrection_watcher.start()
+            console.print("  [green]✓[/green] Resurrection watcher running")
+        except Exception as e:
+            console.print(f"  [yellow]~[/yellow] Resurrection watcher skipped: {e}")
 
         try:
             from openacm.watchers.cron_scheduler import CronScheduler
@@ -626,6 +642,12 @@ class OpenACM:
         if self._activity_watcher:
             try:
                 await self._activity_watcher.stop()
+            except Exception:
+                pass
+
+        if getattr(self, "_resurrection_watcher", None):
+            try:
+                await self._resurrection_watcher.stop()
             except Exception:
                 pass
 

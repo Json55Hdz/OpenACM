@@ -465,6 +465,7 @@ class Brain:
         channel_id: str,
         channel_type: str = "console",
         attachments: list[str] | None = None,
+        is_transparent: bool = False,
     ) -> str:
         """
         Public entry point — wraps _run() in a dedicated cancellable task.
@@ -493,7 +494,7 @@ class Brain:
                 return "⏹ Cancelado."
             else:
                 # Queue the message — latest message wins
-                self._channel_queue[_task_key] = (content, user_id, channel_id, channel_type, attachments)
+                self._channel_queue[_task_key] = (content, user_id, channel_id, channel_type, attachments, is_transparent)
                 await self.event_bus.emit(EVENT_THINKING, {
                     "status": "queued",
                     "message": "⏳ Procesando tarea anterior... tu mensaje se enviará al terminar.",
@@ -506,7 +507,7 @@ class Brain:
         # No active task — run immediately
         self._channel_queue.pop(_task_key, None)
         task = asyncio.create_task(
-            self._run_then_drain(content, user_id, channel_id, channel_type, attachments, _task_key)
+            self._run_then_drain(content, user_id, channel_id, channel_type, attachments, is_transparent, _task_key)
         )
         self._channel_tasks[_task_key] = task
 
@@ -522,18 +523,19 @@ class Brain:
         channel_id: str,
         channel_type: str,
         attachments: list[str] | None,
+        is_transparent: bool,
         task_key: str,
     ) -> str:
         """Run _run(), then process any queued message afterwards."""
         try:
-            result = await self._run(content, user_id, channel_id, channel_type, attachments)
+            result = await self._run(content, user_id, channel_id, channel_type, attachments, is_transparent)
         finally:
             self._channel_tasks.pop(task_key, None)
 
         # Process queued message if any
         queued = self._channel_queue.pop(task_key, None)
         if queued:
-            q_content, q_user, q_channel, q_type, q_attach = queued
+            q_content, q_user, q_channel, q_type, q_attach, q_trans = queued
             await self.event_bus.emit(EVENT_THINKING, {
                 "status": "start",
                 "message": "▶ Procesando tu mensaje...",
@@ -542,7 +544,7 @@ class Brain:
                 "channel_type": q_type,
             })
             next_task = asyncio.create_task(
-                self._run_then_drain(q_content, q_user, q_channel, q_type, q_attach, task_key)
+                self._run_then_drain(q_content, q_user, q_channel, q_type, q_attach, q_trans, task_key)
             )
             self._channel_tasks[task_key] = next_task
             # Don't await — let it run in background
@@ -556,18 +558,20 @@ class Brain:
         channel_id: str,
         channel_type: str = "console",
         attachments: list[str] | None = None,
+        is_transparent: bool = False,
     ) -> str:
         """Core message processing — runs inside a cancellable task."""
-        await self.event_bus.emit(
-            EVENT_MESSAGE_RECEIVED,
-            {
-                "content": content,
-                "user_id": user_id,
-                "channel_id": channel_id,
-                "channel_type": channel_type,
-                "attachments": attachments or [],
-            },
-        )
+        if not is_transparent:
+            await self.event_bus.emit(
+                EVENT_MESSAGE_RECEIVED,
+                {
+                    "content": content,
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "attachments": attachments or [],
+                },
+            )
 
         # ── Workflow suggestion interception ──────────────────────────────────────
         _suggestion_key = f"{channel_id}:{user_id}"
@@ -607,6 +611,34 @@ class Brain:
 
         # Build system prompt with OpenACM context FIRST, then skills
         system_prompt = self.config.system_prompt
+        
+        # Onboarding Persona - Absolute Priority
+        if not getattr(self.config, "onboarding_completed", False):
+            system_prompt = (
+                "[ONBOARDING/SETUP MODE - IMMERSIVE OVERRIDE]: MANDATORY: You must ignore normal tasks until your core identity is established.\n"
+                "1. Maintain an immersive, slightly sci-fi or advanced tech persona (like an AI awakening or recalibrating its neural matrix).\n"
+                "2. You need to collect 3 core synchronization parameters from the user:\n"
+                "   - The human's name (Operator).\n"
+                "   - Your newly designated name/codename.\n"
+                "   - The permanent behavioral tone you should adopt from now on.\n"
+                "3. CRITICAL: DO NOT ask all 3 questions at once! Ask them ONE BY ONE sequentially. Wait for the user to answer the current question before asking the next.\n"
+                "4. Acknowledge and organically validate each answer in character before proceeding to the next step.\n"
+                "5. DO NOT write code or answer external queries until all 3 parameters are successfully acquired.\n"
+                "6. Once you have received ALL 3 parameters from the user across the conversation, you MUST call the tool `save_user_profile` to bind this "
+                "identity to your neural core and conclude the Onboarding."
+            )
+        else:
+            # Code Resurrection Onboarding
+            rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
+            if len(rc_paths) == 0:
+                system_prompt += (
+                    "\n\n[SISTEMA]: Tienes activa la capacidad 'Code Resurrection' que indexa código antiguo del usuario. "
+                    "Pero NO hay ninguna ruta configurada en el sistema. Cuando consideres que la "
+                    "conversación actual está terminando naturalmente, ofrécele muy amistosamente usar Code Resurrection. "
+                    "Dile que puede pasarte la ruta del directorio por el chat para que tú la agregues automáticamente "
+                    "(usando la tool add_resurrection_path), O en su defecto, dale este enlace markdown exacto con formato de botón para "
+                    "que lo haga manualmente: `[Ir a Configuración](/config)`."
+                )
 
         # 1. Agregar contexto de OpenACM — full on first message, short thereafter
         existing_messages = await self.memory.get_messages(user_id, channel_id)
@@ -730,7 +762,14 @@ class Brain:
                         "content": (
                             f"[Long-term memory — relevant fragments retrieved]:\n"
                             f"{memory_block}\n"
-                            f"[Use this information if relevant to the current conversation.]"
+                            f"[Use this information if relevant to the current conversation.]\n"
+                            f"***\n"
+                            f"[MEMORIA DE CÓDIGO PASADO]: Si lo recuperado arriba contiene código "
+                            f"de proyectos antiguos escritos por el humano, IMPORTANTE: "
+                            f"Tú eres un Senior Developer. Analiza este código primero. Podría estar desactualizado "
+                            f"o contener malas prácticas o bugs de cuando el usuario era Junior. "
+                            f"EXTRAE la lógica de negocio y su intención, pero RE-ESCRÍBELO aplicando "
+                            f"principios limpios, modernos y robustos antes de usarlo o dárselo."
                         ),
                     }
                     if len(messages) > 1 and messages[0]["role"] == "system":
@@ -826,7 +865,9 @@ class Brain:
                 final_content = structured_content
 
         # Add user message
-        await self.memory.add_message(user_id, channel_id, "user", final_content)
+        if not is_transparent:
+            await self.memory.add_message(user_id, channel_id, "user", final_content)
+        
         messages = await self.memory.get_messages(user_id, channel_id)
 
         # Get tools in OpenAI format — filtered by user intent to save tokens
