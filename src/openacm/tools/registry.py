@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 import structlog
 
+from openacm.constants import SEMANTIC_TOOL_THRESHOLD, TRUNCATE_TOOL_RESULT_CHARS
 from openacm.core.events import EventBus
 from openacm.security.sandbox import Sandbox
 from openacm.storage.database import Database
@@ -21,9 +22,8 @@ from openacm.tools.base import ToolDefinition, get_registered_tools
 
 log = structlog.get_logger()
 
-# Semantic tool selection threshold — tools with cosine similarity above this
-# are included in the LLM call. Tuned for multilingual MiniLM embeddings.
-SEMANTIC_TOOL_THRESHOLD = 0.28
+# Re-export so callers that imported it from here don't break.
+__all__ = ["SEMANTIC_TOOL_THRESHOLD"]
 
 # Always include these tools regardless of similarity score
 ALWAYS_INCLUDE_TOOLS = {
@@ -434,7 +434,7 @@ class ToolRegistry:
                 channel_id=channel_id,
                 tool_name=tool_name,
                 arguments=json.dumps(arguments, default=str),
-                result=result_str[:5000],  # truncate for storage
+                result=result_str[:TRUNCATE_TOOL_RESULT_CHARS],
                 success=success,
                 elapsed_ms=elapsed_ms,
             )

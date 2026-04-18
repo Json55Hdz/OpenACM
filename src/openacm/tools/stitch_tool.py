@@ -18,6 +18,7 @@ import secrets
 import httpx
 import structlog
 
+from openacm.constants import TRUNCATE_STITCH_PREVIEW_CHARS
 from openacm.tools.base import tool
 
 log = structlog.get_logger()
@@ -265,5 +266,5 @@ async def stitch_generate_ui(
         return result
     except Exception as e:
         log.warning("Could not save stitch output", error=str(e))
-        preview = html_content[:2000] + ("..." if len(html_content) > 2000 else "")
+        preview = html_content[:TRUNCATE_STITCH_PREVIEW_CHARS] + ("..." if len(html_content) > TRUNCATE_STITCH_PREVIEW_CHARS else "")
         return f"UI generated with Google Stitch: **{screen_title}**\n\n```html\n{preview}\n```"

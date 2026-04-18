@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 
+from openacm.constants import TRUNCATE_PDF_CHARS, TRUNCATE_FILE_CONTEXT_CHARS
 from openacm.core.config import AssistantConfig
 from openacm.core.local_router import LocalRouter
 from openacm.core.output_compressor import compress as compress_output, compression_summary
@@ -293,7 +294,7 @@ class Brain:
             result = converter.convert(stream, raises_on_error=False)
             md = result.document.export_to_markdown()
             if md and md.strip():
-                return md[:12000]
+                return md[:TRUNCATE_PDF_CHARS]
         except Exception as e:
             log.debug("docling PDF extraction failed, falling back to pypdf", error=str(e))
 
@@ -303,7 +304,7 @@ class Brain:
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
             pages = [page.extract_text() or "" for page in reader.pages]
             text = "\n\n".join(p for p in pages if p.strip())
-            return text[:12000] or "[PDF has no extractable text]"
+            return text[:TRUNCATE_PDF_CHARS] or "[PDF has no extractable text]"
         except ImportError:
             return "[pypdf not installed — install with: pip install pypdf]"
         except Exception as e:
@@ -782,8 +783,8 @@ class Brain:
             from openacm.plugins import plugin_manager
             for ext in plugin_manager.get_context_extensions():
                 system_prompt = f"{system_prompt}\n\n{ext}"
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Plugin context extension failed", error=str(e))
 
         # Get or create conversation with system prompt — skip update if unchanged
         _sp_key = f"{channel_id}:{user_id}"
@@ -961,7 +962,7 @@ class Brain:
                             if md_text:
                                 structured_content.append({
                                     "type": "text",
-                                    "text": f"[{file_path.name}]:\n{md_text[:12000]}",
+                                    "text": f"[{file_path.name}]:\n{md_text[:TRUNCATE_FILE_CONTEXT_CHARS]}",
                                 })
                             else:
                                 structured_content.append({

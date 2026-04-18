@@ -13,6 +13,13 @@ import yaml
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+from openacm.constants import (
+    DEFAULT_WEB_HOST,
+    DEFAULT_WEB_PORT,
+    DEFAULT_WHATSAPP_BRIDGE_URL,
+    LOCAL_ROUTER_CONFIDENCE_THRESHOLD,
+)
+
 
 # ─── Config Models ───────────────────────────────────────────
 
@@ -53,8 +60,8 @@ class SecurityConfig(BaseModel):
 class WebConfig(BaseModel):
     """Web dashboard configuration."""
 
-    host: str = "127.0.0.1"
-    port: int = 47821
+    host: str = DEFAULT_WEB_HOST
+    port: int = DEFAULT_WEB_PORT
     auth_enabled: bool = True
 
 
@@ -81,7 +88,7 @@ class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
 
     enabled: bool = False
-    bridge_url: str = "http://localhost:3001"
+    bridge_url: str = DEFAULT_WHATSAPP_BRIDGE_URL
     rate_limit_per_minute: int = 20
 
 

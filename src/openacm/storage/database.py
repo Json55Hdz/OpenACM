@@ -13,6 +13,8 @@ from typing import Any
 import aiosqlite
 import structlog
 
+from openacm.constants import TRUNCATE_DB_OUTPUT_CHARS, TRUNCATE_DB_ERROR_CHARS
+
 log = structlog.get_logger()
 
 
@@ -1726,7 +1728,7 @@ class Database:
             "last_run = ?, next_run = ?, last_status = ?, last_output = ?, "
             "run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ?",
-            (last_run, next_run or None, status, output[:4000] if output else None, job_id),
+            (last_run, next_run or None, status, output[:TRUNCATE_DB_OUTPUT_CHARS] if output else None, job_id),
         )
         await self._db.commit()
 
@@ -1774,8 +1776,8 @@ class Database:
             "SET finished_at = ?, status = ?, output = ?, error = ? "
             "WHERE id = ?",
             (finished_at, status,
-             output[:4000] if output else None,
-             error[:2000] if error else None,
+             output[:TRUNCATE_DB_OUTPUT_CHARS] if output else None,
+             error[:TRUNCATE_DB_ERROR_CHARS] if error else None,
              run_id),
         )
         await self._db.commit()

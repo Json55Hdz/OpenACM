@@ -6,14 +6,15 @@ Handles model switching, streaming, retries, and token tracking.
 """
 
 import asyncio
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import litellm
 import structlog
-import os
 
+from openacm.constants import TRUNCATE_LLM_ERROR_CHARS, DEFAULT_OLLAMA_BASE_URL
 from openacm.core.config import LLMConfig
 from openacm.core.events import EventBus, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
 
@@ -559,7 +560,7 @@ class LLMRouter:
                         status=resp.status_code,
                         url=url,
                         model=model,
-                        response_body=body_text[:2000],
+                        response_body=body_text[:TRUNCATE_LLM_ERROR_CHARS],
                     )
                     raise httpx.HTTPStatusError(
                         f"Server error '{resp.status_code}' for url '{url}'",

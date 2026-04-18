@@ -23,6 +23,8 @@ from typing import Any
 
 import structlog
 
+from openacm.constants import LOCAL_ROUTER_CONFIDENCE_THRESHOLD
+
 log = structlog.get_logger()
 
 # Where learned examples are persisted across restarts
@@ -159,9 +161,8 @@ INTENT_DEFINITIONS: dict[str, list[str]] = {
     ],
 }
 
-# Confidence threshold: only flag as "fast-path eligible" above this score.
-# Very conservative — better to miss a fast-path than to misclassify.
-DEFAULT_CONFIDENCE_THRESHOLD = 0.88
+# Re-export for backwards compatibility with any caller that imported this directly.
+DEFAULT_CONFIDENCE_THRESHOLD = LOCAL_ROUTER_CONFIDENCE_THRESHOLD
 
 
 @dataclass
@@ -302,8 +303,8 @@ class LocalRouter:
         try:
             if LEARNED_EXAMPLES_PATH.exists():
                 return json.loads(LEARNED_EXAMPLES_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("LocalRouter: could not load learned examples", path=str(LEARNED_EXAMPLES_PATH), error=str(e))
         return {}
 
     def _save_learned_examples(self, learned: dict[str, list[str]]) -> None:
@@ -371,8 +372,8 @@ class LocalRouter:
         try:
             if LEARNED_ACTIONS_PATH.exists():
                 return json.loads(LEARNED_ACTIONS_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("LocalRouter: could not load learned actions", path=str(LEARNED_ACTIONS_PATH), error=str(e))
         return []
 
     def _save_actions(self, actions: list[dict]) -> None:

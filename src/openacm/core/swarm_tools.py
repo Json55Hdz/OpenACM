@@ -14,6 +14,8 @@ from typing import Any
 
 import structlog
 
+from openacm.constants import SWARM_MAX_BUG_FIX_CYCLES
+
 log = structlog.get_logger()
 
 EVENT_SWARM_MESSAGE = "swarm:message"
@@ -295,7 +297,7 @@ def build_swarm_tools(
 
     # Track how many times each bug title has been reported to cap retry loops
     _bug_cycles: dict[str, int] = {}
-    MAX_BUG_CYCLES = 5
+    MAX_BUG_CYCLES = SWARM_MAX_BUG_FIX_CYCLES
 
     async def swarm_report_bug(
         title: str,

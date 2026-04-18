@@ -27,6 +27,7 @@ import secrets
 from pathlib import Path
 import json
 
+from openacm.constants import DEFAULT_WEB_PORT, DEFAULT_OLLAMA_BASE_URL, TRUNCATE_RAG_CONTEXT_CHARS
 from openacm.core.config import AppConfig
 from openacm.core.brain import Brain
 from openacm.core.commands import CommandProcessor
@@ -638,7 +639,7 @@ def create_app() -> FastAPI:
         if not creds_path.exists():
             raise HTTPException(status_code=400, detail="Upload google_credentials.json first")
 
-        port = _config.web.port if _config else 47821
+        port = _config.web.port if _config else DEFAULT_WEB_PORT
         redirect_uri = f"http://localhost:{port}/api/config/google/callback"
 
         flow = Flow.from_client_secrets_file(
@@ -924,7 +925,7 @@ def create_app() -> FastAPI:
             try:
                 from openacm.core.config import _find_project_root
                 import yaml
-                config_file = _find_project_root() / "config" / "default.yaml"
+                config_file = _find_project_root() / "config" / "local.yaml"
                 cfg_data = {}
                 if config_file.exists():
                     with open(config_file, "r", encoding="utf-8") as f:
@@ -951,7 +952,7 @@ def create_app() -> FastAPI:
         try:
             from openacm.core.config import _find_project_root
             import yaml
-            config_file = _find_project_root() / "config" / "default.yaml"
+            config_file = _find_project_root() / "config" / "local.yaml"
             cfg_data = {}
             if config_file.exists():
                 with open(config_file, "r", encoding="utf-8") as f:
@@ -982,7 +983,7 @@ def create_app() -> FastAPI:
         _config.assistant.rag_relevance_threshold = threshold
         # Persist to yaml
         root = _find_project_root()
-        config_file = root / "config" / "default.yaml"
+        config_file = root / "config" / "local.yaml"
         cfg_data = {}
         if config_file.exists():
             import yaml as _yaml
@@ -1023,7 +1024,7 @@ def create_app() -> FastAPI:
         # Persist to config file
         from openacm.core.config import _find_project_root
         root = _find_project_root()
-        config_file = root / "config" / "default.yaml"
+        config_file = root / "config" / "local.yaml"
         cfg_data: dict = {}
         if config_file.exists():
             import yaml as _yaml
@@ -1054,7 +1055,7 @@ def create_app() -> FastAPI:
     async def get_ollama_status():
         """Check if Ollama is running and return installed models."""
         import httpx
-        base = "http://localhost:11434"
+        base = DEFAULT_OLLAMA_BASE_URL
         if _config:
             base = _config.llm.providers.get("ollama", {}).get("base_url", base)
         try:
@@ -1219,7 +1220,7 @@ def create_app() -> FastAPI:
         if provider == "openai" and not base_url:
             base_url = "https://api.openai.com/v1"
         elif provider == "ollama" and not base_url:
-            base_url = "http://localhost:11434/v1"
+            base_url = DEFAULT_OLLAMA_BASE_URL + "/v1"
 
         if not base_url:
             return []
@@ -1924,7 +1925,7 @@ def create_app() -> FastAPI:
                     doc_parts.append(f"[{fname}]\n{raw.decode('utf-8', errors='replace')}")
             if doc_parts:
                 combined = "\n\n---\n\n".join(doc_parts)
-                doc_text = combined[:12000]
+                doc_text = combined[:TRUNCATE_RAG_CONTEXT_CHARS]
         else:
             data = await request.json()
             description = str(data.get("description", "")).strip()

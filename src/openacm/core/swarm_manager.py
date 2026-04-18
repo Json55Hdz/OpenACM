@@ -26,6 +26,12 @@ from typing import Any
 
 import structlog
 
+from openacm.constants import (
+    SWARM_MAX_PARALLEL_WORKERS,
+    SWARM_MAX_TASK_RETRIES,
+    TRUNCATE_SWARM_TASK_OUTPUT_CHARS,
+)
+
 log = structlog.get_logger()
 
 # Event names for real-time updates
@@ -437,8 +443,7 @@ class SwarmManager:
         Each worker runs in its own isolated workspace / memory namespace.
         Events are emitted for every state change so the UI can react in real time.
         """
-        MAX_PARALLEL = 3
-        sem = asyncio.Semaphore(MAX_PARALLEL)
+        sem = asyncio.Semaphore(SWARM_MAX_PARALLEL_WORKERS)
 
         try:
             await self.db.update_swarm(swarm_id, status="running")
@@ -455,7 +460,7 @@ class SwarmManager:
                 t["title"] for t in all_tasks_now if t["status"] == "completed"
             }
             max_rounds = 30
-            MAX_TASK_RETRIES = 2  # total extra attempts (3 tries total)
+            MAX_TASK_RETRIES = SWARM_MAX_TASK_RETRIES
             # Use persistent retry counts so retries survive auto-restarts
             if swarm_id not in self._task_retries:
                 self._task_retries[swarm_id] = {}
@@ -691,8 +696,8 @@ class SwarmManager:
                         dep_task = completed_map.get(dep_title)
                         if dep_task and dep_task.get("result"):
                             dep_outputs.append((dep_title, dep_task["result"]))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Could not gather dependency outputs for task", error=str(e))
 
             # Build context: shared contract + dependency outputs + messages + task description
             messages_in = await self.db.get_swarm_messages(swarm_id, to_worker_id=worker_id)
@@ -1244,15 +1249,15 @@ Rules:
                     f"data formats, DOM IDs, or import paths.\n\n"
                     f"{contract_content}"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Could not read swarm contract file", error=str(e))
 
         # ── 2. Dependency Outputs ─────────────────────────────────────────────
         # If this task depends on others, inject their FULL outputs so the worker
         # knows exactly what was built and can import/extend it correctly.
         if dep_outputs:
             dep_section = "\n\n".join(
-                f"### Output of: {title}\n\n{output[:3000]}{'...[truncated]' if len(output) > 3000 else ''}"
+                f"### Output of: {title}\n\n{output[:TRUNCATE_SWARM_TASK_OUTPUT_CHARS]}{'...[truncated]' if len(output) > TRUNCATE_SWARM_TASK_OUTPUT_CHARS else ''}"
                 for title, output in dep_outputs
             )
             parts.append(
@@ -1286,8 +1291,8 @@ Rules:
                         f"Use `read_file` to inspect any file and build on teammates' work.\n"
                         f"Workspace root: {swarm_ws}\n\n{file_list}"
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("Could not list swarm workspace files", error=str(e))
 
         # ── 5. Incoming Messages ──────────────────────────────────────────────
         if messages_in:

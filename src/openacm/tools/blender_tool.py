@@ -1002,7 +1002,7 @@ async def blender_run_script(
                 bpy.ops.export_scene.gltf(filepath=str(_out), export_format='GLB')
             elif OUTPUT_FORMAT == 'OBJ':
                 try: bpy.ops.wm.obj_export(filepath=str(_out))
-                except: bpy.ops.export_scene.obj(filepath=str(_out))
+                except Exception: bpy.ops.export_scene.obj(filepath=str(_out))  # Blender <3.3 fallback
             elif OUTPUT_FORMAT == 'STL':
                 bpy.ops.export_mesh.stl(filepath=str(_out))
             elif OUTPUT_FORMAT == 'BLEND':

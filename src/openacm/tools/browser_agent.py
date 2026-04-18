@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import structlog
+
+from openacm.constants import TRUNCATE_BROWSER_PAGE_CHARS, TRUNCATE_BROWSER_HTML_CHARS
 from openacm.tools.base import tool
 
 log = structlog.get_logger()
@@ -154,8 +156,8 @@ async def browser_agent(
                 return "⚠️ Page body is empty or not loaded yet."
 
             # Truncate length natively for LLMs
-            if len(text) > 8000:
-                text = text[:8000] + "\n\n[... content truncated due to length ...]"
+            if len(text) > TRUNCATE_BROWSER_PAGE_CHARS:
+                text = text[:TRUNCATE_BROWSER_PAGE_CHARS] + "\n\n[... content truncated due to length ...]"
             return f"📄 Page text content:\n\n{text}"
 
         elif action == "click":
@@ -189,7 +191,7 @@ async def browser_agent(
             if not selector:
                 return "Error: 'selector' parameter is required for 'extract_html'."
             html = await page.inner_html(selector, timeout=10000)
-            return f"📄 HTML content of '{selector}':\n\n{html[:4000]}"
+            return f"📄 HTML content of '{selector}':\n\n{html[:TRUNCATE_BROWSER_HTML_CHARS]}"
 
         else:
             return f"Error: Unknown action '{action}'."

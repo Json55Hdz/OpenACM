@@ -203,9 +203,9 @@ class OpenACM:
             rag._rag_engine = rag.RAGEngine()
             await rag._rag_engine.initialize()
         except ImportError:
-            pass
-        except Exception:
-            pass
+            pass  # chromadb optional
+        except Exception as e:
+            log.warning("RAG engine initialization failed", error=str(e))
 
         # Skill Manager
         self.skill_manager = SkillManager(self.database)

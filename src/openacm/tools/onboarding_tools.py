@@ -5,6 +5,7 @@ onboarding_tools.py - Tools to manage the initial user profile interview.
 import yaml
 from pathlib import Path
 import structlog
+from openacm.constants import TRUNCATE_ONBOARDING_BEHAVIORS_CHARS
 from openacm.tools.base import tool
 from openacm.core.config import _find_project_root
 
@@ -45,7 +46,7 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     _brain = kwargs.get("_brain")
 
     # Sanitization
-    behaviors = behaviors.strip()[:1000]
+    behaviors = behaviors.strip()[:TRUNCATE_ONBOARDING_BEHAVIORS_CHARS]
     user_name = user_name.strip()[:100]
     assistant_name = assistant_name.strip()[:100] or "OpenACM"
 
@@ -116,8 +117,8 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
             _brain.config.name = assistant_name
             _brain.config.onboarding_completed = True
             _brain.config.system_prompt = new_prompt
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Could not update in-memory config after onboarding", error=str(e))
 
     return (
         f"User profile saved successfully! You are now {assistant_name}. "

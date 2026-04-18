@@ -1,6 +1,3 @@
-A:
-  compact_keep_recent: 6
-  compact_threshold: 10
 assistant:
   compact_keep_recent: 6
   compact_threshold: 25
@@ -80,8 +77,6 @@ local_router:
   confidence_threshold: 0.88
   enabled: true
   observation_mode: false
-resurrection_paths:
-- C:\Trabajo\JsonProductions\LloronaProject\LloronaProject
 security:
   blocked_paths:
   - C:\Windows\System32
