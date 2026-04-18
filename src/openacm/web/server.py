@@ -22,10 +22,14 @@ from fastapi import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, Response
+import datetime
 import os
+import re
 import secrets
-from pathlib import Path
+import signal
+import uuid
 import json
+import yaml
 
 from openacm.constants import DEFAULT_WEB_PORT, DEFAULT_OLLAMA_BASE_URL, TRUNCATE_RAG_CONTEXT_CHARS
 from openacm.core.config import AppConfig
@@ -81,7 +85,6 @@ async def request_tool_confirmation(tool: str, command: str, channel_id: str) ->
     if command in _session_allowed_commands:
         return True
 
-    import uuid
     confirm_id = str(uuid.uuid4())[:8]
     loop = asyncio.get_event_loop()
     future: asyncio.Future = loop.create_future()
@@ -150,7 +153,7 @@ def _apply_custom_providers(providers: list[dict]) -> None:
 
 def _make_provider_id(name: str, existing: list[dict]) -> str:
     """Turn a human name into a unique snake_case provider ID."""
-    pid = _re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    pid = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
     if not pid:
         pid = "custom"
     existing_ids = {p["id"] for p in existing}
@@ -493,9 +496,8 @@ def create_app() -> FastAPI:
         _brain.llm_router.set_model_params(provider, model, params)
         # Persist to DB
         if _database:
-            import json as _json
             all_mp = {p: cfg.get("model_params", {}) for p, cfg in _config.llm.providers.items() if cfg.get("model_params")}
-            await _database.set_setting("llm.model_params", _json.dumps(all_mp))
+            await _database.set_setting("llm.model_params", json.dumps(all_mp))
         return {"ok": True}
 
     # Providers that don't need an API key
@@ -577,7 +579,6 @@ def create_app() -> FastAPI:
     @app.post("/api/config/google")
     async def save_google_credentials(request: Request):
         """Save Google OAuth2 credentials JSON file."""
-        import json as _json
         from openacm.core.config import _find_project_root
 
         data = await request.json()
@@ -586,7 +587,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="credentials_json required")
 
         try:
-            parsed = _json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
+            parsed = json.loads(credentials_json) if isinstance(credentials_json, str) else credentials_json
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
@@ -594,7 +595,7 @@ def create_app() -> FastAPI:
         creds_path = root / "config" / "google_credentials.json"
         creds_path.parent.mkdir(parents=True, exist_ok=True)
         with open(creds_path, "w", encoding="utf-8") as f:
-            _json.dump(parsed, f, indent=2)
+            json.dump(parsed, f, indent=2)
 
         return {"status": "ok"}
 
@@ -924,7 +925,6 @@ def create_app() -> FastAPI:
             # Persist to YAML
             try:
                 from openacm.core.config import _find_project_root
-                import yaml
                 config_file = _find_project_root() / "config" / "local.yaml"
                 cfg_data = {}
                 if config_file.exists():
@@ -951,7 +951,6 @@ def create_app() -> FastAPI:
         # Persist to YAML
         try:
             from openacm.core.config import _find_project_root
-            import yaml
             config_file = _find_project_root() / "config" / "local.yaml"
             cfg_data = {}
             if config_file.exists():
@@ -986,15 +985,13 @@ def create_app() -> FastAPI:
         config_file = root / "config" / "local.yaml"
         cfg_data = {}
         if config_file.exists():
-            import yaml as _yaml
             with open(config_file, "r", encoding="utf-8") as f:
-                cfg_data = _yaml.safe_load(f) or {}
+                cfg_data = yaml.safe_load(f) or {}
         if "A" not in cfg_data:
             cfg_data["A"] = {}
         cfg_data["A"]["rag_relevance_threshold"] = threshold
-        import yaml as _yaml
         with open(config_file, "w", encoding="utf-8") as f:
-            _yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+            yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
         return {"threshold": threshold}
 
     @app.get("/api/config/compaction")
@@ -1027,16 +1024,14 @@ def create_app() -> FastAPI:
         config_file = root / "config" / "local.yaml"
         cfg_data: dict = {}
         if config_file.exists():
-            import yaml as _yaml
             with open(config_file, "r", encoding="utf-8") as f:
-                cfg_data = _yaml.safe_load(f) or {}
+                cfg_data = yaml.safe_load(f) or {}
         if "A" not in cfg_data:
             cfg_data["A"] = {}
         cfg_data["A"]["compact_threshold"] = _config.assistant.compact_threshold
         cfg_data["A"]["compact_keep_recent"] = _config.assistant.compact_keep_recent
-        import yaml as _yaml
         with open(config_file, "w", encoding="utf-8") as f:
-            _yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+            yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
 
         return {
             "compact_threshold": _config.assistant.compact_threshold,
@@ -1138,7 +1133,6 @@ def create_app() -> FastAPI:
     @app.get("/api/media")
     async def list_media():
         """List all files in data/media/ for the dashboard file browser."""
-        import datetime
         from openacm.security.crypto import get_media_dir
         media_dir = get_media_dir()
         files = []
@@ -1212,7 +1206,6 @@ def create_app() -> FastAPI:
         settings = _config.llm.providers.get(provider, {})
         base_url = settings.get("base_url")
 
-        import os
 
         api_key_env = f"{provider.upper()}_API_KEY"
         api_key = os.environ.get(api_key_env, "")
@@ -1551,7 +1544,6 @@ def create_app() -> FastAPI:
     @app.websocket("/ws/terminal")
     async def ws_terminal(websocket: WebSocket):
         """WebSocket endpoint for interactive terminal sessions — one persistent PTY per channel."""
-        import json as _json
 
         if not _verify_ws_token(websocket):
             await websocket.close(code=4001, reason="Unauthorized")
@@ -1582,8 +1574,8 @@ def create_app() -> FastAPI:
             while True:
                 raw = await websocket.receive_text()
                 try:
-                    msg = _json.loads(raw)
-                except _json.JSONDecodeError:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
                     continue
 
                 msg_type = msg.get("type")
@@ -1786,8 +1778,7 @@ def create_app() -> FastAPI:
         agent = await _database.get_agent(agent_id)
         # Start Telegram bot if token provided
         if _agent_bot_manager and agent.get("telegram_token", "").strip():
-            import asyncio as _asyncio
-            _asyncio.create_task(_agent_bot_manager.start_bot(agent))
+            asyncio.create_task(_agent_bot_manager.start_bot(agent))
         return agent  # include secret on creation so user can copy it
 
     @app.get("/api/agents/{agent_id}")
@@ -1812,8 +1803,7 @@ def create_app() -> FastAPI:
         agent = await _database.get_agent(agent_id)
         # Restart bot if telegram_token was part of the update
         if _agent_bot_manager and ("telegram_token" in kwargs or "is_active" in kwargs):
-            import asyncio as _asyncio
-            _asyncio.create_task(_agent_bot_manager.restart_bot(agent_id))
+            asyncio.create_task(_agent_bot_manager.restart_bot(agent_id))
         return _agent_public(agent)
 
     @app.delete("/api/agents/{agent_id}")
@@ -1822,8 +1812,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="Database not available")
         # Stop bot before deleting
         if _agent_bot_manager:
-            import asyncio as _asyncio
-            _asyncio.create_task(_agent_bot_manager.stop_bot(agent_id))
+            asyncio.create_task(_agent_bot_manager.stop_bot(agent_id))
         ok = await _database.delete_agent(agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -1949,7 +1938,6 @@ def create_app() -> FastAPI:
         )
 
         try:
-            import json as _json
             response = await _brain.llm_router.chat(
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that generates AI agent configurations. Always respond with valid JSON only."},
@@ -1963,7 +1951,7 @@ def create_app() -> FastAPI:
                 content = content.split("```")[1]
                 if content.startswith("json"):
                     content = content[4:]
-            generated = _json.loads(content)
+            generated = json.loads(content)
             return {
                 "name": generated.get("name", "New Agent"),
                 "description": generated.get("description", ""),
@@ -2128,14 +2116,13 @@ def create_app() -> FastAPI:
         if not current:
             raise HTTPException(status_code=404, detail="Routine not found")
 
-        import json as _json
         data = await request.json()
         allowed = {"name", "status", "trigger_type", "trigger_data", "apps"}
         kwargs = {k: v for k, v in data.items() if k in allowed}
         if "trigger_data" in kwargs and isinstance(kwargs["trigger_data"], dict):
-            kwargs["trigger_data"] = _json.dumps(kwargs["trigger_data"])
+            kwargs["trigger_data"] = json.dumps(kwargs["trigger_data"])
         if "apps" in kwargs and isinstance(kwargs["apps"], list):
-            kwargs["apps"] = _json.dumps(kwargs["apps"])
+            kwargs["apps"] = json.dumps(kwargs["apps"])
 
         ok = await _database.update_routine(routine_id, **kwargs)
         if not ok:
@@ -2162,7 +2149,7 @@ def create_app() -> FastAPI:
                 trigger_type = updated.get("trigger_type", "manual")
                 if trigger_type == "time_based":
                     try:
-                        trigger_data = _json.loads(updated.get("trigger_data") or "{}")
+                        trigger_data = json.loads(updated.get("trigger_data") or "{}")
                         cron_expr = _routine_cron_expr(trigger_data)
                         job = await _database.create_cron_job(
                             name=f"Rutina: {updated.get('name', 'Rutina')}",
@@ -2604,9 +2591,8 @@ def create_app() -> FastAPI:
 
     @app.get("/api/content/sessions")
     async def list_content_sessions(date: str = ""):
-        import os as _os
         from pathlib import Path as _Path
-        workspace = _Path(_os.environ.get("OPENACM_WORKSPACE", "workspace"))
+        workspace = _Path(os.environ.get("OPENACM_WORKSPACE", "workspace"))
         base = workspace / "content" / "sessions"
         if not base.exists():
             return {"dates": [], "sessions": []}
@@ -2614,11 +2600,10 @@ def create_app() -> FastAPI:
             session_dir = base / date
             if not session_dir.exists():
                 return {"dates": [], "sessions": []}
-            import json as _json
             sessions = []
             for f in sorted(session_dir.glob("*.json")):
                 try:
-                    sessions.append(_json.loads(f.read_text()))
+                    sessions.append(json.loads(f.read_text()))
                 except Exception:
                     pass
             return {"dates": [date], "sessions": sessions}
@@ -2640,12 +2625,11 @@ def create_app() -> FastAPI:
         body = await request.json()
         if not body.get("name") or not body.get("goal_template"):
             raise HTTPException(400, "name and goal_template are required")
-        import json as _json
         tmpl_id = await _database.create_swarm_template(
             name=body["name"],
             description=body.get("description", ""),
             goal_template=body["goal_template"],
-            workers=_json.dumps(body.get("workers", [])),
+            workers=json.dumps(body.get("workers", [])),
             global_model=body.get("global_model") or None,
         )
         tmpl = await _database.get_swarm_template(tmpl_id)
@@ -2673,13 +2657,12 @@ def create_app() -> FastAPI:
     async def save_social_credentials(request: Request):
         if not _database:
             raise HTTPException(503, "Database not available")
-        import json as _json
         body = await request.json()
         platform = body.get("platform", "")
         credentials = body.get("credentials", {})
         if platform not in ("facebook", "reddit"):
             raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
-        await _database.save_social_credentials(platform, _json.dumps(credentials))
+        await _database.save_social_credentials(platform, json.dumps(credentials))
         return {"ok": True, "platform": platform}
 
     @app.post("/api/social/credentials/{platform}/verify")
@@ -2688,11 +2671,10 @@ def create_app() -> FastAPI:
             raise HTTPException(503, "Database not available")
         if platform not in ("facebook", "reddit"):
             raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
-        import json as _json
         row = await _database.get_social_credentials(platform)
         if not row:
             raise HTTPException(404, f"No credentials saved for {platform}")
-        creds = _json.loads(row["credentials"])
+        creds = json.loads(row["credentials"])
 
         if platform == "facebook":
             token = creds.get("page_access_token", "")
@@ -2704,7 +2686,7 @@ def create_app() -> FastAPI:
                     r = await client.get("https://graph.facebook.com/me", params={"access_token": token})
                 if r.status_code == 200:
                     name = r.json().get("name", "?")
-                    await _database.save_social_credentials(platform, _json.dumps(creds), verified=True)
+                    await _database.save_social_credentials(platform, json.dumps(creds), verified=True)
                     return {"ok": True, "message": f"Authenticated as '{name}'"}
                 err = r.json().get("error", {}).get("message", r.text[:200])
                 return {"ok": False, "message": err}
@@ -2722,7 +2704,7 @@ def create_app() -> FastAPI:
                     user_agent=creds.get("user_agent", "OpenACM/1.0"),
                 )
                 me = reddit.user.me()
-                await _database.save_social_credentials(platform, _json.dumps(creds), verified=True)
+                await _database.save_social_credentials(platform, json.dumps(creds), verified=True)
                 return {"ok": True, "message": f"Authenticated as u/{me.name}"}
             except ImportError:
                 return {"ok": False, "message": "praw not installed — run: pip install praw"}
@@ -2897,7 +2879,6 @@ class ChannelShell:
             if self._platform == "Windows":
                 await loop.run_in_executor(None, self._pty.write, data)
             else:
-                import os
                 master_fd, _ = self._pty
                 await loop.run_in_executor(None, os.write, master_fd, data.encode("utf-8"))
         except Exception:
@@ -2931,9 +2912,8 @@ class ChannelShell:
 
     async def run_command_capture(self, command: str, timeout: float = 30.0) -> str:
         """Write a command to the PTY and capture output. Serialized — one command at a time."""
-        import re as _re
 
-        _ANSI = _re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
+        _ANSI = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
 
         # Hard cap: stop collecting after this many characters.
         # Prevents unbounded RAM growth and terminal flooding from commands like dir /s.
@@ -2947,7 +2927,7 @@ class ChannelShell:
             if not clean:
                 return False
             last = clean.splitlines()[-1] if "\n" in clean else clean
-            return bool(_re.search(r"[>$#]\s*$", last))
+            return bool(re.search(r"[>$#]\s*$", last))
 
         async def _interrupt_pty() -> None:
             """Send Ctrl+C to the PTY to kill the currently running command."""
@@ -3025,8 +3005,7 @@ class ChannelShell:
         - Waits until the shell prompt returns (user typed exit/Ctrl+D) or timeout
         - Returns the captured output for the brain
         """
-        import re as _re
-        _ANSI = _re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
+        _ANSI = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
 
         def strip_ansi(t: str) -> str:
             return _ANSI.sub("", t).replace("\r", "")
@@ -3036,7 +3015,7 @@ class ChannelShell:
             if not clean:
                 return False
             last = clean.splitlines()[-1] if "\n" in clean else clean
-            return bool(_re.search(r"[>$#%]\s*$", last))
+            return bool(re.search(r"[>$#%]\s*$", last))
 
         # Notify terminal user that an interactive session is starting
         await self._broadcast_json({
@@ -3098,7 +3077,7 @@ class ChannelShell:
                     self._pty.terminate(force=True)
             else:
                 if self._pty:
-                    import os, signal
+                    import signal
                     master_fd, proc = self._pty
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -3223,7 +3202,7 @@ async def create_web_server(
         args_raw = data.get("arguments", "")
         try:
             import json as _j
-            args = _j.loads(args_raw) if isinstance(args_raw, str) else args_raw
+            args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
             command = args.get("command") or args.get("code") or args_raw
         except Exception:
             command = str(args_raw)
