@@ -42,6 +42,8 @@ import {
   ArrowUp,
   ArrowDown,
   Info,
+  Infinity,
+  ScrollText,
 } from 'lucide-react';
 import type { ValidationStep, MessageUsage } from '@/stores/chat-store';
 import { clsx, type ClassValue } from 'clsx';
@@ -189,6 +191,98 @@ function ValidationBubble({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToolConfirmationBubble({
+  confirmId,
+  tool,
+  command,
+}: {
+  confirmId: string;
+  tool: string;
+  command: string;
+}) {
+  const [resolved, setResolved] = useState<'approved' | 'denied' | 'session' | null>(null);
+  const [loading, setLoading] = useState(false);
+  const token = useAuthStore((s) => s.token);
+
+  const resolve = async (approved: boolean, alwaysSession = false) => {
+    setLoading(true);
+    try {
+      await fetch('/api/tool/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ confirm_id: confirmId, approved, always_session: alwaysSession, command }),
+      });
+      setResolved(alwaysSession ? 'session' : approved ? 'approved' : 'denied');
+    } catch {
+      // best-effort
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex gap-3">
+      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-orange-600">
+        <ShieldCheck size={16} className="text-white" />
+      </div>
+      <div className="flex flex-col max-w-[85%] items-start">
+        <span className="text-xs text-slate-500 mb-1">Confirm</span>
+        <div className="px-4 py-3 rounded-2xl rounded-tl-sm border border-orange-600/40 bg-orange-950/30 text-orange-200 w-full">
+          <div className="flex items-center gap-2 mb-2">
+            <ShieldCheck size={14} className="text-orange-400" />
+            <span className="font-medium text-sm">Permission required — {tool}</span>
+          </div>
+          <div className="text-xs font-mono bg-slate-900/60 rounded-lg px-3 py-2 mb-3 text-slate-300 break-all">
+            {command}
+          </div>
+          {resolved === null ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                disabled={loading}
+                onClick={() => resolve(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                Allow
+              </button>
+              <button
+                disabled={loading}
+                onClick={() => resolve(true, true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Infinity size={12} />
+                Always (session)
+              </button>
+              <button
+                disabled={loading}
+                onClick={() => resolve(false)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
+              >
+                <XCircle size={12} />
+                Deny
+              </button>
+            </div>
+          ) : (
+            <div className={cn(
+              'flex items-center gap-1.5 text-xs font-medium',
+              resolved === 'approved' ? 'text-emerald-400'
+              : resolved === 'session' ? 'text-amber-400'
+              : 'text-red-400',
+            )}>
+              {resolved === 'approved' && <><CheckCircle2 size={12} /> Allowed</>}
+              {resolved === 'session' && <><Infinity size={12} /> Allowed this session</>}
+              {resolved === 'denied' && <><XCircle size={12} /> Denied</>}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -354,6 +448,41 @@ function TokenBadge({ usage }: { usage: MessageUsage }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CompactionNoteBubble({
+  summary,
+  summarizedMessages,
+}: {
+  summary: string;
+  summarizedMessages: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="flex items-start gap-3 px-2">
+      <div className="flex-1 border border-dashed border-slate-600/60 rounded-xl bg-slate-900/50 px-4 py-3">
+        <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+          <ScrollText size={13} className="text-indigo-400 flex-shrink-0" />
+          <span className="font-medium text-indigo-300">Conversación compactada</span>
+          <span className="text-slate-600">·</span>
+          <span>{summarizedMessages} mensajes resumidos</span>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="ml-auto flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {expanded ? 'Ocultar' : 'Ver resumen'}
+          </button>
+        </div>
+        {expanded && (
+          <div className="mt-2 text-xs text-slate-400 leading-relaxed border-t border-slate-700/50 pt-2">
+            {summary}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1011,7 +1140,7 @@ export default function ChatPage() {
               </div>
             ) : (
               messages
-                .filter((msg) => showToolLogs || (!msg.toolCall && !msg.validation))
+                .filter((msg) => showToolLogs || msg.compactionNote || (!msg.toolCall && !msg.validation && !msg.toolConfirmation))
                 .map((msg) => {
                   if (msg.validation) {
                     return (
@@ -1021,6 +1150,25 @@ export default function ChatPage() {
                         steps={msg.validation.steps}
                         done={msg.validation.done}
                         passed={msg.validation.passed}
+                      />
+                    );
+                  }
+                  if (msg.toolConfirmation) {
+                    return (
+                      <ToolConfirmationBubble
+                        key={msg.id}
+                        confirmId={msg.toolConfirmation.confirmId}
+                        tool={msg.toolConfirmation.tool}
+                        command={msg.toolConfirmation.command}
+                      />
+                    );
+                  }
+                  if (msg.compactionNote) {
+                    return (
+                      <CompactionNoteBubble
+                        key={msg.id}
+                        summary={msg.compactionNote.summary}
+                        summarizedMessages={msg.compactionNote.summarizedMessages}
                       />
                     );
                   }

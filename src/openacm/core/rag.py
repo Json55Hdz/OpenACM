@@ -121,6 +121,26 @@ class RAGEngine:
         except Exception as e:
             log.error("RAG ingest failed", error=str(e))
 
+    async def ingest_raw_chunks(self, chunks: list[dict[str, Any]]):
+        """
+        Ingest pre-split chunks in a single upsert call.
+        Each chunk must have keys: id, text, metadata.
+        Cheaper than calling ingest() per chunk — one embedding batch instead of N.
+        """
+        if not self._ready or not chunks:
+            return
+        import asyncio
+        collection = _get_collection()
+        try:
+            await asyncio.to_thread(
+                collection.upsert,
+                ids=[c["id"] for c in chunks],
+                documents=[c["text"] for c in chunks],
+                metadatas=[c["metadata"] for c in chunks],
+            )
+        except Exception as e:
+            log.error("RAG ingest_raw_chunks failed", error=str(e))
+
     async def delete_by_metadata(self, filter_dict: dict[str, Any]):
         """Delete items from the vector store based on metadata filters."""
         if not self._ready:
@@ -248,13 +268,30 @@ class RAGEngine:
         )
 
     def _split_text(self, text: str, max_chunk: int = 500) -> list[str]:
-        """Split text into chunks roughly max_chunk characters each."""
-        if len(text) <= max_chunk:
-            return [text] if text.strip() else []
+        """
+        Split text into semantically coherent chunks.
+        Uses chonkie SentenceChunker when available; falls back to naive split.
+        """
+        if not text.strip():
+            return []
 
-        # Split by paragraphs first, then by sentences
+        # ── 1. chonkie SentenceChunker (preferred) ────────────────────────
+        try:
+            from chonkie import SentenceChunker
+            chunker = SentenceChunker(chunk_size=max_chunk, chunk_overlap=50)
+            chunks = chunker(text)
+            result = [c.text for c in chunks if c.text.strip()]
+            if result:
+                return result
+        except Exception:
+            pass  # chonkie unavailable or failed — use fallback below
+
+        # ── 2. Naive paragraph/sentence split (fallback) ──────────────────
+        if len(text) <= max_chunk:
+            return [text]
+
         paragraphs = re.split(r'\n\s*\n', text)
-        chunks = []
+        chunks: list[str] = []
         current_chunk = ""
 
         for para in paragraphs:
@@ -263,7 +300,6 @@ class RAGEngine:
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
-                # If single paragraph is too long, split by sentences
                 if len(para) > max_chunk:
                     sentences = re.split(r'(?<=[.!?])\s+', para)
                     current_chunk = ""

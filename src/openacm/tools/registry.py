@@ -48,10 +48,18 @@ class ToolRegistry:
         self._tool_embeddings: np.ndarray | None = None  # shape (N, dim)
         self._tool_names_order: list[str] = []  # parallel to _tool_embeddings rows
         self._semantic_model: Any = None  # reference to sentence-transformer model
+        # Callback injected by the web server to request user confirmation before
+        # executing sensitive tools.  Signature: (tool, command, channel_id) -> bool
+        self.confirm_callback = None
 
     def register(self, tool: ToolDefinition):
         """Register a single tool."""
         self.tools[tool.name] = tool
+        # Invalidate the embedding cache so the next get_tools_semantic call
+        # re-encodes the full tool list (including the newly added tool).
+        if self._tool_embeddings is not None:
+            self._tool_embeddings = None
+            self._tool_names_order = []
         log.debug("Tool registered", name=tool.name, risk=tool.risk_level)
 
     def register_module(self, module: types.ModuleType):
@@ -105,8 +113,11 @@ class ToolRegistry:
         or None if semantic selection is unavailable (model not loaded).
         Falls back gracefully — caller should use keyword matching if None.
         """
-        if self._semantic_model is None or self._tool_embeddings is None:
+        if self._semantic_model is None:
             return None
+        # Embeddings were invalidated (new tools registered) → recompute lazily.
+        if self._tool_embeddings is None:
+            self.precompute_tool_embeddings(self._semantic_model)
 
         # Embed user message
         msg_emb = self._semantic_model.encode(
@@ -283,6 +294,25 @@ class ToolRegistry:
         # No action keywords found in a short message → conversational
         return True
 
+    def _get_mcp_tools_slim(self) -> list[dict[str, Any]]:
+        """Return slim schemas for all currently-registered MCP tools."""
+        return [t.to_slim_schema() for t in self.tools.values() if t.category == "mcp"]
+
+    def _merge_mcp(self, selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Append any MCP tools not already in *selected*.
+
+        MCP tools are always included — they were deliberately connected and the
+        LLM can't call them unless their schemas are in the tool list.
+        """
+        mcp = self._get_mcp_tools_slim()
+        if not mcp:
+            return selected
+        existing = {t["function"]["name"] for t in selected}
+        extras = [t for t in mcp if t["function"]["name"] not in existing]
+        if extras:
+            log.debug("MCP tools appended", count=len(extras))
+        return selected + extras
+
     def get_tools_by_intent(self, message: str) -> list[dict[str, Any]]:
         """Return only tools relevant to the user's message.
 
@@ -293,6 +323,9 @@ class ToolRegistry:
            If semantic returns [] on a long message → keyword fallback as safety net.
         2. Conversational heuristic (only when model unavailable) → no tools for short chat.
         3. Keyword fallback → category-based matching.
+
+        MCP tools are always appended regardless of selection strategy — they are
+        connected on purpose and the LLM must see their schemas to call them.
         """
         msg_lower = message.lower()
 
@@ -301,36 +334,40 @@ class ToolRegistry:
         semantic_result = self.get_tools_semantic(message)
         if semantic_result is not None:
             if len(semantic_result) > 0:
-                return semantic_result
+                return self._merge_mcp(semantic_result)
             # Semantic returned 0 matches.
             # Short messages with no matches are genuinely conversational → trust it.
             # Long messages may use domain-specific verbs not in the embedding space
             # (e.g. git commit, inicializa, push) → fall through to keyword fallback.
             if len(msg_lower) <= 60:
                 log.debug("Short message, semantic 0 matches — conversational", message=message[:60])
-                return []
+                # Still return MCP tools even for "conversational" messages — the user
+                # may be talking *to* an MCP-connected agent (e.g. "create a cube in unity")
+                return self._get_mcp_tools_slim()
             log.debug("Long message, semantic 0 matches — keyword fallback", message=message[:60])
         else:
             log.debug("Semantic model unavailable, using keyword fallback")
             # Only apply conversational heuristic when model is not available
             if self._is_conversational(msg_lower):
                 log.debug("Conversational message detected — sending no tools", message=message[:60])
-                return []
+                return self._get_mcp_tools_slim()
 
-        # Start with general + mcp only (NOT meta by default)
-        matched_categories: set[str] = {"general", "mcp"}
+        # Start with general only (NOT meta by default — mcp handled via _merge_mcp)
+        matched_categories: set[str] = {"general"}
 
         for cat, keywords in self.INTENT_KEYWORDS.items():
+            if cat == "mcp":
+                continue  # MCP tools are always included via _merge_mcp
             if any(self._kw_match(msg_lower, kw) for kw in keywords):
                 matched_categories.add(cat)
 
         # No specific intent detected in a longer message → general tools as safety net
-        if matched_categories == {"general", "mcp"}:
-            return [
+        if matched_categories == {"general"}:
+            return self._merge_mcp([
                 t.to_slim_schema()
                 for t in self.tools.values()
-                if t.category in ("general", "mcp")
-            ]
+                if t.category == "general"
+            ])
 
         filtered = [
             t.to_slim_schema()
@@ -345,7 +382,7 @@ class ToolRegistry:
             filtered_tools=len(filtered),
         )
 
-        return filtered
+        return self._merge_mcp(filtered)
 
     async def execute(
         self,
@@ -380,6 +417,7 @@ class ToolRegistry:
                 _user_id=user_id,
                 _channel_id=channel_id,
                 _channel_type=channel_type,
+                _confirm_callback=self.confirm_callback,
             )
             result_str = str(result)
         except Exception as e:

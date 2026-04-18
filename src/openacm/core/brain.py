@@ -27,7 +27,7 @@ from openacm.core.events import (
 )
 from openacm.core.llm_router import LLMRouter
 from openacm.core.memory import MemoryManager
-from openacm.core.acm_context import get_openacm_context, get_short_context
+from openacm.core.acm_context import get_openacm_context, get_short_context, current_channel_id
 
 log = structlog.get_logger()
 
@@ -94,8 +94,9 @@ class Brain:
         self.event_bus = event_bus
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
-        # Give memory access to LLM router for conversation compaction
+        # Give memory access to LLM router and event bus for conversation compaction
         self.memory._llm_router = llm_router
+        self.memory._event_bus = event_bus
         self.terminal_history: list[dict] = []
         # Tracks the active processing task per channel — used for interruption
         self._channel_tasks: dict[str, asyncio.Task] = {}
@@ -276,8 +277,27 @@ class Brain:
         )
 
     def _extract_pdf_text(self, raw_bytes: bytes) -> str:
-        """Extract text from a PDF using pypdf."""
-        import io
+        """
+        Extract text from a PDF.
+        Priority: docling (layout-aware, tables) → pypdf (basic) → error message.
+        """
+        import io, tempfile, os as _os
+
+        # ── 1. docling — layout-aware, handles tables and columns ─────────
+        try:
+            from docling.document_converter import DocumentConverter
+            from docling.datamodel.base_models import DocumentStream, InputFormat
+
+            stream = DocumentStream(name="doc.pdf", stream=io.BytesIO(raw_bytes))
+            converter = DocumentConverter()
+            result = converter.convert(stream, raises_on_error=False)
+            md = result.document.export_to_markdown()
+            if md and md.strip():
+                return md[:12000]
+        except Exception as e:
+            log.debug("docling PDF extraction failed, falling back to pypdf", error=str(e))
+
+        # ── 2. pypdf fallback ─────────────────────────────────────────────
         try:
             import pypdf
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
@@ -289,6 +309,42 @@ class Brain:
         except Exception as e:
             log.warning("PDF extraction failed", error=str(e))
             return f"[PDF extraction error: {e}]"
+
+    async def structured_extract(self, text: str, schema: type, system: str | None = None) -> Any | None:
+        """
+        Extract structured data from text using instructor + litellm.
+        Returns a validated Pydantic model instance, or None if unavailable.
+
+        Example:
+            class Lang(BaseModel):
+                language: str
+                confidence: float
+            result = await brain.structured_extract("Bonjour monde", Lang)
+            # result.language == "French"
+        """
+        try:
+            import instructor
+            from litellm import completion as _completion
+
+            client = instructor.from_litellm(_completion)
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": text})
+
+            return await asyncio.to_thread(
+                client.chat.completions.create,
+                model=self.llm_router.current_model,
+                response_model=schema,
+                messages=messages,
+                max_retries=2,
+            )
+        except ImportError:
+            log.warning("instructor not installed — structured_extract unavailable")
+            return None
+        except Exception as e:
+            log.warning("structured_extract failed", error=str(e))
+            return None
 
     async def _transcribe_audio(self, raw_bytes: bytes, ext: str) -> str | None:
         """
@@ -344,6 +400,31 @@ class Brain:
             pass
         except Exception as e:
             log.warning("Local Whisper transcription failed", error=str(e))
+
+        # ── 3. MarkItDown speech_recognition fallback ──────────────────────
+        try:
+            import tempfile, os as _os
+            from markitdown import MarkItDown
+
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(raw_bytes)
+                tmp_path = f.name
+            try:
+                loop = asyncio.get_event_loop()
+
+                def _run_md():
+                    result = MarkItDown().convert(tmp_path)
+                    return (result.text_content or "").strip()
+
+                text = await loop.run_in_executor(None, _run_md)
+                if text:
+                    return text
+            finally:
+                _os.unlink(tmp_path)
+        except ImportError:
+            pass
+        except Exception as e:
+            log.warning("MarkItDown audio transcription failed", error=str(e))
 
         return None
 
@@ -820,11 +901,36 @@ class Brain:
                             mime = "image/webp"
 
                         if mime.startswith("image/"):
-                            structured_content.append({
-                                "type": "image_url",
-                                "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                "_file_id": att_id,  # preserved for DB serialization
-                            })
+                            # Check if the active model actually supports vision
+                            try:
+                                _vision_ok = litellm.supports_vision(
+                                    model=self.llm_router.current_model
+                                )
+                            except Exception:
+                                _vision_ok = True  # optimistic default
+
+                            if _vision_ok:
+                                structured_content.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                    "_file_id": att_id,  # preserved for DB serialization
+                                })
+                            else:
+                                # Fallback: MarkItDown extracts EXIF metadata / OCR text
+                                try:
+                                    from markitdown import MarkItDown
+                                    _md_result = MarkItDown().convert(str(file_path))
+                                    md_text = (_md_result.text_content or "").strip()
+                                except Exception:
+                                    md_text = ""
+                                structured_content.append({
+                                    "type": "text",
+                                    "text": (
+                                        f"[Image — {file_path.name}]:\n{md_text}"
+                                        if md_text
+                                        else f"[Image attached: {file_path.name} — active model does not support vision]"
+                                    ),
+                                })
                         elif ext == ".pdf":
                             text = self._extract_pdf_text(raw_bytes)
                             structured_content.append({
@@ -843,20 +949,25 @@ class Brain:
                                     "type": "text",
                                     "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",
                                 })
-                        elif ext in (".txt", ".md", ".csv", ".log", ".json", ".yaml", ".yml", ".xml", ".html"):
+                        else:
+                            # Use MarkItDown for everything else: docx, xlsx, pptx,
+                            # txt, csv, json, xml, html, zip, epub, and more.
                             try:
-                                text = raw_bytes.decode("utf-8", errors="replace")
+                                from markitdown import MarkItDown
+                                _md_result = MarkItDown().convert(str(file_path))
+                                md_text = (_md_result.text_content or "").strip()
+                            except Exception:
+                                md_text = ""
+                            if md_text:
                                 structured_content.append({
                                     "type": "text",
-                                    "text": f"[File — {file_path.name}]:\n{text[:12000]}",
+                                    "text": f"[{file_path.name}]:\n{md_text[:12000]}",
                                 })
-                            except Exception:
-                                pass
-                        else:
-                            structured_content.append({
-                                "type": "text",
-                                "text": f"[File attached: {file_path.name} ({ext})]",
-                            })
+                            else:
+                                structured_content.append({
+                                    "type": "text",
+                                    "text": f"[File attached: {file_path.name} ({ext})]",
+                                })
                     except Exception as e:
                         log.error("Failed to load attachment", error=str(e), file_id=att_id)
 
@@ -921,6 +1032,7 @@ class Brain:
         generated_attachments: list[str] = []  # Track files generated by send_file_to_chat
         _last_tool_signature: str | None = None  # For repeated-call loop detection
         _repeated_call_count: int = 0
+        _empty_response_retried: bool = False  # Guard: only inject the "write now" turn once
 
         # ── Trace: record this request for debugging ──────────────────────────
         import time as _time
@@ -982,11 +1094,15 @@ class Brain:
             _llm_t0 = _time.monotonic()
 
             try:
-                response = await self.llm_router.chat(
-                    messages=prepared_messages,
-                    tools=tools,
-                    tool_choice=tc_override,
-                )
+                _ctx_token = current_channel_id.set(channel_id)
+                try:
+                    response = await self.llm_router.chat(
+                        messages=prepared_messages,
+                        tools=tools,
+                        tool_choice=tc_override,
+                    )
+                finally:
+                    current_channel_id.reset(_ctx_token)
                 _iter_trace["llm_elapsed_ms"] = int((_time.monotonic() - _llm_t0) * 1000)
             except Exception as e:
                 _iter_trace["llm_elapsed_ms"] = int((_time.monotonic() - _llm_t0) * 1000)
@@ -1040,10 +1156,30 @@ class Brain:
 
                 # Verificar que tenemos contenido real
                 if not assistant_content or not assistant_content.strip():
-                    # Empty content — model finished tool calls but returned no text.
-                    # Break out and let the post-loop summary call handle it with tools=None
-                    # (looping just injects duplicate "resume" messages and never helps).
-                    log.warning("LLM returned empty content after tools, requesting summary")
+                    # Empty content — Gemini and some models return "" after tool calls
+                    # because they consider the tool call itself as their "response".
+                    # Strategy: inject one explicit "write your response NOW" turn and retry.
+                    # Only do this once to avoid infinite injection loops.
+                    if not _empty_response_retried:
+                        _empty_response_retried = True
+                        _swarm_hint = (
+                            "\nIMPORTANT: You MUST end with:\n"
+                            "  TASK_STATUS: COMPLETED\n"
+                            "  or TASK_STATUS: FAILED: <reason>"
+                            if channel_type == "swarm" else ""
+                        )
+                        messages = list(messages) + [{
+                            "role": "user",
+                            "content": (
+                                "Write your final text response now based on everything you did. "
+                                "Do NOT call any more tools — just write your conclusion."
+                                + _swarm_hint
+                            ),
+                        }]
+                        log.warning("LLM returned empty content — injecting response-forcing turn")
+                        continue
+                    # Already retried — give up and go to summary call
+                    log.warning("LLM returned empty content twice, going to summary")
                     break
 
                 await self.memory.add_message(user_id, channel_id, "assistant", assistant_content)
@@ -1287,21 +1423,60 @@ class Brain:
 
             _trace["iterations"].append(_iter_trace)
 
-        # If we hit max iterations OR the model returned empty content, make one final
+        # If we hit max iterations OR the model returned empty content twice, make one final
         # LLM call with tools=None to force a plain-text summary of what was done.
         try:
             log.warning("Making final summary LLM call (no tools)")
-            # Inject a one-time summary request so the model knows to write text now
+
+            # Build a context-aware forcing prompt
+            _swarm_status_reminder = (
+                "\n\nCRITICAL: You MUST end your response with exactly one of:\n"
+                "  TASK_STATUS: COMPLETED\n"
+                "  TASK_STATUS: FAILED: <brief reason>"
+                if channel_type == "swarm" else ""
+            )
             summary_messages = list(messages) + [{
                 "role": "user",
-                "content": "Por favor, resume los resultados obtenidos y responde al usuario.",
+                "content": (
+                    "Write your final response now as plain text. "
+                    "Summarize what you accomplished, what worked, and what the outcome is. "
+                    "Do NOT call any tools."
+                    + _swarm_status_reminder
+                ),
             }]
-            final_response = await self.llm_router.chat(
-                messages=summary_messages,
-                tools=None,  # No tools — force text output
-            )
+            _ctx_token2 = current_channel_id.set(channel_id)
+            try:
+                final_response = await self.llm_router.chat(
+                    messages=summary_messages,
+                    tools=None,  # No tools — force text output
+                    temperature=0.2,  # Low temp → deterministic, less likely to return empty
+                )
+            finally:
+                current_channel_id.reset(_ctx_token2)
 
-            final_content = final_response["content"]
+            final_content = (final_response.get("content") or "").strip()
+
+            # Model still returned empty — synthesize from tool call history
+            if not final_content:
+                tool_names: list[str] = []
+                last_results: list[str] = []
+                for m in messages:
+                    if m.get("role") == "assistant":
+                        for tc in (m.get("tool_calls") or []):
+                            fn = tc.get("function", {})
+                            tool_names.append(fn.get("name", "tool"))
+                    elif m.get("role") == "tool" and m.get("content"):
+                        last_results.append(str(m["content"])[:400])
+
+                tools_used = ", ".join(dict.fromkeys(tool_names)) or "none"
+                last_result_text = last_results[-1] if last_results else "(no output)"
+                status_line = "\n\nTASK_STATUS: COMPLETED" if channel_type == "swarm" else ""
+                final_content = (
+                    f"Task execution finished. Tools used: {tools_used}.\n\n"
+                    f"Last output:\n{last_result_text}"
+                    f"{status_line}"
+                )
+                log.warning("Summary LLM returned empty — using synthesized response")
             if final_content and final_content.strip():
                 await self.memory.add_message(user_id, channel_id, "assistant", final_content)
 

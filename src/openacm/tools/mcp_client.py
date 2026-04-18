@@ -270,6 +270,9 @@ class MCPManager:
         for t in conn.tools:
             full_name = self._tool_name(server_name, t["name"])
             self.tool_registry.tools.pop(full_name, None)
+        # Invalidate embedding cache so MCP tools are removed from semantic search.
+        self.tool_registry._tool_embeddings = None
+        self.tool_registry._tool_names_order = []
 
     # ── Tool execution ────────────────────────────────────────────────────
 

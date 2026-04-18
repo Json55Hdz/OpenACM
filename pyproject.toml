@@ -44,6 +44,10 @@ dependencies = [
     "Pillow>=10.0",
     "cryptography>=41.0",
     "pypdf>=4.0",
+    "markitdown[docx,xlsx,pptx,audio-transcription]>=0.1",
+    "chonkie[sentence]>=1.0",
+    "docling>=2.0",
+    "instructor>=1.0",
     
     # Tier-1 Agentic powers
     "chromadb>=0.5",
@@ -73,6 +77,7 @@ dev = [
 
 [project.scripts]
 openacm = "openacm.__main__:main"
+openacm-cli = "openacm.core.interactive_repl:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]

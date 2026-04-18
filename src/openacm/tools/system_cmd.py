@@ -9,6 +9,29 @@ from openacm.tools.base import tool
 # Registry of background processes: pid -> asyncio.subprocess.Process
 _bg_processes: dict[int, asyncio.subprocess.Process] = {}
 
+# CLIs that are interactive by nature — route through run_interactive_capture
+_INTERACTIVE_CMDS = {
+    "claude", "opencode", "gemini", "vim", "nano", "htop", "top",
+    "python", "python3", "node", "ipython", "irb", "psql", "mysql",
+    "sqlite3", "redis-cli", "mongosh",
+}
+
+
+def _is_interactive_cmd(command: str) -> bool:
+    """Return True if the command is a known interactive/TUI application."""
+    import shlex
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+    if not parts:
+        return False
+    from pathlib import Path
+    base = Path(parts[0]).name.lower()
+    if base.endswith(".exe"):
+        base = base[:-4]
+    return base in _INTERACTIVE_CMDS
+
 # GUI launchers that open a window and never produce stdout/stderr.
 # Matched against the start of the command (case-insensitive).
 # These are launched fire-and-forget so the agent never hangs.
@@ -111,13 +134,28 @@ async def run_command(
     if not _sandbox:
         return "Error: Sandbox not available"
 
-    # Security check — must happen before PTY or subprocess execution.
-    # sandbox.execute() checks policies internally, but the PTY path bypasses it.
-    allowed, reason = _sandbox.policy.check_command(command)
-    if not allowed:
-        return f"Error: {reason}"
-
     _channel_id = kwargs.get("_channel_id", "web")
+    _is_swarm_channel = _channel_id.startswith("swarm_")
+
+    # Swarm workers run in isolated workspaces with their own auto-approve callback.
+    # Skip the global policy check entirely — they should never be blocked by the
+    # user-level whitelist or confirmation gate.
+    if not _is_swarm_channel:
+        # Security check — must happen before PTY or subprocess execution.
+        # sandbox.execute() checks policies internally, but the PTY path bypasses it.
+        allowed, reason = _sandbox.policy.check_command(command)
+        if not allowed:
+            return f"Error: {reason}"
+
+        # Confirmation gate — when the policy marks the command as requiring approval,
+        # pause and wait for the user to Allow or Deny via the UI.
+        _confirm_callback = kwargs.get("_confirm_callback")
+        if _sandbox.policy.needs_confirmation(command):
+            if _confirm_callback:
+                approved = await _confirm_callback("run_command", command, _channel_id)
+                if not approved:
+                    return "Command execution was denied by user."
+            # If no callback is available (e.g. non-web channel), fall through and execute
 
     # GUI / background commands don't need PTY — launch detached as before.
     if _is_gui_command(command) or background:
@@ -134,25 +172,28 @@ async def run_command(
                 )
         return await _run_background(command, working_directory, on_output, _sandbox)
 
-    # For interactive / regular commands: route through the channel's PTY shell so
-    # everything (prompts, passwords, colors, current path) shows in the web terminal.
-    if working_directory:
-        # cd first, then run — PTY doesn't have a per-call cwd option
-        full_command = f'cd /d "{working_directory}" && {command}'
-    else:
-        full_command = command
+    # Swarm workers skip PTY entirely and use subprocess directly.
+    # PTY is only needed for the interactive web terminal panel.
+    if not _is_swarm_channel:
+        # For interactive / regular commands: route through the channel's PTY shell so
+        # everything (prompts, passwords, colors, current path) shows in the web terminal.
+        if working_directory:
+            full_command = f'cd /d "{working_directory}" && {command}'
+        else:
+            full_command = command
 
-    try:
-        from openacm.web.server import _channel_shells, ChannelShell
-        shell = _channel_shells.get(_channel_id)
-        if not shell or not shell._alive:
-            # Terminal panel may not be open yet — create the PTY shell on demand
-            shell = ChannelShell(_channel_id)
-            await shell.start()
-            _channel_shells[_channel_id] = shell
-        return await shell.run_command_capture(full_command, timeout=float(timeout) if timeout > 0 else 30.0)
-    except Exception:
-        pass
+        try:
+            from openacm.web.server import _channel_shells, ChannelShell
+            shell = _channel_shells.get(_channel_id)
+            if not shell or not shell._alive:
+                shell = ChannelShell(_channel_id)
+                await shell.start()
+                _channel_shells[_channel_id] = shell
+            if _is_interactive_cmd(command):
+                return await shell.run_interactive_capture(full_command, timeout=float(timeout) if timeout > 0 else 600.0)
+            return await shell.run_command_capture(full_command, timeout=float(timeout) if timeout > 0 else 30.0)
+        except Exception:
+            pass
 
     # Fallback: sandbox subprocess (no PTY, but still works)
     brain = kwargs.get("_brain")

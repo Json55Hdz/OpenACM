@@ -295,6 +295,10 @@ class CLIProvider:
 
     async def _run_subprocess(self, prompt: str) -> str:
         """Pipe prompt to the CLI via stdin and return stdout."""
+        return await self._run_direct_subprocess(prompt)
+
+    async def _run_direct_subprocess(self, prompt: str) -> str:
+        """Pipe prompt to the CLI via stdin and return stdout."""
         import os
         import platform
         import shutil
@@ -355,6 +359,47 @@ class CLIProvider:
             )
 
         return stdout
+
+    async def _run_via_pty(self, shell, prompt: str) -> str:
+        """Run CLI via the channel's PTY shell so the user sees it in the terminal."""
+        import platform
+        import tempfile
+        import os
+
+        is_windows = platform.system() == "Windows"
+
+        def _quote(s: str) -> str:
+            """Quote a token for the current shell (double-quotes on Windows cmd.exe)."""
+            if is_windows:
+                # cmd.exe: wrap in double quotes, escape internal double quotes
+                return '"' + s.replace('"', '""') + '"'
+            import shlex
+            return shlex.quote(s)
+
+        # Write prompt to a temp file to avoid shell escaping / length issues
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.txt', delete=False, encoding='utf-8'
+        ) as f:
+            f.write(prompt)
+            tmp_path = f.name
+
+        try:
+            if self._input_mode == "arg":
+                cmd_parts = [self._binary] + self._args + [prompt]
+                command = " ".join(_quote(p) for p in cmd_parts)
+            else:
+                binary_parts = [self._binary] + self._args
+                # Use double-quoted path for Windows; shlex-quoted for Unix
+                redirect = f'< {_quote(tmp_path)}'
+                command = " ".join(_quote(p) for p in binary_parts) + f" {redirect}"
+
+            output = await shell.run_interactive_capture(command, timeout=self._timeout)
+            return output
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     def _build_arg_prompt(self, messages: list[dict[str, Any]]) -> str:
         """

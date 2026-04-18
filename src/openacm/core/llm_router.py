@@ -53,7 +53,7 @@ def _count_tokens(model: str, messages: list | None = None, text: str | None = N
     # Hard fallback: ~4 chars per token (works for English/code, rough for other langs)
     src = (text or "") if text else "".join(
         (m.get("content") or "") if isinstance(m.get("content"), str)
-        else "".join(p.get("text", "") for p in m.get("content", []) if isinstance(p, dict))
+        else "".join(p.get("text", "") for p in (m.get("content") or []) if isinstance(p, dict))
         for m in (messages or [])
     )
     return max(1, len(src) // 4)
@@ -249,6 +249,19 @@ class LLMRouter:
         except Exception as e:
             log.warning("Could not load persisted model", error=str(e))
 
+        # Restore model params
+        try:
+            import json as _json
+            mp_json = await database.get_setting("llm.model_params")
+            if mp_json:
+                all_mp = _json.loads(mp_json)
+                for prov, mp in all_mp.items():
+                    if prov in self.config.providers:
+                        self.config.providers[prov]["model_params"] = mp
+                log.info("Loaded persisted model params", providers=list(all_mp.keys()))
+        except Exception as e:
+            log.warning("Could not load persisted model params", error=str(e))
+
     def _build_model_string(self) -> str:
         """Build the LiteLLM model string."""
         if self._current_model:
@@ -311,6 +324,24 @@ class LLMRouter:
         if provider in self.config.providers:
             return self.config.providers[provider].get("base_url")
         return None
+
+    def _get_model_params(self) -> dict:
+        """Get stored params for current provider+model."""
+        provider_cfg = self.config.providers.get(self._current_provider, {})
+        model = self._current_model or provider_cfg.get("default_model", "")
+        return provider_cfg.get("model_params", {}).get(model, {})
+
+    def set_model_params(self, provider: str, model: str, params: dict) -> None:
+        """Persist params for a provider+model into live config."""
+        if provider not in self.config.providers:
+            return
+        mp = self.config.providers[provider].setdefault("model_params", {})
+        if model not in mp:
+            mp[model] = {}
+        for k in ("temperature", "max_tokens", "top_p"):
+            if k in params:
+                v = params[k]
+                mp[model][k] = v  # None = unset
 
     def _is_cli_provider(self) -> bool:
         """Return True if the current provider is a CLI-type provider (no API key needed)."""
@@ -435,6 +466,7 @@ class LLMRouter:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         tool_choice_override: str | None = None,
+        top_p: float | None = None,
     ) -> dict[str, Any]:
         """Direct httpx call for custom OpenAI-compatible providers.
 
@@ -461,13 +493,20 @@ class LLMRouter:
 
         effective_tc = tool_choice_override or self.get_provider_profile().tool_choice_mode
 
+        _provider_lower = self._current_provider.lower()
+        _model_lower = (model or "").lower()
+        is_kimi = "kimi" in _provider_lower or "moonshot" in _provider_lower or "kimi" in _model_lower
+
         # Messages already normalized by the caller (_chat_attempt); use as-is
         final = messages
+
+        # kimi-k2.5 only accepts temperature=1
+        effective_temperature = 1 if is_kimi else temperature
 
         payload: dict[str, Any] = {
             "model": model,
             "messages": final,
-            "temperature": temperature,
+            "temperature": effective_temperature,
             "stream": True,
         }
         if tools:
@@ -476,6 +515,8 @@ class LLMRouter:
                 payload["tool_choice"] = effective_tc
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if top_p is not None:
+            payload["top_p"] = top_p
 
         # Debug: log exactly what we're sending
         tool_names = [t["function"]["name"] for t in tools] if tools else []
@@ -568,7 +609,7 @@ class LLMRouter:
                         content_parts.append(delta["content"])
 
                     # Accumulate tool calls
-                    for tc in delta.get("tool_calls", []):
+                    for tc in (delta.get("tool_calls") or []):
                         idx = tc.get("index", 0)
                         if idx not in tool_calls_acc:
                             tool_calls_acc[idx] = {
@@ -645,7 +686,7 @@ class LLMRouter:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
         stream: bool = False,
         max_retries: int = 3,
@@ -660,6 +701,14 @@ class LLMRouter:
         ``model_override`` bypasses the current provider/model and uses the given
         LiteLLM model string directly (e.g. ``"anthropic/claude-opus-4-6"``).
         """
+        # Resolve per-model param defaults (config overrides hardcoded defaults)
+        _mp = self._get_model_params()
+        if temperature is None:
+            temperature = float(_mp.get("temperature", 0.7))
+        if max_tokens is None and _mp.get("max_tokens"):
+            max_tokens = int(_mp["max_tokens"])
+        _top_p: float | None = _mp.get("top_p") or None
+
         model = model_override or self._build_model_string()
         api_base = None if model_override else self._get_api_base()
 
@@ -682,6 +731,7 @@ class LLMRouter:
                 return await self._chat_attempt(
                     messages, tools, temperature, max_tokens, model, api_base, start_time,
                     tool_choice_override=tool_choice,
+                    top_p=_top_p,
                 )
             except Exception as e:
                 last_error = e
@@ -721,6 +771,7 @@ class LLMRouter:
         api_base: str | None,
         start_time: float,
         tool_choice_override: str | None = None,
+        top_p: float | None = None,
     ) -> dict[str, Any]:
         """Single chat attempt."""
         profile = self.get_provider_profile()
@@ -752,6 +803,7 @@ class LLMRouter:
                     self._custom_chat(
                         messages, tools, temperature, max_tokens,
                         tool_choice_override=effective_tool_choice,
+                        top_p=top_p,
                     ),
                     timeout=_llm_timeout,
                 )
@@ -783,6 +835,8 @@ class LLMRouter:
                     kwargs["tool_choice"] = effective_tool_choice
                 if max_tokens:
                     kwargs["max_tokens"] = max_tokens
+                if top_p is not None:
+                    kwargs["top_p"] = top_p
 
                 # Anthropic prompt caching: convert system message and mark last
                 # user message as cacheable to reduce costs on repeated context.
@@ -954,10 +1008,18 @@ class LLMRouter:
     async def chat_stream(
         self,
         messages: list[dict[str, Any]],
-        temperature: float = 0.7,
+        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         """Stream a chat completion response, yielding text chunks."""
+        # Resolve per-model param defaults (config overrides hardcoded defaults)
+        _mp = self._get_model_params()
+        if temperature is None:
+            temperature = float(_mp.get("temperature", 0.7))
+        if max_tokens is None and _mp.get("max_tokens"):
+            max_tokens = int(_mp["max_tokens"])
+        _top_p: float | None = _mp.get("top_p") or None
+
         model = self._build_model_string()
         api_base = self._get_api_base()
 
@@ -979,6 +1041,8 @@ class LLMRouter:
 
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
+        if _top_p is not None:
+            kwargs["top_p"] = _top_p
 
         response = await litellm.acompletion(**kwargs)
 

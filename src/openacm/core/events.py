@@ -32,6 +32,7 @@ EVENT_TOOL_VALIDATION = "tool.validation"  # Step-by-step progress from tool/ski
 EVENT_SKILL_ACTIVE = "skill.active"  # One or more skills were activated for this message
 EVENT_WORKFLOW_SUGGESTION = "workflow.suggestion"
 EVENT_MEMORY_RECALL = "memory.recall"  # RAG long-term memory is being queried
+EVENT_MEMORY_COMPACTED = "memory.compacted"  # Conversation was auto-compacted into a summary
 
 
 class EventBus:

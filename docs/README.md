@@ -29,6 +29,9 @@
 | [Cron Scheduler](./19-cron-scheduler.md) | Background job scheduler — recurring tasks, cron expressions, API |
 | [Token Optimization](./20-token-optimization.md) | Multi-layer token reduction system — local router, semantic tools, output compressor, compaction |
 | [CLI Providers](./21-cli-providers.md) | Connect via CLI binaries (claude, gemini) — no API key required |
+| [Swarms](./22-swarms.md) | Multi-agent swarms, parallel workers, peer messaging |
+| [Code Resurrection](./23-code-resurrection.md) | Background code indexer — RAG over your own projects |
+| [Third-Party Integrations](./25-third-party-integrations.md) | MarkItDown, Chonkie, Docling, Instructor — curated MIT libraries |
 
 ---
 

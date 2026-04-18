@@ -14,15 +14,16 @@ import structlog
 
 from openacm.core.config import AssistantConfig
 from openacm.storage.database import Database
+from openacm.core.events import EventBus, EVENT_MEMORY_COMPACTED
 
 log = structlog.get_logger()
 
 # Maximum estimated tokens for conversation context
 MAX_CONTEXT_TOKENS = 22000  # ~66k chars with //3 estimate ≈ same window as before
 
-# Conversation compaction settings
-COMPACT_THRESHOLD = 25       # Trigger compaction after this many messages
-COMPACT_KEEP_RECENT = 6      # Keep the last N messages verbatim after compaction
+# Fallback compaction defaults (used only if config values are missing)
+_DEFAULT_COMPACT_THRESHOLD = 25
+_DEFAULT_COMPACT_KEEP_RECENT = 6
 
 # Prompt used to summarize old messages
 _COMPACT_SYSTEM_PROMPT = (
@@ -42,6 +43,7 @@ class MemoryManager:
         self.database = database
         self.config = config
         self._llm_router: Any = None  # set by brain.py after init
+        self._event_bus: EventBus | None = None  # set by brain.py after init
         # In-memory cache for active conversations
         self._cache: dict[str, list[dict[str, Any]]] = {}
         # Track which conversations have a pending compaction to avoid double-firing
@@ -182,9 +184,10 @@ class MemoryManager:
         )
 
         # Auto-compact: when conversation gets long, summarize old messages
+        threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
         non_system = [m for m in self._cache[key] if m.get("role") != "system"]
         if (
-            len(non_system) >= COMPACT_THRESHOLD
+            len(non_system) >= threshold
             and key not in self._compacting
             and self._llm_router is not None
         ):
@@ -269,10 +272,11 @@ class MemoryManager:
             system_msg = [msgs[0]] if has_system else []
             rest = msgs[1:] if has_system else msgs[:]
 
-            if len(rest) < COMPACT_THRESHOLD:
+            threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
+            if len(rest) < threshold:
                 return
 
-            keep_count = COMPACT_KEEP_RECENT
+            keep_count = getattr(self.config, "compact_keep_recent", _DEFAULT_COMPACT_KEEP_RECENT)
             to_summarize = rest[:-keep_count] if keep_count < len(rest) else []
             to_keep = rest[-keep_count:] if keep_count < len(rest) else rest
 
@@ -332,6 +336,15 @@ class MemoryManager:
                 kept_messages=len(to_keep),
                 summary_tokens=self._estimate_tokens([summary_msg]),
             )
+
+            # Notify the frontend so it can show a compaction note in the chat
+            if self._event_bus is not None:
+                await self._event_bus.emit(EVENT_MEMORY_COMPACTED, {
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "summary": summary_text,
+                    "summarized_messages": len(to_summarize),
+                })
 
         except Exception as e:
             log.error("Conversation compaction failed", error=str(e), key=key)

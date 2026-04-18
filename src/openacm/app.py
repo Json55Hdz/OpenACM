@@ -216,6 +216,11 @@ class OpenACM:
         # LLM Router — restore persisted model preference
         await self.llm_router.load_persisted_model(self.database)
 
+        # Restore persisted security settings
+        saved_mode = await self.database.get_setting("security.execution_mode")
+        if saved_mode and saved_mode in ("yolo", "confirmation", "auto"):
+            self.config.security.execution_mode = saved_mode
+
         # Brain
         self.brain = Brain(
             config=self.config.assistant,

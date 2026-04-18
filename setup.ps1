@@ -120,6 +120,24 @@ try {
     exit 1
 }
 
+# Install optional media-processing extras (MarkItDown converters + audio)
+Write-Host "[*] Installing file-processing extras (MarkItDown)..." -ForegroundColor Yellow
+try {
+    uv pip install "markitdown[docx,xlsx,pptx,audio-transcription]" 2>&1 | Out-Null
+    Write-Host "[OK] MarkItDown extras installed." -ForegroundColor Green
+} catch {
+    Write-Host "[!] Could not install MarkItDown extras (non-critical)." -ForegroundColor Yellow
+}
+
+# Install AI/ML enhancement libraries
+Write-Host "[*] Installing AI enhancement libraries (chonkie, docling, instructor)..." -ForegroundColor Yellow
+try {
+    uv pip install "chonkie[sentence]>=1.0" "docling>=2.0" "instructor>=1.0" 2>&1 | Out-Null
+    Write-Host "[OK] AI enhancement libraries installed." -ForegroundColor Green
+} catch {
+    Write-Host "[!] Could not install some AI enhancement libraries (non-critical)." -ForegroundColor Yellow
+}
+
 Write-Host "[*] Downloading browsers for the Web Agent (Playwright)..." -ForegroundColor Yellow
 try {
     uv run playwright install chromium 2>&1 | ForEach-Object {

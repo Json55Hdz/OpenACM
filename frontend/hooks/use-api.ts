@@ -135,12 +135,29 @@ export function useConfig() {
       toast.error('Failed to update model');
     },
   });
-  
+
+  const updateExecutionModeMutation = useMutation({
+    mutationFn: async (mode: 'yolo' | 'confirmation' | 'auto') => {
+      return fetchAPI('/api/config/security', {
+        method: 'PATCH',
+        body: JSON.stringify({ execution_mode: mode }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['config'] });
+      toast.success('Execution mode updated');
+    },
+    onError: () => {
+      toast.error('Failed to update execution mode');
+    },
+  });
+
   return {
     config: configQuery.data,
     model: modelQuery.data,
     isLoading: configQuery.isLoading || modelQuery.isLoading,
     updateModel: updateModelMutation.mutate,
+    updateExecutionMode: updateExecutionModeMutation.mutate,
   };
 }
 

@@ -33,6 +33,9 @@ interface WebSocketMessage {
   // tool.validation fields
   step?: string;
   detail?: string;
+  // tool.confirmation_needed fields
+  confirm_id?: string;
+  command?: string;
 }
 
 export function useWebSocket() {
@@ -301,6 +304,30 @@ export function useWebSocket() {
         } else {
           storeRef.current.upsertValidationStep(tool, { step: stepName, status, detail });
         }
+      } else if (data.type === 'tool.confirmation_needed') {
+        if (data.channel_id !== currentTarget.channel) return;
+        storeRef.current.addMessage({
+          content: data.command || '',
+          role: 'system',
+          badge: 'Confirm',
+          toolConfirmation: {
+            confirmId: data.confirm_id || '',
+            tool: data.tool || '',
+            command: data.command || '',
+          },
+        });
+      } else if (data.type === 'memory.compacted') {
+        const forKey = data.channel_id && data.user_id
+          ? `${data.channel_id}:${data.user_id}`
+          : undefined;
+        storeRef.current.addMessage({
+          content: '',
+          role: 'system',
+          compactionNote: {
+            summary: (data as { summary?: string }).summary || '',
+            summarizedMessages: (data as { summarized_messages?: number }).summarized_messages ?? 0,
+          },
+        }, forKey);
       }
     };
 

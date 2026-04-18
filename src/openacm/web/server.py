@@ -38,6 +38,9 @@ log = structlog.get_logger()
 
 # Store connected WebSocket clients
 _ws_clients: set[WebSocket] = set()
+# Per-connection send locks to prevent concurrent write errors in websockets library
+import weakref as _weakref
+_ws_send_locks: "_weakref.WeakKeyDictionary[WebSocket, asyncio.Lock]" = _weakref.WeakKeyDictionary()
 
 # Tools that produce shell-like output to show in the terminal panel
 _TERMINAL_TOOLS = {"run_command", "run_python", "python_kernel", "execute_command"}
@@ -63,6 +66,43 @@ _chat_ws_clients: set = set()
 # Buffer for a response that couldn't be delivered to any active client.
 # Replayed to the next client that connects.
 _pending_chat_response: dict | None = None
+
+# ── Tool confirmation ─────────────────────────────────────────────────────────
+# Maps confirm_id → asyncio.Future[bool].  Created on the running event loop.
+_pending_confirmations: dict[str, asyncio.Future] = {}
+# Commands the user has approved for the entire session ("always allow this session").
+_session_allowed_commands: set[str] = set()
+
+
+async def request_tool_confirmation(tool: str, command: str, channel_id: str) -> bool:
+    """Emit a confirmation request event and block until the user approves or denies."""
+    # Check if this command was already approved for the whole session.
+    if command in _session_allowed_commands:
+        return True
+
+    import uuid
+    confirm_id = str(uuid.uuid4())[:8]
+    loop = asyncio.get_event_loop()
+    future: asyncio.Future = loop.create_future()
+    _pending_confirmations[confirm_id] = future
+
+    if _event_bus:
+        await _event_bus.emit(
+            "tool.confirmation_needed",
+            {
+                "confirm_id": confirm_id,
+                "tool": tool,
+                "command": command,
+                "channel_id": channel_id,
+            },
+        )
+
+    try:
+        return await asyncio.wait_for(asyncio.shield(future), timeout=300.0)
+    except asyncio.TimeoutError:
+        return False
+    finally:
+        _pending_confirmations.pop(confirm_id, None)
 
 
 # ─── Custom Provider Helpers (module-level so create_web_server can call them) ──
@@ -364,6 +404,37 @@ def create_app() -> FastAPI:
             return []
         return await _database.get_tool_executions(limit)
 
+    @app.post("/api/tool/confirm")
+    async def confirm_tool(request: Request):
+        """Resolve a pending tool confirmation (approve or deny)."""
+        data = await request.json()
+        confirm_id = data.get("confirm_id", "")
+        approved = bool(data.get("approved", False))
+        always_session = bool(data.get("always_session", False))
+        command = data.get("command", "")
+
+        if approved and always_session and command:
+            _session_allowed_commands.add(command)
+
+        future = _pending_confirmations.get(confirm_id)
+        if future and not future.done():
+            future.set_result(approved)
+        return {"ok": True}
+
+    @app.patch("/api/config/security")
+    async def patch_security_config(request: Request):
+        """Update security settings (execution_mode)."""
+        if not _config:
+            return {"ok": False, "error": "No config loaded"}
+        data = await request.json()
+        mode = data.get("execution_mode")
+        if mode and mode in ("yolo", "confirmation", "auto"):
+            _config.security.execution_mode = mode
+            if _database:
+                await _database.set_setting("security.execution_mode", mode)
+            return {"ok": True, "execution_mode": mode}
+        return {"ok": False, "error": "Invalid execution_mode"}
+
     # ─── API: Config ──────────────────────────────────────────
 
     @app.get("/api/config")
@@ -395,6 +466,36 @@ def create_app() -> FastAPI:
             "model": _brain.llm_router.current_model,
             "provider": _brain.llm_router._current_provider,
         }
+
+    @app.get("/api/config/model-params")
+    async def get_model_params(provider: str = "", model: str = ""):
+        """Get stored params for a provider+model (or current if omitted)."""
+        if not _brain:
+            return {}
+        if provider and model:
+            provider_cfg = _config.llm.providers.get(provider, {}) if _config else {}
+            return provider_cfg.get("model_params", {}).get(model, {})
+        # Current model
+        return _brain.llm_router._get_model_params()
+
+    @app.patch("/api/config/model-params")
+    async def set_model_params(request: Request):
+        """Save params for a provider+model."""
+        if not _brain or not _config:
+            raise HTTPException(503, "Not ready")
+        data = await request.json()
+        provider = data.get("provider", "")
+        model = data.get("model", "")
+        if not provider or not model:
+            raise HTTPException(400, "provider and model required")
+        params = {k: data[k] for k in ("temperature", "max_tokens", "top_p") if k in data}
+        _brain.llm_router.set_model_params(provider, model, params)
+        # Persist to DB
+        if _database:
+            import json as _json
+            all_mp = {p: cfg.get("model_params", {}) for p, cfg in _config.llm.providers.items() if cfg.get("model_params")}
+            await _database.set_setting("llm.model_params", _json.dumps(all_mp))
+        return {"ok": True}
 
     # Providers that don't need an API key
     _NO_KEY_PROVIDERS = {"ollama"}
@@ -895,6 +996,52 @@ def create_app() -> FastAPI:
             _yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
         return {"threshold": threshold}
 
+    @app.get("/api/config/compaction")
+    async def get_compaction_config():
+        """Get conversation auto-compaction settings."""
+        if not _config:
+            return {"compact_threshold": 25, "compact_keep_recent": 6}
+        return {
+            "compact_threshold": getattr(_config.assistant, "compact_threshold", 25),
+            "compact_keep_recent": getattr(_config.assistant, "compact_keep_recent", 6),
+        }
+
+    @app.post("/api/config/compaction")
+    async def set_compaction_config(request: Request):
+        """Update conversation auto-compaction settings and persist to config file."""
+        if not _config:
+            raise HTTPException(status_code=503, detail="Config not available")
+        data = await request.json()
+
+        if "compact_threshold" in data:
+            val = int(data["compact_threshold"])
+            _config.assistant.compact_threshold = max(5, min(200, val))
+        if "compact_keep_recent" in data:
+            val = int(data["compact_keep_recent"])
+            _config.assistant.compact_keep_recent = max(2, min(20, val))
+
+        # Persist to config file
+        from openacm.core.config import _find_project_root
+        root = _find_project_root()
+        config_file = root / "config" / "default.yaml"
+        cfg_data: dict = {}
+        if config_file.exists():
+            import yaml as _yaml
+            with open(config_file, "r", encoding="utf-8") as f:
+                cfg_data = _yaml.safe_load(f) or {}
+        if "A" not in cfg_data:
+            cfg_data["A"] = {}
+        cfg_data["A"]["compact_threshold"] = _config.assistant.compact_threshold
+        cfg_data["A"]["compact_keep_recent"] = _config.assistant.compact_keep_recent
+        import yaml as _yaml
+        with open(config_file, "w", encoding="utf-8") as f:
+            _yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
+
+        return {
+            "compact_threshold": _config.assistant.compact_threshold,
+            "compact_keep_recent": _config.assistant.compact_keep_recent,
+        }
+
     @app.post("/api/config/verbose_channels")
     async def set_verbose_channels(request: Request):
         """Set whether external channels receive tool execution logs."""
@@ -1211,8 +1358,8 @@ def create_app() -> FastAPI:
         session_key = "web-web"
         if not _onboarding_triggered_flags.get(session_key, False):
             if _config and getattr(_config.assistant, "onboarding_completed", False) is False:
-                _onboarding_triggered_flags[session_key] = True
                 if _brain and _database:
+                    _onboarding_triggered_flags[session_key] = True
                     async def _trigger_onboarding_greeting():
                         _user = "web"
                         _channel = "web"
@@ -1360,7 +1507,7 @@ def create_app() -> FastAPI:
                         # Try original connection first, then any other active client
                         for target in [websocket] + [c for c in _chat_ws_clients if c is not websocket]:
                             try:
-                                await target.send_json(payload)
+                                await _safe_ws_send(target, payload)
                                 delivered = True
                                 break
                             except Exception:
@@ -1375,14 +1522,12 @@ def create_app() -> FastAPI:
                         return
                     except Exception as e:
                         try:
-                            await websocket.send_json(
-                                {
-                                    "type": "error",
-                                    "content": str(e),
-                                    "user_id": target_user,
-                                    "channel_id": target_channel,
-                                }
-                            )
+                            await _safe_ws_send(websocket, {
+                                "type": "error",
+                                "content": str(e),
+                                "user_id": target_user,
+                                "channel_id": target_channel,
+                            })
                         except (WebSocketDisconnect, Exception):
                             # Client already gone — nothing to do
                             return
@@ -1456,6 +1601,15 @@ def create_app() -> FastAPI:
                             })
                             if len(_brain.terminal_history) > 30:
                                 _brain.terminal_history[:] = _brain.terminal_history[-30:]
+
+                elif msg_type == "chat_input":
+                    # Route message to the LLM brain (chat mode in terminal)
+                    if _brain:
+                        text = msg.get("data", "").strip()
+                        if text:
+                            asyncio.create_task(
+                                _brain.process_message(text, "web", channel_id, "web")
+                            )
 
                 elif msg_type == "signal":
                     # Ctrl+C
@@ -2303,7 +2457,10 @@ def create_app() -> FastAPI:
         swarm = await _database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
-        result = await _swarm_manager.plan_swarm(swarm_id)
+        try:
+            result = await _swarm_manager.plan_swarm(swarm_id)
+        except Exception as exc:
+            raise HTTPException(500, detail=str(exc)) from exc
         workers = await _database.get_swarm_workers(swarm_id)
         tasks = await _database.get_swarm_tasks(swarm_id)
         return {**result, "workers": workers, "tasks": tasks}
@@ -2345,6 +2502,19 @@ def create_app() -> FastAPI:
         if not _database:
             raise HTTPException(503, "Database not available")
         return await _database.get_swarm_messages(swarm_id)
+
+    @app.post("/api/swarms/{swarm_id}/complete")
+    async def complete_swarm(swarm_id: int):
+        """Mark a swarm as completed (user-initiated)."""
+        if not _database:
+            raise HTTPException(503, "Database not available")
+        swarm = await _database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+        await _database.update_swarm(swarm_id, status="completed")
+        if _swarm_manager:
+            await _swarm_manager._emit_swarm_event(swarm_id, "completed", {"manual": True})
+        return {"ok": True, "status": "completed"}
 
     @app.post("/api/swarms/{swarm_id}/message")
     async def post_swarm_message(swarm_id: int, request: Request):
@@ -2601,6 +2771,19 @@ def create_app() -> FastAPI:
     return app
 
 
+async def _safe_ws_send(client: WebSocket, message: dict) -> bool:
+    """Send a JSON message to a WebSocket client, serializing writes with a per-connection lock."""
+    lock = _ws_send_locks.get(client)
+    if lock is None:
+        lock = asyncio.Lock()
+        try:
+            _ws_send_locks[client] = lock
+        except TypeError:
+            pass  # unhashable — skip lock
+    async with lock:
+        await client.send_json(message)
+
+
 async def broadcast_event(event_type: str, data: dict[str, Any]):
     """Broadcast an event to all connected WebSocket clients."""
     global _ws_clients
@@ -2610,9 +2793,9 @@ async def broadcast_event(event_type: str, data: dict[str, Any]):
     message = {"type": event_type, **data}
     disconnected = set()
 
-    for client in _ws_clients:
+    for client in list(_ws_clients):
         try:
-            await client.send_json(message)
+            await _safe_ws_send(client, message)
         except Exception:
             disconnected.add(client)
 
@@ -2833,6 +3016,77 @@ class ChannelShell:
 
             return combined or "(sin salida)"
 
+    async def run_interactive_capture(self, command: str, timeout: float = 600.0) -> str:
+        """
+        Run an interactive command in the PTY. Unlike run_command_capture, this:
+        - Shows the session to the user (already happens via _broadcast_json)
+        - Does NOT send Ctrl+C on timeout — user is in control
+        - Waits until the shell prompt returns (user typed exit/Ctrl+D) or timeout
+        - Returns the captured output for the brain
+        """
+        import re as _re
+        _ANSI = _re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
+
+        def strip_ansi(t: str) -> str:
+            return _ANSI.sub("", t).replace("\r", "")
+
+        def looks_like_prompt(text: str) -> bool:
+            clean = strip_ansi(text).rstrip()
+            if not clean:
+                return False
+            last = clean.splitlines()[-1] if "\n" in clean else clean
+            return bool(_re.search(r"[>$#%]\s*$", last))
+
+        # Notify terminal user that an interactive session is starting
+        await self._broadcast_json({
+            "type": "output",
+            "data": f"\r\n\x1b[33m[ACM → interactive: {command.split()[0]}  |  exit/Ctrl+C to return control]\x1b[0m\r\n",
+        })
+
+        async with self._cmd_lock:
+            queue: asyncio.Queue = asyncio.Queue(maxsize=5000)
+            self._output_listeners.append(queue)
+            parts: list[str] = []
+
+            try:
+                await self.write(command + "\r\n")
+                deadline = asyncio.get_event_loop().time() + timeout
+
+                while True:
+                    remaining = deadline - asyncio.get_event_loop().time()
+                    if remaining <= 0:
+                        # Timeout — just stop listening, don't kill the process
+                        break
+                    try:
+                        msg = await asyncio.wait_for(queue.get(), timeout=min(remaining, 1.0))
+                        if msg.get("type") == "output":
+                            chunk = msg.get("data", "")
+                            parts.append(chunk)
+                            combined = "".join(parts)
+                            # Stop when shell prompt reappears (user exited the interactive app)
+                            if looks_like_prompt(combined) and len(strip_ansi(combined).strip()) > len(command) + 2:
+                                break
+                    except asyncio.TimeoutError:
+                        combined = "".join(parts)
+                        if parts and looks_like_prompt(combined):
+                            break
+            finally:
+                try:
+                    self._output_listeners.remove(queue)
+                except ValueError:
+                    pass
+
+        # Notify terminal that control returned to brain
+        await self._broadcast_json({
+            "type": "output",
+            "data": "\r\n\x1b[33m[ACM ← control returned]\x1b[0m\r\n",
+        })
+
+        combined = strip_ansi("".join(parts)).strip()
+        if combined.lower().startswith(command.strip().lower()):
+            combined = combined[len(command.strip()):].strip()
+        return combined or "(no output)"
+
     async def stop(self) -> None:
         self._alive = False
         if self._reader_task and not self._reader_task.done():
@@ -2901,6 +3155,9 @@ async def create_web_server(
     # Load and apply user-defined custom providers on startup
     _apply_custom_providers(_load_custom_providers())
 
+    # Inject the confirmation callback so tools can request user approval
+    tool_registry.confirm_callback = request_tool_confirmation
+
     # Register event bus handler for WebSocket broadcasting
     async def on_event(event_type: str, data: dict[str, Any]):
         await broadcast_event(event_type, data)
@@ -2915,6 +3172,7 @@ async def create_web_server(
         EVENT_LLM_RESPONSE,
         EVENT_ROUTER_LEARNED,
         EVENT_TOOL_VALIDATION,
+        EVENT_TOOL_CONFIRMATION,
     )
 
     for evt in [
@@ -2927,7 +3185,9 @@ async def create_web_server(
         EVENT_LLM_RESPONSE,
         EVENT_ROUTER_LEARNED,
         EVENT_TOOL_VALIDATION,
+        EVENT_TOOL_CONFIRMATION,
         "memory.recall",
+        "memory.compacted",
         # Swarm events — emitted by SwarmManager for every state change
         "swarm:updated",
         "swarm:worker_status",
@@ -2974,6 +3234,24 @@ async def create_web_server(
 
     event_bus.on(EVENT_TOOL_CALLED, on_tool_called)
 
+    # Broadcast tool confirmation requests to the terminal so the user can see them there too
+    async def on_tool_confirmation(event_type: str, data: dict[str, Any]):
+        channel_id = data.get("channel_id", "web")
+        confirm_id = data.get("confirm_id", "")
+        tool_name = data.get("tool", "")
+        command = data.get("command", "")
+        await _broadcast_to_terminal(
+            {
+                "type": "tool_confirm",
+                "confirm_id": confirm_id,
+                "tool": tool_name,
+                "data": command,
+            },
+            channel_id=channel_id,
+        )
+
+    event_bus.on(EVENT_TOOL_CONFIRMATION, on_tool_confirmation)
+
     from openacm.core.events import EVENT_TOOL_OUTPUT_STREAM
 
     async def on_tool_output_stream(event_type: str, data: dict[str, Any]):
@@ -2987,6 +3265,19 @@ async def create_web_server(
             )
 
     event_bus.on(EVENT_TOOL_OUTPUT_STREAM, on_tool_output_stream)
+
+    # Mirror LLM text responses to the terminal so the conversation is visible there
+    async def on_message_sent(event_type: str, data: dict[str, Any]):
+        channel_id = data.get("channel_id", "web")
+        content = data.get("content", "")
+        if not content or not content.strip():
+            return
+        await _broadcast_to_terminal(
+            {"type": "ai_text", "data": content},
+            channel_id=channel_id,
+        )
+
+    event_bus.on(EVENT_MESSAGE_SENT, on_message_sent)
 
     app = create_app()
 

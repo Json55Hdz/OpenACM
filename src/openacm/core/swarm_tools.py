@@ -239,4 +239,201 @@ def build_swarm_tools(
         },
     }
 
-    return [swarm_send_message, swarm_broadcast, swarm_read_messages, swarm_create_task]
+    async def swarm_ask_user(question: str, **kwargs) -> str:
+        """
+        Ask the user a question that requires their input before work can continue.
+        The question will appear prominently in the Activity feed so the user can reply.
+        Use this instead of writing questions to files.
+
+        Args:
+            question: The question to ask the user. Be specific about what you need.
+        """
+        try:
+            await database.add_swarm_message(
+                swarm_id=swarm_id,
+                from_worker_id=worker_id,
+                to_worker_id=None,
+                content=question,
+                message_type="question",
+            )
+            await event_bus.emit(
+                "swarm:user_question",
+                {
+                    "swarm_id": swarm_id,
+                    "from_worker_id": worker_id,
+                    "from_worker_name": my_name,
+                    "question": question,
+                },
+            )
+            return "Question posted to the user in the Activity feed. End your task with TASK_STATUS: FAILED: waiting_for_user so it can be retried once the user replies."
+        except Exception as e:
+            return f"Failed to post question: {e}"
+
+    swarm_ask_user._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_ask_user",
+            "description": (
+                "Ask the user a question that requires their input before you can continue. "
+                "The question appears in the Activity feed for the user to answer. "
+                "ALWAYS use this instead of writing questions to files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user. Be specific about what information you need.",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    }
+
+    # ── QA Bug Reporting ──────────────────────────────────────────────────────
+
+    # Track how many times each bug title has been reported to cap retry loops
+    _bug_cycles: dict[str, int] = {}
+    MAX_BUG_CYCLES = 5
+
+    async def swarm_report_bug(
+        title: str,
+        description: str,
+        severity: str = "medium",
+        assign_to_fixer: str = "",
+        **kwargs,
+    ) -> str:
+        """
+        Report a bug found during QA/testing. Automatically creates:
+          1. A fix task assigned to the specified fixer worker.
+          2. A re-test task assigned back to you (the QA worker), which only
+             runs AFTER the fix is complete.
+        This creates a self-healing QA→Fix→Retest loop until all bugs pass.
+
+        Args:
+            title:           Short description of the bug.
+            description:     Detailed reproduction steps and expected vs actual behavior.
+            severity:        'low' | 'medium' | 'high' | 'critical'
+            assign_to_fixer: Name of the worker responsible for fixing this bug.
+        """
+        cycle = _bug_cycles.get(title, 0) + 1
+        if cycle > MAX_BUG_CYCLES:
+            return (
+                f"Bug '{title}' has been through {MAX_BUG_CYCLES} fix cycles with no resolution. "
+                f"Escalating — please notify the user with swarm_ask_user."
+            )
+        _bug_cycles[title] = cycle
+
+        fix_title = f"Fix (cycle {cycle}): {title}"
+        retest_title = f"Re-test (cycle {cycle}): {title}"
+
+        fixer_id = name_to_id.get(assign_to_fixer.strip()) if assign_to_fixer.strip() else None
+        severity_label = severity.upper()
+
+        fix_description = (
+            f"**[BUG FIX — {severity_label}]** {title}\n\n"
+            f"{description}\n\n"
+            f"Fix the issue described above. When done, end with TASK_STATUS: COMPLETED."
+        )
+        retest_description = (
+            f"**[QA RE-TEST — cycle {cycle}]** {title}\n\n"
+            f"Re-run the original tests for this bug after '{fix_title}' is complete.\n"
+            f"If the bug is fixed: TASK_STATUS: COMPLETED.\n"
+            f"If it still fails: call `swarm_report_bug` again with updated details."
+        )
+
+        try:
+            fix_task_id = await database.create_swarm_task(
+                swarm_id=swarm_id,
+                worker_id=fixer_id,
+                title=fix_title,
+                description=fix_description,
+                depends_on="[]",
+            )
+            await database.create_swarm_task(
+                swarm_id=swarm_id,
+                worker_id=worker_id,  # back to the QA caller
+                title=retest_title,
+                description=retest_description,
+                depends_on=json.dumps([fix_title]),
+            )
+
+            # Post a visible bug report to the Activity feed
+            await database.add_swarm_message(
+                swarm_id=swarm_id,
+                from_worker_id=worker_id,
+                to_worker_id=None,
+                content=json.dumps({
+                    "title": title,
+                    "description": description,
+                    "severity": severity,
+                    "fixer": assign_to_fixer or "auto",
+                    "cycle": cycle,
+                    "fix_task": fix_title,
+                    "retest_task": retest_title,
+                }),
+                message_type="bug_report",
+            )
+            await event_bus.emit(
+                "swarm:bug_reported",
+                {
+                    "swarm_id": swarm_id,
+                    "title": title,
+                    "severity": severity,
+                    "reporter": my_name,
+                    "fixer": assign_to_fixer,
+                    "cycle": cycle,
+                },
+            )
+            fixer_label = assign_to_fixer or "auto-assigned"
+            return (
+                f"Bug '{title}' reported (cycle {cycle}/{MAX_BUG_CYCLES}, severity={severity_label}). "
+                f"Created: '{fix_title}' → {fixer_label}, then '{retest_title}' → you.\n"
+                f"End this task with TASK_STATUS: COMPLETED."
+            )
+        except Exception as e:
+            return f"Failed to report bug: {e}"
+
+    swarm_report_bug._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_report_bug",
+            "description": (
+                "Report a bug found during QA/testing. "
+                "Automatically schedules a fix task and a re-test task (QA loop). "
+                "Use this instead of just failing the task — it keeps the swarm self-healing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Short bug title (used to track cycles).",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Full bug description: steps to reproduce, expected vs actual behavior.",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "critical"],
+                        "description": "Bug severity level.",
+                    },
+                    "assign_to_fixer": {
+                        "type": "string",
+                        "description": (
+                            f"Worker responsible for fixing. Available: {', '.join(worker_names)}. "
+                            "Leave empty for auto-assignment."
+                        ),
+                    },
+                },
+                "required": ["title", "description"],
+            },
+        },
+    }
+
+    return [
+        swarm_send_message, swarm_broadcast, swarm_read_messages,
+        swarm_create_task, swarm_ask_user, swarm_report_bug,
+    ]

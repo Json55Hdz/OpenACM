@@ -40,9 +40,9 @@ export function TamagotchiWidget({ size = 120, showLabel = false }: TamagotchiWi
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const candidates = activeSkin !== 'default_robot'
-      ? [activeSkin, 'default_robot']
-      : ['default_robot'];
+    const candidates = activeSkin !== 'space_cat'
+      ? [activeSkin, 'space_cat']
+      : ['space_cat'];
 
     (async () => {
       for (const skin of candidates) {

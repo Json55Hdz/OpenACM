@@ -32,7 +32,8 @@ data/
 *.db
 
 # AI-generated workspace (files saved by OpenACM — not tracked in git)
-workspace/
+workspace/*
+!workspace/.gitkeep
 
 # IDE
 .vscode/

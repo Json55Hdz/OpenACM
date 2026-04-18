@@ -27,6 +27,8 @@ class AssistantConfig(BaseModel):
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
     rag_relevance_threshold: float = 0.5  # Cosine distance cutoff for RAG recall (0=identical, 1=unrelated)
+    compact_threshold: int = 25       # Auto-compact when conversation exceeds this many messages
+    compact_keep_recent: int = 6      # Number of recent messages to keep verbatim after compaction
 
 
 class LLMConfig(BaseModel):

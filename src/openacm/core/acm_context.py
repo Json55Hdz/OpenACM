@@ -2,7 +2,13 @@
 OpenACM Context - Identity and base capabilities of OpenACM.
 
 This module contains the fundamental context that all skills and tools must know.
+It also exposes async context variables shared across the request lifecycle.
 """
+
+from contextvars import ContextVar
+
+# Set by Brain before calling llm_router.chat() so CLIProvider can find the PTY
+current_channel_id: ContextVar[str] = ContextVar('current_channel_id', default='web')
 
 # Base context describing what OpenACM is and what it can do
 # This context is ALWAYS injected, before any skill

@@ -36,6 +36,17 @@ interface Message {
     done: boolean;
     passed: boolean;
   };
+  // Inline tool confirmation request
+  toolConfirmation?: {
+    confirmId: string;
+    tool: string;
+    command: string;
+  };
+  // Conversation compaction note
+  compactionNote?: {
+    summary: string;
+    summarizedMessages: number;
+  };
 }
 
 interface Attachment {

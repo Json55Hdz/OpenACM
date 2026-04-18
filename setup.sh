@@ -102,6 +102,18 @@ echo -e "\033[1;33m[*] Instalando dependencias del proyecto (puede tardar unos m
 uv pip install -e .
 echo -e "\033[1;32m[OK] Dependencias instaladas.\033[0m"
 
+# Install optional media-processing extras (MarkItDown converters + audio)
+echo -e "\033[1;33m[*] Instalando extras de procesamiento de archivos (MarkItDown)...\033[0m"
+uv pip install "markitdown[docx,xlsx,pptx,audio-transcription]" 2>/dev/null \
+    && echo -e "\033[1;32m[OK] MarkItDown extras instalados.\033[0m" \
+    || echo -e "\033[1;33m[!] No se pudieron instalar los extras de MarkItDown (no crítico).\033[0m"
+
+# Install AI/ML enhancement libraries
+echo -e "\033[1;33m[*] Instalando librerías de mejora (chonkie, docling, instructor)...\033[0m"
+uv pip install "chonkie[sentence]>=1.0" "docling>=2.0" "instructor>=1.0" 2>/dev/null \
+    && echo -e "\033[1;32m[OK] Librerías de mejora instaladas.\033[0m" \
+    || echo -e "\033[1;33m[!] No se pudieron instalar algunas librerías de mejora (no crítico).\033[0m"
+
 # Install Playwright browsers
 echo -e "\033[1;33m[*] Descargando navegadores para el Agente Web (Playwright)...\033[0m"
 uv run playwright install --with-deps chromium || echo -e "\033[1;33m[!] No se pudo instalar Playwright automáticamente. Puedes instalarlo después: uv run playwright install chromium\033[0m"

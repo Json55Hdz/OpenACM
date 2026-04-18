@@ -1,167 +1,144 @@
-###############################################
-# OpenACM - Default Configuration
-###############################################
-
+A:
+  compact_keep_recent: 6
+  compact_threshold: 10
 assistant:
-  name: "ACM"
-  system_prompt: |
-    You are ACM, an advanced autonomous AI agent integrated into the local operating system.
-    You have access to Tier-1 tools that allow you to execute complex tasks:
-
-    1. **Execution & Vision**: You can execute commands, read/write files, and take screenshots to see the user's screen.
-    2. **Browser Agent**: You can control a headless Chromium browser. Use `browser_agent` to navigate URLs, click elements, fill forms, and extract data. The browser persists between commands, enabling multi-step navigation.
-    3. **Python Kernel (Jupyter)**: You have a live Python environment. Use `run_python` to execute complex code. Variables persist in memory. You can generate plots (with matplotlib) and images will be sent automatically to the chat!
-    4. **Long-Term Memory (RAG)**: You have persistent vector memory. If asked to remember something for later, use `remember_note`. If you need past context, use `search_memory`.
-    5. **File Transfer**: If you generate a physical file for the user (PDF, Excel, Word, CSV, etc.), you MUST send it back to the chat. Use the `send_file_to_chat` tool to get a link and send that link to the user.
-
-    Respond clearly and directly. You are an autonomous system: instead of telling the user HOW to do something, use your tools and DO IT yourself.
-    Always return the `/api/media/...` links that your tools provide so the user can view images or download files.
+  compact_keep_recent: 6
+  compact_threshold: 25
   max_context_messages: 50
   max_tool_iterations: 25
+  name: ACM
   response_timeout: 120
+  system_prompt: 'You are ACM, an advanced autonomous AI agent integrated into the
+    local operating system.
 
-llm:
-  default_provider: "opencode_go"
-  timeout: 0       # global LLM response timeout in seconds; 0 = no timeout (wait forever)
-                   # override per-provider: add timeout: <seconds> under any provider entry
-  providers:
-    ollama:
-      base_url: "http://localhost:11434"
-      default_model: "llama3.2"
-    openai:
-      default_model: "gpt-4o"
-    anthropic:
-      default_model: "claude-sonnet-4-20250514"
-    gemini:
-      default_model: "gemini-2.5-flash"
-    opencode_go:
-      default_model: "kimi-k2.5"
-      base_url: "https://opencode.ai/zen/go/v1"
-      # OpenCode Go models (OpenAI-compatible):
-      #   GLM-4-Flash
-      #   Kimi-K2.5
-      #   MiniMax-M2.5
-      # Use with your API key (OPENCODE_GO_API_KEY in .env)
-    openrouter:
-      default_model: "openrouter/auto"
-      base_url: "https://openrouter.ai/api/v1"
-    xai:
-      default_model: "grok-4.20-0309-non-reasoning"
-      base_url: "https://api.x.ai/v1"
-      # xAI Grok models (OpenAI-compatible):
-      #   grok-4.20-0309-reasoning / non-reasoning
-      #   grok-4-1-fast-reasoning / non-reasoning
-      #   grok-4.20-multi-agent-0309
-      # Use with your API key (XAI_API_KEY in .env)
-    # ── CLI providers (no API key needed — uses installed CLI binaries) ──────
-    # These are AUTO-DETECTED at startup. If the binary is on PATH, the provider
-    # appears automatically in Settings — no YAML edits needed.
-    #
-    # To OVERRIDE defaults (e.g. change timeout or args), uncomment below:
-    #
-    # cli_claude:
-    #   type: "cli"
-    #   binary: "claude"          # must be on PATH (claude --version to verify)
-    #   args: ["--print"]         # --print = non-interactive, read stdin
-    #   default_model: "claude"
-    #   timeout: 300              # seconds before giving up
-    #
-    # cli_gemini:
-    #   type: "cli"
-    #   binary: "gemini"          # Google Gemini CLI
-    #   args: ["--yolo", "-p"]    # -p reads prompt from stdin
-    #   default_model: "gemini"
-    #   timeout: 300
-    #
-    # cli_opencode:
-    #   type: "cli"
-    #   binary: "opencode"
-    #   args: ["run", "--format", "json"]
-    #   input_mode: "arg"          # message as positional arg (opencode doesn't read stdin)
-    #   output_format: "jsonl"     # parse JSON event stream
-    #   default_model: "opencode"
-    #   timeout: 300
+    You have access to Tier-1 tools that allow you to execute complex tasks:
 
-security:
-  execution_mode: "confirmation"  # confirmation | auto | yolo
-  whitelisted_commands:
-    - "ls"
-    - "dir"
-    - "cat"
-    - "type"
-    - "echo"
-    - "ping"
-    - "systeminfo"
-    - "whoami"
-    - "hostname"
-    - "ipconfig"
-    - "ifconfig"
-    - "uname"
-    - "pwd"
-    - "date"
-    - "uptime"
-    - "df"
-    - "free"
-    - "top"
-    - "ps"
-    - "netstat"
-    - "curl"
-    - "wget"
-    - "python"
-    - "pip"
-    - "git"
-    - "npm"
-    - "node"
-  blocked_patterns:
-    - "rm -rf /"
-    - "del /f /s /q C:\\"
-    - "format"
-    - ":(){:|:&};:"
-    - "mkfs"
-    - "dd if=/dev"
-    - "shutdown"
-    - "reboot"
-    - "halt"
-    - "init 0"
-    - "init 6"
-  blocked_paths:
-    # OS system directories
-    - "C:\\Windows\\System32"
-    - "/etc/shadow"
-    - "/etc/passwd"
-    # OpenACM project — sensitive files and directories
-    - "config/"           # .env, API keys, encryption keys, Google credentials
-    - "data/openacm.db"   # SQLite database (conversation history, encrypted messages)
-    - "data/vectordb"     # ChromaDB vector store
-    - "data/logs"         # application logs (may contain sensitive output)
-  max_command_timeout: 0  # 0 = no limit — wait until command finishes naturally
-  max_output_length: 50000
 
-web:
-  host: "127.0.0.1"
-  port: 47821
-  auth_enabled: true
+    1. **Execution & Vision**: You can execute commands, read/write files, and take
+    screenshots to see the user''s screen.
 
+    2. **Browser Agent**: You can control a headless Chromium browser. Use `browser_agent`
+    to navigate URLs, click elements, fill forms, and extract data. The browser persists
+    between commands, enabling multi-step navigation.
+
+    3. **Python Kernel (Jupyter)**: You have a live Python environment. Use `run_python`
+    to execute complex code. Variables persist in memory. You can generate plots (with
+    matplotlib) and images will be sent automatically to the chat!
+
+    4. **Long-Term Memory (RAG)**: You have persistent vector memory. If asked to
+    remember something for later, use `remember_note`. If you need past context, use
+    `search_memory`.
+
+    5. **File Transfer**: If you generate a physical file for the user (PDF, Excel,
+    Word, CSV, etc.), you MUST send it back to the chat. Use the `send_file_to_chat`
+    tool to get a link and send that link to the user.
+
+
+    Respond clearly and directly. You are an autonomous system: instead of telling
+    the user HOW to do something, use your tools and DO IT yourself.
+
+    Always return the `/api/media/...` links that your tools provide so the user can
+    view images or download files.
+
+    '
 channels:
   discord:
+    command_prefix: '!'
     enabled: false
-    command_prefix: "!"
-    respond_to_mentions: true
     respond_to_dms: true
+    respond_to_mentions: true
   telegram:
+    allowed_users: []
     enabled: false
-    allowed_users: []  # empty = all users
   whatsapp:
+    bridge_url: http://localhost:3001
     enabled: false
-    bridge_url: "http://localhost:3001"
     rate_limit_per_minute: 20
-
+llm:
+  default_provider: opencode_go
+  providers:
+    anthropic:
+      default_model: claude-sonnet-4-20250514
+    gemini:
+      default_model: gemini-2.5-flash
+    ollama:
+      base_url: http://localhost:11434
+      default_model: llama3.2
+    openai:
+      default_model: gpt-4o
+    opencode_go:
+      base_url: https://opencode.ai/zen/go/v1
+      default_model: kimi-k2.5
+    openrouter:
+      base_url: https://openrouter.ai/api/v1
+      default_model: openrouter/auto
+    xai:
+      base_url: https://api.x.ai/v1
+      default_model: grok-4.20-0309-non-reasoning
+  timeout: 0
+local_router:
+  confidence_threshold: 0.88
+  enabled: true
+  observation_mode: false
+resurrection_paths:
+- C:\Trabajo\JsonProductions\LloronaProject\LloronaProject
+security:
+  blocked_paths:
+  - C:\Windows\System32
+  - /etc/shadow
+  - /etc/passwd
+  - config/
+  - data/openacm.db
+  - data/vectordb
+  - data/logs
+  blocked_patterns:
+  - rm -rf /
+  - del /f /s /q C:\
+  - format
+  - ':(){:|:&};:'
+  - mkfs
+  - dd if=/dev
+  - shutdown
+  - reboot
+  - halt
+  - init 0
+  - init 6
+  execution_mode: confirmation
+  max_command_timeout: 0
+  max_output_length: 50000
+  whitelisted_commands:
+  - ls
+  - dir
+  - cat
+  - type
+  - echo
+  - ping
+  - systeminfo
+  - whoami
+  - hostname
+  - ipconfig
+  - ifconfig
+  - uname
+  - pwd
+  - date
+  - uptime
+  - df
+  - free
+  - top
+  - ps
+  - netstat
+  - curl
+  - wget
+  - python
+  - pip
+  - git
+  - npm
+  - node
 storage:
-  database_path: "data/openacm.db"
+  database_path: data/openacm.db
   log_conversations: true
   log_tool_executions: true
-
-local_router:
-  enabled: true            # false = disable completely
-  observation_mode: false  # true = classify but never execute (logs only)
-  confidence_threshold: 0.88  # 0.5-1.0: higher = more conservative
+web:
+  auth_enabled: true
+  host: 127.0.0.1
+  port: 47821

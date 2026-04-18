@@ -41,6 +41,7 @@ import {
   Code2,
   Lightbulb,
   Database,
+  ScrollText,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { clsx, type ClassValue } from 'clsx';
@@ -189,7 +190,7 @@ export default function ConfigPage() {
     fetchAPI('/api/system/info').then(d => { if (d.version) setAppVersion(`v${d.version}`); }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const { config, model, isLoading } = useConfig();
+  const { config, model, isLoading, updateExecutionMode } = useConfig();
   const setModelMut = useSetModel();
   const saveSetup = useSaveSetup();
   const [isVerbose, setIsVerbose] = useState(false);
@@ -323,6 +324,8 @@ export default function ConfigPage() {
   const [googleCredJson, setGoogleCredJson] = useState('');
   const [stitchKey, setStitchKey] = useState('');
   const [stitchSaving, setStitchSaving] = useState(false);
+  const [modelParams, setModelParams] = useState<{temperature?: number; max_tokens?: number; top_p?: number}>({});
+  const [paramsSaving, setParamsSaving] = useState(false);
 
   const handleStitchSave = async () => {
     if (!stitchKey.trim()) return;
@@ -362,6 +365,62 @@ export default function ConfigPage() {
       return updated;
     });
   };
+
+  useEffect(() => {
+    if (!model?.model || !model?.provider) return;
+    fetchAPI(`/api/config/model-params?provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`)
+      .then(d => setModelParams((d as {temperature?: number; max_tokens?: number; top_p?: number}) || {}))
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.model, model?.provider]);
+
+  const handleSaveParams = async () => {
+    if (!model?.model || !model?.provider) return;
+    setParamsSaving(true);
+    try {
+      await fetchAPI('/api/config/model-params', {
+        method: 'PATCH',
+        body: JSON.stringify({ provider: model.provider, model: model.model, ...modelParams }),
+      });
+      toast.success('Model parameters saved');
+    } catch {
+      toast.error('Failed to save parameters');
+    } finally {
+      setParamsSaving(false);
+    }
+  };
+
+  // Compaction settings
+  const [compactThreshold, setCompactThreshold] = useState(25);
+  const [compactKeepRecent, setCompactKeepRecent] = useState(6);
+  const [compactionSaving, setCompactionSaving] = useState(false);
+
+  useEffect(() => {
+    fetchAPI('/api/config/compaction')
+      .then((d: unknown) => {
+        const data = d as { compact_threshold?: number; compact_keep_recent?: number };
+        if (typeof data?.compact_threshold === 'number') setCompactThreshold(data.compact_threshold);
+        if (typeof data?.compact_keep_recent === 'number') setCompactKeepRecent(data.compact_keep_recent);
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveCompactionSettings = async (threshold: number, keepRecent: number) => {
+    setCompactionSaving(true);
+    try {
+      await fetchAPI('/api/config/compaction', {
+        method: 'POST',
+        body: JSON.stringify({ compact_threshold: threshold, compact_keep_recent: keepRecent }),
+      });
+      toast.success('Compaction settings saved');
+    } catch {
+      toast.error('Failed to save compaction settings');
+    } finally {
+      setCompactionSaving(false);
+    }
+  };
+
   const { data: memoryStats } = useMemoryStats();
   const clearMemory = useClearMemory();
 
@@ -835,6 +894,56 @@ export default function ConfigPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Model Parameters */}
+                {model?.model && (
+                  <div className="pt-3 border-t border-slate-800 space-y-3">
+                    <p className="text-xs text-slate-400 font-medium">Parameters for <span className="font-mono text-blue-400">{model.model}</span></p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <label className="text-xs text-slate-500">Temperature</label>
+                          <span className="text-xs text-slate-400 font-mono">{modelParams.temperature ?? 0.7}</span>
+                        </div>
+                        <input
+                          type="range" min="0" max="2" step="0.05"
+                          value={modelParams.temperature ?? 0.7}
+                          onChange={e => setModelParams(p => ({ ...p, temperature: parseFloat(e.target.value) }))}
+                          className="w-full accent-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <label className="text-xs text-slate-500">Top P</label>
+                          <span className="text-xs text-slate-400 font-mono">{modelParams.top_p ?? '—'}</span>
+                        </div>
+                        <input
+                          type="range" min="0" max="1" step="0.05"
+                          value={modelParams.top_p ?? 1}
+                          onChange={e => setModelParams(p => ({ ...p, top_p: parseFloat(e.target.value) }))}
+                          className="w-full accent-blue-500"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Max Tokens <span className="text-slate-600">(leave 0 for model default)</span></label>
+                      <input
+                        type="number" min="0" step="256"
+                        value={modelParams.max_tokens ?? 0}
+                        onChange={e => setModelParams(p => ({ ...p, max_tokens: parseInt(e.target.value) || 0 }))}
+                        className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <button
+                      onClick={handleSaveParams}
+                      disabled={paramsSaving}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                    >
+                      {paramsSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      Save parameters
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </ConfigSection>
@@ -1135,7 +1244,32 @@ export default function ConfigPage() {
           <ConfigSection title={tc.security.title} icon={Shield}>
             <div className="space-y-4">
               <InfoRow label="Authentication" value="Bearer Token" />
-              <InfoRow label="Execution Mode" value={config?.security?.execution_mode || 'confirmation'} />
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm text-slate-300">Execution Mode</span>
+                  <p className="text-xs text-slate-500 mt-0.5">Controls when commands require approval</p>
+                </div>
+                <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium">
+                  {(['confirmation', 'auto', 'yolo'] as const).map((mode) => {
+                    const active = (config?.security?.execution_mode || 'confirmation') === mode;
+                    const labels: Record<string, string> = { confirmation: 'Confirm', auto: 'Auto', yolo: 'Yolo' };
+                    const colors: Record<string, string> = {
+                      confirmation: active ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
+                      auto: active ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
+                      yolo: active ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
+                    };
+                    return (
+                      <button
+                        key={mode}
+                        onClick={() => updateExecutionMode(mode)}
+                        className={cn('px-3 py-1.5 transition-colors', colors[mode])}
+                      >
+                        {labels[mode]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <InfoRow
                 label="Whitelisted Commands"
                 value={String(config?.security?.whitelisted_commands?.length || 0)}
@@ -1335,6 +1469,64 @@ export default function ConfigPage() {
 
               {/* Relevance threshold */}
               <RagThresholdControl fetchAPI={fetchAPI} />
+
+              {/* Auto-compaction settings */}
+              <div className="space-y-4 pt-1 border-t border-slate-800">
+                <div className="flex items-center gap-2 pt-1">
+                  <ScrollText size={15} className="text-indigo-400" />
+                  <p className="text-sm font-medium text-slate-300">Auto-compaction</p>
+                  {compactionSaving && <Loader2 size={13} className="animate-spin text-slate-500 ml-auto" />}
+                </div>
+                <p className="text-xs text-slate-500 -mt-2">
+                  When a conversation gets long, older messages are summarized into a single paragraph to free up context. The most recent messages are always kept as-is so the LLM has the exact recent thread.
+                </p>
+
+                {/* Threshold */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-400">Compact after</label>
+                    <span className="text-xs font-mono text-indigo-300">{compactThreshold} messages</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={5}
+                    max={100}
+                    step={5}
+                    value={compactThreshold}
+                    onChange={(e) => setCompactThreshold(Number(e.target.value))}
+                    onMouseUp={(e) => saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)}
+                    onTouchEnd={(e) => saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)}
+                    className="w-full accent-indigo-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-600">
+                    <span>5 — very often</span>
+                    <span>100 — rarely</span>
+                  </div>
+                </div>
+
+                {/* Keep recent */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-slate-400">Keep recent messages intact</label>
+                    <span className="text-xs font-mono text-indigo-300">{compactKeepRecent} messages</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={2}
+                    max={20}
+                    step={1}
+                    value={compactKeepRecent}
+                    onChange={(e) => setCompactKeepRecent(Number(e.target.value))}
+                    onMouseUp={(e) => saveCompactionSettings(compactThreshold, Number((e.target as HTMLInputElement).value))}
+                    onTouchEnd={(e) => saveCompactionSettings(compactThreshold, Number((e.target as HTMLInputElement).value))}
+                    className="w-full accent-indigo-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-600">
+                    <span>2 — minimum</span>
+                    <span>20 — more recent context</span>
+                  </div>
+                </div>
+              </div>
 
               {/* Clear button */}
               <div className="pt-2 border-t border-slate-800">
