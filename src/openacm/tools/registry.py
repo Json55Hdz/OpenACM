@@ -49,6 +49,8 @@ class ToolRegistry:
         self._tool_embeddings: np.ndarray | None = None  # shape (N, dim)
         self._tool_names_order: list[str] = []  # parallel to _tool_embeddings rows
         self._semantic_model: Any = None  # reference to sentence-transformer model
+        # Plugin-registered keyword categories — always checked alongside semantic
+        self._plugin_categories: set[str] = set()
         # Callback injected by the web server to request user confirmation before
         # executing sensitive tools.  Signature: (tool, command, channel_id) -> bool
         self.confirm_callback = None
@@ -237,12 +239,17 @@ class ToolRegistry:
     }
 
     def register_plugin_keywords(self, keywords: dict[str, list[str]]) -> None:
-        """Allow plugins to register their own intent keyword categories at runtime."""
+        """Allow plugins to register their own intent keyword categories at runtime.
+
+        Plugin categories are tracked separately so get_tools_by_intent always
+        checks them alongside semantic search (not just as fallback).
+        """
         for category, kws in keywords.items():
             if category in self.INTENT_KEYWORDS:
                 self.INTENT_KEYWORDS[category] = list(self.INTENT_KEYWORDS[category]) + list(kws)
             else:
                 self.INTENT_KEYWORDS[category] = list(kws)
+            self._plugin_categories.add(category)
 
     def get_tools_schema(self) -> list[dict[str, Any]]:
         """Get all tools in OpenAI function calling format."""
@@ -330,11 +337,31 @@ class ToolRegistry:
         """
         msg_lower = message.lower()
 
+        # Always check plugin-registered keyword categories — these represent
+        # proactive capabilities (e.g. content capture) that the LLM must see
+        # even when semantic search already returned other tools.
+        plugin_extras: list[dict[str, Any]] = []
+        if self._plugin_categories:
+            for cat in self._plugin_categories:
+                kws = self.INTENT_KEYWORDS.get(cat, [])
+                if any(self._kw_match(msg_lower, kw) for kw in kws):
+                    plugin_extras.extend(
+                        t.to_slim_schema()
+                        for t in self.tools.values()
+                        if t.category == cat
+                    )
+
         # Try semantic first — it handles both conversational and action intents better
         # than keyword heuristics, and works in any language.
         semantic_result = self.get_tools_semantic(message)
         if semantic_result is not None:
             if len(semantic_result) > 0:
+                # Merge plugin extras with semantic results (deduplicated by name)
+                if plugin_extras:
+                    seen = {t["function"]["name"] for t in semantic_result}
+                    semantic_result = semantic_result + [
+                        t for t in plugin_extras if t["function"]["name"] not in seen
+                    ]
                 return self._merge_mcp(semantic_result)
             # Semantic returned 0 matches.
             # Short messages with no matches are genuinely conversational → trust it.
@@ -342,9 +369,12 @@ class ToolRegistry:
             # (e.g. git commit, inicializa, push) → fall through to keyword fallback.
             if len(msg_lower) <= 60:
                 log.debug("Short message, semantic 0 matches — conversational", message=message[:60])
-                # Still return MCP tools even for "conversational" messages — the user
-                # may be talking *to* an MCP-connected agent (e.g. "create a cube in unity")
-                return self._get_mcp_tools_slim()
+                # Still return MCP tools + any plugin keyword matches
+                mcp = self._get_mcp_tools_slim()
+                if plugin_extras:
+                    seen = {t["function"]["name"] for t in mcp}
+                    mcp = mcp + [t for t in plugin_extras if t["function"]["name"] not in seen]
+                return mcp
             log.debug("Long message, semantic 0 matches — keyword fallback", message=message[:60])
         else:
             log.debug("Semantic model unavailable, using keyword fallback")
