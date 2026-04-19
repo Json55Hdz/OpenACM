@@ -7,6 +7,7 @@ from pathlib import Path
 import structlog
 from openacm.constants import TRUNCATE_ONBOARDING_BEHAVIORS_CHARS
 from openacm.utils.text import truncate
+from openacm.web.state import _state
 from openacm.tools.base import tool
 from openacm.core.config import _find_project_root
 
@@ -110,7 +111,6 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
 
     # Try to update the active config in memory dynamically (field by field to prevent losing refs)
     try:
-        from openacm.web.server import _state
         if _state.config and _state.brain:
             _state.config.assistant.name = assistant_name
             _state.config.assistant.onboarding_completed = True

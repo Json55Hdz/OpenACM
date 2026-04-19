@@ -8,6 +8,7 @@ import yaml
 import structlog
 from openacm.tools.base import tool
 from openacm.core.config import _find_project_root
+from openacm.web.state import _state
 
 log = structlog.get_logger()
 
@@ -65,7 +66,6 @@ async def add_resurrection_path(path: str, **kwargs) -> str:
 
     # Try to update the active config in memory if running on the same process
     try:
-        from openacm.web.server import _state
         if _state.config:
             if str_path not in _state.config.resurrection_paths:
                 _state.config.resurrection_paths.append(str_path)

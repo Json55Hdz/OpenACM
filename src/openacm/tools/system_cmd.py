@@ -5,6 +5,8 @@ System Command Tool — execute OS commands securely.
 import asyncio
 
 from openacm.tools.base import tool
+from openacm.web.state import _state
+from openacm.web.shell import ChannelShell
 
 # Registry of background processes: pid -> asyncio.subprocess.Process
 _bg_processes: dict[int, asyncio.subprocess.Process] = {}
@@ -183,7 +185,6 @@ async def run_command(
             full_command = command
 
         try:
-            from openacm.web.server import _state, ChannelShell
             shell = _state.channel_shells.get(_channel_id)
             if not shell or not shell._alive:
                 shell = ChannelShell(_channel_id)
