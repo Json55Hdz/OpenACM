@@ -69,6 +69,10 @@ class Database:
 
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
+        # WAL mode allows concurrent readers + 1 writer without blocking.
+        # busy_timeout makes SQLite retry for up to 10s instead of failing instantly.
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=10000")
 
         await self._db.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -162,7 +166,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 12
+    _SCHEMA_VERSION = 13
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -638,6 +642,15 @@ class Database:
                     log.info("Migration 12: backfilled costs for custom-provider models", updated=updated, total=len(rows))
             except Exception as e:
                 log.warning("Migration 12: backfill failed (non-fatal)", error=str(e))
+
+        if current < 13:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE swarm_tasks ADD COLUMN retry_history_json TEXT DEFAULT '[]'"
+                )
+                log.info("Migration 13: added retry_history_json to swarm_tasks")
+            except Exception:
+                pass  # column already exists
 
         # Save new version
         await self._db.execute(
@@ -1941,6 +1954,13 @@ class Database:
         await self._db.commit()
         return cursor.lastrowid or 0
 
+    async def get_swarm_task(self, task_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM swarm_tasks WHERE id = ?", (task_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
     async def get_swarm_tasks(self, swarm_id: int) -> list[dict[str, Any]]:
         if not self._db:
             return []
@@ -1957,7 +1977,7 @@ class Database:
     async def update_swarm_task(self, task_id: int, **kwargs: Any) -> bool:
         if not self._db:
             return False
-        allowed = {"worker_id", "title", "description", "depends_on", "status", "result"}
+        allowed = {"worker_id", "title", "description", "depends_on", "status", "result", "retry_history_json"}
         updates, params = [], []
         for key, val in kwargs.items():
             if key in allowed:

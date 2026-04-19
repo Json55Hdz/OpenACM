@@ -183,14 +183,16 @@ def create_app() -> FastAPI:
     # SPA catch-all MUST be last — any earlier registration intercepts API routes.
     # Serve actual files from the static dir first (Next.js RSC payloads, page HTMLs, etc.),
     # then fall back to index.html for unknown SPA routes.
-    @app.get("/{full_path:path}", response_class=HTMLResponse)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD", "POST", "OPTIONS"], response_class=HTMLResponse)
     async def serve_spa(full_path: str):
-        # Try to serve the exact file (e.g. /dashboard/__next._full.txt, /dashboard/index.html)
-        candidate = (static_dir / full_path).resolve()
-        static_root = static_dir.resolve()
-        if not candidate.is_relative_to(static_root):
-            # Path traversal attempt — silently fall through to SPA index
-            candidate = static_root
+        import os as _os
+        static_root = _os.path.realpath(static_dir) + _os.sep
+        candidate_real = _os.path.realpath(static_dir / full_path)
+        # Reject any path that escapes the static directory
+        if not candidate_real.startswith(static_root):
+            candidate_real = _os.path.realpath(static_dir)
+        from pathlib import Path as _Path
+        candidate = _Path(candidate_real)
         if candidate.exists() and candidate.is_file():
             return FileResponse(str(candidate))
         # Try with trailing index.html (e.g. /dashboard/ → /dashboard/index.html)

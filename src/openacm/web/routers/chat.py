@@ -79,10 +79,13 @@ def register_routes(app: FastAPI) -> None:
         # Reject any path traversal attempts before touching the filesystem
         if "/" in file_name or "\\" in file_name or ".." in file_name:
             raise HTTPException(status_code=400, detail="Invalid file name")
+        import os as _os
         media_dir = get_media_dir()
-        file_path = (media_dir / file_name).resolve()
-        if not file_path.is_relative_to(media_dir.resolve()):
+        media_root = _os.path.realpath(media_dir) + _os.sep
+        real = _os.path.realpath(media_dir / file_name)
+        if not real.startswith(media_root):
             raise HTTPException(status_code=400, detail="Invalid file name")
+        file_path = Path(real)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Media not found")
 

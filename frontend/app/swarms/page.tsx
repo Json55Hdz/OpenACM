@@ -285,10 +285,50 @@ function WorkerCard({ worker, swarmId, onUpdate }: { worker: Worker; swarmId: nu
 
 // ─── Task Row ─────────────────────────────────────────────────────────────────
 
-function TaskRow({ task }: { task: Task }) {
+function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onAction?: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [mode, setMode] = useState<null | 'retry' | 'complete'>(null);
+  const [notes, setNotes] = useState('');
+  const [manualResult, setManualResult] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { fetchAPI } = useAPI();
+
+  const handleRetry = async () => {
+    setLoading(true);
+    try {
+      await fetchAPI(`/api/swarms/${swarmId}/tasks/${task.id}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({ user_notes: notes }),
+      });
+      setMode(null); setNotes('');
+      onAction?.();
+    } catch (e) { /* ignore, fetchAPI toasts */ }
+    setLoading(false);
+  };
+
+  const handleComplete = async () => {
+    if (!manualResult.trim()) return;
+    setLoading(true);
+    try {
+      await fetchAPI(`/api/swarms/${swarmId}/tasks/${task.id}/complete`, {
+        method: 'POST',
+        body: JSON.stringify({ result: manualResult }),
+      });
+      setMode(null); setManualResult('');
+      onAction?.();
+    } catch (e) { /* ignore */ }
+    setLoading(false);
+  };
+
+  const isFailed = task.status === 'failed';
+
   return (
-    <div className={`border rounded-lg p-3 ${task.status === 'running' ? 'border-blue-600/50 bg-blue-900/10' : task.status === 'waiting' ? 'border-yellow-600/40 bg-yellow-900/10' : 'border-slate-700 bg-slate-800/30'}`}>
+    <div className={`border rounded-lg p-3 ${
+      task.status === 'running' ? 'border-blue-600/50 bg-blue-900/10' :
+      task.status === 'waiting' ? 'border-yellow-600/40 bg-yellow-900/10' :
+      isFailed ? 'border-red-800/50 bg-red-900/5' :
+      'border-slate-700 bg-slate-800/30'
+    }`}>
       <div className="flex items-start gap-3">
         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${TASK_STATUS_COLOR[task.status] || ''}`}>
           {task.status === 'running' && <Loader2 size={10} className="animate-spin" />}
@@ -302,14 +342,71 @@ function TaskRow({ task }: { task: Task }) {
           <p className="text-white text-sm font-medium">{task.title}</p>
           {task.worker_name && <p className="text-slate-500 text-xs mt-0.5">→ {task.worker_name}</p>}
         </div>
-        {task.result && (
-          <button onClick={() => setExpanded(v => !v)} className="text-slate-500 hover:text-slate-300">
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {isFailed && mode === null && (
+            <>
+              <button
+                onClick={() => setMode('retry')}
+                className="text-xs px-2 py-0.5 rounded bg-yellow-800/40 hover:bg-yellow-700/50 text-yellow-300 border border-yellow-700/40"
+              >Retry</button>
+              <button
+                onClick={() => setMode('complete')}
+                className="text-xs px-2 py-0.5 rounded bg-emerald-800/40 hover:bg-emerald-700/50 text-emerald-300 border border-emerald-700/40"
+              >Completar</button>
+            </>
+          )}
+          {task.result && (
+            <button onClick={() => setExpanded(v => !v)} className="text-slate-500 hover:text-slate-300 ml-1">
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
+        </div>
       </div>
+
       {expanded && task.result && (
         <div className="mt-2 text-xs text-slate-300 bg-slate-900 rounded-lg p-3 max-h-64 overflow-auto whitespace-pre-wrap">{task.result}</div>
+      )}
+
+      {/* Retry with guidance */}
+      {mode === 'retry' && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-yellow-300 font-medium">Retry — añade instrucciones para el worker (opcional):</p>
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Ej: El archivo ya está en src/foo.py, léelo primero. Usa un enfoque más simple..."
+            rows={3}
+            className="w-full text-xs bg-slate-900 border border-slate-600 rounded-lg p-2 text-white placeholder-slate-500 resize-none focus:outline-none focus:border-yellow-600"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleRetry} disabled={loading}
+              className="text-xs px-3 py-1 rounded bg-yellow-700 hover:bg-yellow-600 text-white disabled:opacity-50 flex items-center gap-1"
+            >{loading && <Loader2 size={10} className="animate-spin" />}Reintentar</button>
+            <button onClick={() => setMode(null)} className="text-xs px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {/* Manual completion */}
+      {mode === 'complete' && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-emerald-300 font-medium">Completar manualmente — escribe el resultado (el swarm lo usará como output de esta tarea):</p>
+          <textarea
+            value={manualResult}
+            onChange={e => setManualResult(e.target.value)}
+            placeholder="Describe lo que se hizo, qué archivos se crearon, y cualquier output relevante para las tareas dependientes..."
+            rows={5}
+            className="w-full text-xs bg-slate-900 border border-slate-600 rounded-lg p-2 text-white placeholder-slate-500 resize-none focus:outline-none focus:border-emerald-600"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleComplete} disabled={loading || !manualResult.trim()}
+              className="text-xs px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50 flex items-center gap-1"
+            >{loading && <Loader2 size={10} className="animate-spin" />}Marcar completada</button>
+            <button onClick={() => setMode(null)} className="text-xs px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300">Cancelar</button>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -663,7 +760,7 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
         <div className="space-y-2">
           {orderedTasks.length === 0
             ? <div className="text-center py-10 text-slate-500">No tasks yet.</div>
-            : orderedTasks.map(t => <TaskRow key={t.id} task={t} />)
+            : orderedTasks.map(t => <TaskRow key={t.id} task={t} swarmId={swarmId} onAction={refetch} />)
           }
         </div>
       )}

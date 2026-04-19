@@ -505,9 +505,12 @@ def register_routes(app: FastAPI) -> None:
         new_path = data.get("path", "").strip()
         if not new_path:
             raise HTTPException(status_code=400, detail="path is required")
-        if ".." in new_path or new_path.startswith(("/etc", "/sys", "/proc", "C:\\Windows")):
+        import os as _os
+        real = _os.path.realpath(new_path)
+        _BLOCKED = ("/etc", "/sys", "/proc", "/boot", "C:\\Windows", "C:\\System32")
+        if any(real.startswith(b) for b in _BLOCKED):
             raise HTTPException(status_code=400, detail="Path not allowed")
-        p = Path(new_path).resolve()
+        p = Path(real)
         if not p.exists() or not p.is_dir():
             raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory: {new_path}")
         str_path = str(p)

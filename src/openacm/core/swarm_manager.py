@@ -532,25 +532,39 @@ class SwarmManager:
                                     "Task failed — retrying",
                                     task_id=task["id"],
                                     task_title=task["title"],
-                                    attempt=used + 2,  # human-readable (1-indexed)
+                                    attempt=used + 2,
                                     max_attempts=_max_rc + 1,
                                 )
+                                # Persist the failed attempt result so the next worker
+                                # gets a full history of what was tried and why it failed.
+                                import json as _json_retry
+                                prev_result = task.get("result") or ""
+                                _, prev_fail = self._parse_task_status(prev_result)
+                                new_entry = {"result": prev_result, "fail_reason": prev_fail or "Task did not complete"}
+                                try:
+                                    existing = _json_retry.loads(task.get("retry_history_json") or "[]")
+                                except Exception:
+                                    existing = []
+                                history_json = _json_retry.dumps(existing + [new_entry])
                                 await self.db.update_swarm_task(
                                     task["id"], status="pending",
-                                    result=f"[Retry {used + 1}/{_max_rc}] Previous attempt failed."
+                                    result=f"[Retry {used + 1}/{_max_rc}]",
+                                    retry_history_json=history_json,
                                 )
                                 await self._emit_task_event(swarm_id, task["id"], "pending", {
                                     "task_title": task["title"],
                                     "retry_attempt": used + 2,
                                 })
                                 return None  # will be picked up as pending in next round
-                            # Exhausted retries — stays failed
+                            # Exhausted retries — cascade failure to all dependent tasks so
+                            # the swarm can continue with independent tasks instead of stalling.
                             log.warning(
-                                "Task exhausted retries — permanently failed",
+                                "Task exhausted retries — cascading failure to dependents",
                                 task_id=task["id"],
                                 task_title=task["title"],
                                 attempts=_max_rc + 1,
                             )
+                            await self._cascade_fail(swarm_id, task["title"])
                         return None  # waiting or permanently failed — do NOT unblock dependents
 
                 results = await asyncio.gather(*[_run_one(t) for t in ready], return_exceptions=True)
@@ -700,10 +714,28 @@ class SwarmManager:
             except Exception as e:
                 log.warning("Could not gather dependency outputs for task", error=str(e))
 
+            # Collect previous attempt results so the worker knows what was tried and why it failed.
+            retry_history: list[dict] = []
+            try:
+                prev_result = task.get("result") or ""
+                if prev_result and not prev_result.startswith("[Retry ") and not prev_result.startswith("[Rate ") and not prev_result.startswith("[Network ") and not prev_result.startswith("[Skipped"):
+                    task_status_prev, fail_reason_prev = self._parse_task_status(prev_result)
+                    retry_history.append({"result": prev_result, "fail_reason": fail_reason_prev or "Task did not complete"})
+                # Also grab accumulated history stored in task metadata key
+                import json as _rjson
+                stored = task.get("retry_history_json") or "[]"
+                extra = _rjson.loads(stored) if stored != "[]" else []
+                retry_history = extra + retry_history
+            except Exception:
+                pass
+
             # Build context: shared contract + dependency outputs + messages + task description
             messages_in = await self.db.get_swarm_messages(swarm_id, to_worker_id=worker_id)
             messages_in = messages_in[-20:]  # cap to last 20 to avoid context overflow
-            swarm_context = self._build_worker_context(swarm, worker, task, messages_in, dep_outputs)
+            swarm_context = self._build_worker_context(
+                swarm, worker, task, messages_in, dep_outputs,
+                retry_history=retry_history or None,
+            )
 
             # System prompt with swarm awareness
             system_prompt = self._build_worker_system_prompt(worker, swarm, all_workers)
@@ -711,7 +743,7 @@ class SwarmManager:
             config = AssistantConfig(
                 name=worker["name"],
                 system_prompt=system_prompt,
-                max_tool_iterations=15,
+                max_tool_iterations=30,  # swarm tasks are complex — need more steps than chat
                 onboarding_completed=True,  # workers skip onboarding entirely
             )
 
@@ -809,7 +841,32 @@ class SwarmManager:
 
         except Exception as e:
             err_str = str(e)
+            err_type = type(e).__name__.lower()
             is_rate_limit = "RateLimitError" in err_str or "rate limit" in err_str.lower() or "429" in err_str
+            is_network_drop = (
+                "readerror" in err_type
+                or "connectionerror" in err_type
+                or "remotedisconnected" in err_type
+                or "ReadError" in err_str
+                or "read error" in err_str.lower()
+            )
+
+            if is_network_drop and not is_rate_limit:
+                # Transient network failure (server dropped the stream) — requeue with backoff
+                log.warning(
+                    "Task hit network drop — requeueing as pending",
+                    task_id=task_id, task_title=task["title"], error=err_str,
+                )
+                await self.db.update_swarm_task(
+                    task_id, status="pending",
+                    result=f"[Network drop — requeued for retry]",
+                )
+                await self.db.update_swarm_worker(worker_id, status="idle")
+                await self._emit_task_event(swarm_id, task_id, "pending", {
+                    "task_title": task["title"], "reason": "network_drop",
+                })
+                await asyncio.sleep(15)
+                return "rate_limited"  # same treatment: neither completed nor failed
 
             if is_rate_limit:
                 # Transient error — reset to pending without burning a retry attempt.
@@ -1156,14 +1213,68 @@ Rules:
 - After planning, a shared interface CONTRACT will be auto-generated and given to every worker. Design the plan so interfaces between workers are clean and minimal — fewer cross-worker dependencies means fewer integration bugs."""
 
     @staticmethod
+    async def _cascade_fail(self, swarm_id: int, failed_title: str) -> None:
+        """Recursively fail all tasks that (directly or transitively) depend on failed_title.
+
+        This prevents the swarm from stalling when a task permanently fails — independent
+        tasks continue running and only tasks that actually needed the failed output are skipped.
+        """
+        all_tasks = await self.db.get_swarm_tasks(swarm_id)
+        to_fail: list[dict] = []
+
+        def _collect(blocked_by: str) -> None:
+            for t in all_tasks:
+                if t["status"] not in ("pending", "running"):
+                    continue
+                try:
+                    deps = json.loads(t.get("depends_on") or "[]")
+                except Exception:
+                    deps = []
+                if blocked_by in deps and t not in to_fail:
+                    to_fail.append(t)
+                    _collect(t["title"])  # recurse for transitively dependent tasks
+
+        _collect(failed_title)
+
+        for t in to_fail:
+            reason = f"Dependency '{failed_title}' permanently failed"
+            await self.db.update_swarm_task(
+                t["id"], status="failed",
+                result=f"[Skipped] {reason}",
+            )
+            await self._emit_task_event(swarm_id, t["id"], "failed", {
+                "task_title": t["title"],
+                "reason": reason,
+            })
+            log.info("Cascade-failed dependent task", task_title=t["title"], blocked_by=failed_title)
+
+    @staticmethod
     def _parse_task_status(response: str) -> tuple[str, str]:
         """
         Scan the last few lines of a worker response for an explicit status marker.
         Returns (status, fail_reason) where status is 'completed', 'failed', or 'waiting'.
         'waiting' means the worker asked the user a question and needs an answer to proceed.
-        Defaults to 'completed' if no marker found (backwards-compatible).
+        Falls back to failure detection heuristics before defaulting to 'completed'.
         """
         import re as _re
+
+        # Signals that the brain interrupted the worker before it could finish.
+        # These must be detected BEFORE checking for TASK_STATUS markers so a
+        # partial response that happens to precede one of these strings doesn't
+        # accidentally get marked completed.
+        _BRAIN_INTERRUPTS = (
+            "alcanzé el límite de pasos",       # brain: max_iterations in Spanish
+            "no obtuve una respuesta final",     # brain: empty_response fallback
+            "❌ request timed out",              # brain/swarm: readError/timeout
+            "readError",                         # raw exception string
+            "readerror",
+            "timed out",
+            "task timed out",
+        )
+        response_lower = response.lower()
+        if any(sig.lower() in response_lower for sig in _BRAIN_INTERRUPTS):
+            return "failed", "Worker hit step limit or connection timeout before completing"
+
         for line in reversed(response.strip().splitlines()):
             line = line.strip()
             m = _re.match(r"TASK_STATUS:\s*(COMPLETED|FAILED)(?::\s*(.*))?", line, _re.IGNORECASE)
@@ -1174,7 +1285,9 @@ Rules:
                 if "waiting_for_user" in reason.lower():
                     return "waiting", reason
                 return status, reason
-        # No marker found — assume completed (workers that don't follow instructions)
+        # No marker — worker didn't follow the protocol. Treat as completed so
+        # well-behaved models that produce real output are not penalised.
+        # Workers that genuinely failed should use TASK_STATUS: FAILED.
         return "completed", ""
 
     def _build_worker_system_prompt(
@@ -1230,10 +1343,34 @@ Rules:
         task: dict,
         messages_in: list[dict],
         dep_outputs: list[tuple[str, str]] | None = None,
+        retry_history: list[dict] | None = None,
     ) -> str:
         parts = [
             f"# Task: {task['title']}\n\n{task['description']}",
         ]
+
+        # ── 0. Retry History ──────────────────────────────────────────────────
+        # If this task was attempted before, inject a summary of what was tried,
+        # what was accomplished, and why it failed so the worker can continue
+        # from where the previous attempt left off rather than starting over.
+        if retry_history:
+            history_lines = []
+            for i, h in enumerate(retry_history, 1):
+                entry = (
+                    f"### Attempt {i} (failed)\n"
+                    f"**Why it failed:** {h.get('fail_reason', 'Unknown')}\n\n"
+                    f"**What was done / partial output:**\n{truncate(h.get('result', '(no output)'), 3000)}"
+                )
+                if h.get("user_notes"):
+                    entry += f"\n\n**👤 User guidance for this retry:** {h['user_notes']}"
+                history_lines.append(entry)
+            parts.append(
+                f"\n## ⚠️ RETRY — Previous Attempt(s) Failed\n"
+                f"This task was attempted {len(retry_history)} time(s) and did not complete.\n"
+                f"**Do NOT start over** — read the history below, check what files were already\n"
+                f"created in the workspace, and continue or fix from where the last attempt stopped.\n\n"
+                + "\n\n".join(history_lines)
+            )
 
         # ── 1. Shared Interface Contract ──────────────────────────────────────
         # Inject CONTRACT.md so workers follow agreed interfaces, not their own

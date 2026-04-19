@@ -739,24 +739,37 @@ class LLMRouter:
                 last_error = e
                 error_str = str(e).lower()
 
-                # Only retry on transient server errors (5xx) — NOT on timeouts.
-                # Timeouts mean the server is overloaded/unreachable; retrying just
-                # multiplies the wait time with no benefit.
+                # Retry on transient server errors (5xx) and network drops.
+                # ReadError / RemoteDisconnected mean the server closed the TCP
+                # connection mid-stream — common with long-running LLM requests.
+                # We do NOT retry asyncio.TimeoutError: that means we waited past
+                # our own budget; re-sending would just double the wait.
+                _e_str = str(e)
+                _e_type = type(e).__name__.lower()
                 is_retryable = (
-                    "500" in str(e)
-                    or "502" in str(e)
-                    or "503" in str(e)
-                    or "504" in str(e)
+                    "500" in _e_str
+                    or "502" in _e_str
+                    or "503" in _e_str
+                    or "504" in _e_str
                     or "server error" in error_str
+                    or "readerror" in _e_type          # httpx: server dropped stream
+                    or "read error" in error_str
+                    or "remotedisconnected" in _e_type  # http.client level drop
+                    or "connectionerror" in _e_type
+                    or "connectionreset" in error_str
+                    or "peer closed" in error_str
                 )
 
                 if not is_retryable or attempt == max_retries - 1:
                     raise
 
-                wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
+                # Longer wait for connection drops — give the remote server time to recover
+                is_network_drop = "readerror" in _e_type or "connectionerror" in _e_type or "remotedisconnected" in _e_type
+                wait_time = (10 * (attempt + 1)) if is_network_drop else (2 ** attempt)
                 log.warning(
                     f"LLM request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...",
                     error=str(e),
+                    error_type=type(e).__name__,
                 )
                 await asyncio.sleep(wait_time)
 
