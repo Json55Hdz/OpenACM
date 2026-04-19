@@ -671,6 +671,7 @@ export default function ChatPage() {
 
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isCompacting, setIsCompacting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -738,6 +739,7 @@ export default function ChatPage() {
   }, [messages, isWaitingResponse]);
   
   const executeCommand = async (command: string) => {
+    if (command.startsWith('/compact')) setIsCompacting(true);
     try {
       const result = await chatCommand.mutateAsync({
         command,
@@ -761,8 +763,14 @@ export default function ChatPage() {
       if (command.startsWith('/new') || command.startsWith('/clear') || command.startsWith('/reset')) {
         setMessages([]);
       }
+      // Compact: show the summary as a compaction note bubble in the UI
+      if (command.startsWith('/compact') && result.data?.compact) {
+        setIsCompacting(false);
+      }
     } catch {
       toast.error('Command failed');
+    } finally {
+      setIsCompacting(false);
     }
   };
 
@@ -1227,6 +1235,15 @@ export default function ChatPage() {
             >
               <Download size={13} />
               Export
+            </button>
+            <button
+              onClick={() => { addMessage({ content: '/compact', role: 'user' }); executeCommand('/compact'); }}
+              disabled={isCompacting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-950/60 text-indigo-300 hover:bg-indigo-900/60 hover:text-indigo-100 border-indigo-700/50"
+              title="Summarize old messages to free up context window"
+            >
+              {isCompacting ? <Loader2 size={13} className="animate-spin" /> : <ScrollText size={13} />}
+              {isCompacting ? 'Compacting…' : 'Compact'}
             </button>
           </div>
 

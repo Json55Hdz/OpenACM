@@ -26,14 +26,34 @@ _DEFAULT_COMPACT_THRESHOLD = 25
 _DEFAULT_COMPACT_KEEP_RECENT = 6
 
 # Prompt used to summarize old messages
-_COMPACT_SYSTEM_PROMPT = (
-    "You are a conversation summarizer. Summarize the following conversation "
-    "between a user and an AI assistant into a concise paragraph. "
-    "Preserve key facts, decisions, file paths, code snippets, tool results, "
-    "and any important context the assistant would need to continue helping. "
-    "Write in the same language the user used. Be concise but thorough — "
-    "this summary replaces the original messages."
-)
+_COMPACT_SYSTEM_PROMPT = """\
+You are compacting a conversation between a user and an AI assistant.
+
+Produce a DETAILED summary that preserves everything needed to continue the work seamlessly.
+Structure your response exactly like this (use the same language the user used):
+
+## Lo que se trabajó
+- Main goals, tasks, and requests from the user
+
+## Acciones realizadas
+- Files created, edited, or deleted — with EXACT full paths
+- Commands run and their output or result
+- Tools used and what they produced or found
+- Code written, bugs fixed, features added
+
+## Decisiones y hallazgos clave
+- Technical decisions made and the reasoning behind them
+- Bugs found and how they were fixed
+- Important discoveries or constraints uncovered
+
+## Estado actual
+- What is done ✓
+- What is pending / in progress (be specific)
+- Any errors, blockers, or open questions remaining
+
+Be thorough and specific — this summary permanently replaces the original messages \
+and is the ONLY record of this work. Never truncate or omit paths, filenames, or outcomes.\
+"""
 
 
 class MemoryManager:
@@ -48,6 +68,8 @@ class MemoryManager:
         self._cache: dict[str, list[dict[str, Any]]] = {}
         # Track which conversations have a pending compaction to avoid double-firing
         self._compacting: set[str] = set()
+        # Flag: compact needed before next LLM call (set by add_message, cleared by _compact)
+        self._needs_compact: set[str] = set()
 
     def _key(self, user_id: str, channel_id: str) -> str:
         """Generate a unique key for a user/channel pair."""
@@ -183,7 +205,7 @@ class MemoryManager:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Auto-compact: when conversation gets long, summarize old messages
+        # Flag compact as needed — brain.py will await it synchronously before next LLM call
         threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
         non_system = [m for m in self._cache[key] if m.get("role") != "system"]
         if (
@@ -191,7 +213,7 @@ class MemoryManager:
             and key not in self._compacting
             and self._llm_router is not None
         ):
-            asyncio.create_task(self._compact(user_id, channel_id))
+            self._needs_compact.add(key)
 
     async def get_messages(self, user_id: str, channel_id: str) -> list[dict[str, Any]]:
         """Get conversation history for a user/channel pair."""
@@ -250,14 +272,22 @@ class MemoryManager:
 
         return messages
 
-    async def _compact(self, user_id: str, channel_id: str) -> None:
-        """
-        Summarize older messages into a single summary message to save tokens.
+    def should_compact(self, user_id: str, channel_id: str) -> bool:
+        """Return True if a compaction was scheduled and hasn't run yet."""
+        return self._key(user_id, channel_id) in self._needs_compact
 
-        Keeps the system prompt + injects a summary + keeps the last COMPACT_KEEP_RECENT
-        messages verbatim so the LLM has recent context.
+    async def _compact(self, user_id: str, channel_id: str, force: bool = False) -> None:
+        """
+        Summarize older messages into a single detailed summary message.
+
+        Called synchronously by brain.py BEFORE the LLM call so the conversation
+        is fully paused during compaction (same behavior as Claude Code compact).
+        Keeps: system prompt + summary + last COMPACT_KEEP_RECENT messages verbatim.
+        Pass force=True to bypass the threshold check (used by /compact command).
         """
         key = self._key(user_id, channel_id)
+        self._needs_compact.discard(key)
+
         if key in self._compacting:
             return
         self._compacting.add(key)
@@ -267,13 +297,12 @@ class MemoryManager:
             if not msgs:
                 return
 
-            # Split: system prompt | old messages to summarize | recent messages to keep
             has_system = msgs[0]["role"] == "system"
             system_msg = [msgs[0]] if has_system else []
             rest = msgs[1:] if has_system else msgs[:]
 
             threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
-            if len(rest) < threshold:
+            if not force and len(rest) < threshold:
                 return
 
             keep_count = getattr(self.config, "compact_keep_recent", _DEFAULT_COMPACT_KEEP_RECENT)
@@ -281,39 +310,62 @@ class MemoryManager:
             to_keep = rest[-keep_count:] if keep_count < len(rest) else rest
 
             if len(to_summarize) < 4:
-                return  # not worth summarizing fewer than 4 messages
+                return
 
-            # Build a transcript of old messages for the summarizer
+            # Build a rich transcript — include tool calls and results, don't truncate aggressively
             transcript_lines = []
             for m in to_summarize:
                 role = m.get("role", "unknown")
                 content = m.get("content", "")
+                tool_calls = m.get("tool_calls")
+
                 if isinstance(content, list):
                     content = self._content_for_db(content)
-                # Skip tool results and empty messages in transcript
+
+                label = {"user": "User", "assistant": "Assistant", "tool": "ToolResult"}.get(role, role)
+
+                # For assistant messages that only called tools (no text), describe what was called
+                if role == "assistant" and not (content and content.strip()) and tool_calls:
+                    try:
+                        calls = []
+                        for tc in tool_calls:
+                            fn = tc.get("function", {})
+                            name = fn.get("name", "?")
+                            args_raw = fn.get("arguments", "{}")
+                            try:
+                                args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                                arg_summary = ", ".join(f"{k}={str(v)[:80]}" for k, v in args.items())
+                            except Exception:
+                                arg_summary = str(args_raw)[:120]
+                            calls.append(f"{name}({arg_summary})")
+                        transcript_lines.append(f"Assistant called tools: {'; '.join(calls)}")
+                    except Exception:
+                        pass
+                    continue
+
                 if not content or not content.strip():
                     continue
-                label = {"user": "User", "assistant": "Assistant", "tool": "Tool"}.get(role, role)
-                # Truncate very long messages in transcript
-                if len(content) > 500:
-                    content = content[:500] + "..."
+
+                # Allow up to 2000 chars per message — enough to preserve paths and code
+                if len(content) > 2000:
+                    content = content[:2000] + "\n...[truncated]"
+
                 transcript_lines.append(f"{label}: {content}")
 
             if not transcript_lines:
                 return
 
-            transcript = "\n".join(transcript_lines)
+            transcript = "\n\n".join(transcript_lines)
 
-            # Call LLM to summarize
             summary_messages = [
                 {"role": "system", "content": _COMPACT_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Summarize this conversation:\n\n{transcript}"},
+                {"role": "user", "content": f"Compact this conversation:\n\n{transcript}"},
             ]
 
             result = await self._llm_router.chat(
                 messages=summary_messages,
-                temperature=0.3,
-                max_tokens=500,
+                temperature=0.2,
+                max_tokens=2000,
             )
 
             summary_text = result.get("content", "").strip()
@@ -321,10 +373,9 @@ class MemoryManager:
                 log.warning("Compaction produced empty summary", key=key)
                 return
 
-            # Replace old messages with summary
             summary_msg = {
                 "role": "assistant",
-                "content": f"[Conversation summary — {len(to_summarize)} earlier messages]\n{summary_text}",
+                "content": f"[Compacted — {len(to_summarize)} messages summarized]\n\n{summary_text}",
             }
 
             self._cache[key] = system_msg + [summary_msg] + to_keep
@@ -332,12 +383,10 @@ class MemoryManager:
             log.info(
                 "Conversation compacted",
                 key=key,
-                summarized_messages=len(to_summarize),
-                kept_messages=len(to_keep),
-                summary_tokens=self._estimate_tokens([summary_msg]),
+                summarized=len(to_summarize),
+                kept=len(to_keep),
             )
 
-            # Notify the frontend so it can show a compaction note in the chat
             if self._event_bus is not None:
                 await self._event_bus.emit(EVENT_MEMORY_COMPACTED, {
                     "user_id": user_id,

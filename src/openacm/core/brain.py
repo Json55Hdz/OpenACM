@@ -973,7 +973,18 @@ class Brain:
         # Add user message
         if not is_transparent:
             await self.memory.add_message(user_id, channel_id, "user", final_content)
-        
+
+        # Compact synchronously if needed — pauses the conversation like Claude Code does
+        if self.memory.should_compact(user_id, channel_id):
+            await self.event_bus.emit(EVENT_THINKING, {
+                "status": "queued",
+                "message": "🗜️ Compactando contexto...",
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+            })
+            await self.memory._compact(user_id, channel_id)
+
         messages = await self.memory.get_messages(user_id, channel_id)
 
         # Get tools in OpenAI format — filtered by user intent to save tokens

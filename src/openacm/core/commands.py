@@ -26,6 +26,7 @@ COMMANDS_HELP = (
     "**Available commands**\n\n"
     "- `/new` · `/clear` — Start a new conversation\n"
     "- `/reset` — Emergency reset: clears history + fixes broken tool state\n"
+    "- `/compact` — Summarize old messages to free up context window\n"
     "- `/help` — Show this help\n"
     "- `/model` — Show current model\n"
     "- `/model <name>` — Switch to a different model (persisted)\n"
@@ -58,6 +59,8 @@ class CommandProcessor:
                 return await self._cmd_model(args.strip())
             case "/stats":
                 return await self._cmd_stats()
+            case "/compact":
+                return await self._cmd_compact(user_id, channel_id)
             case "/export":
                 return await self._cmd_export(user_id, channel_id)
             case _:
@@ -131,6 +134,33 @@ class CommandProcessor:
             f"| Current model | `{router_stats.get('current_model', 'unknown')}` |"
         )
         return CommandResult(handled=True, text=text, data=stats)
+
+    async def _cmd_compact(self, user_id: str, channel_id: str) -> CommandResult:
+        """Force immediate compaction of the current conversation."""
+        mem = self.brain.memory
+        if not mem._llm_router:
+            return CommandResult(handled=True, text="⚠️ No LLM available for compaction.")
+
+        msgs = await mem.get_messages(user_id, channel_id)
+        non_system = [m for m in msgs if m.get("role") != "system"]
+        if len(non_system) < 4:
+            return CommandResult(
+                handled=True,
+                text="ℹ️ Not enough messages to compact yet (need at least 4).",
+            )
+
+        # Force compaction regardless of threshold
+        key = mem._key(user_id, channel_id)
+        mem._needs_compact.discard(key)  # avoid double-fire with auto-compact
+        await mem._compact(user_id, channel_id, force=True)
+
+        new_msgs = await mem.get_messages(user_id, channel_id)
+        new_count = len([m for m in new_msgs if m.get("role") != "system"])
+        return CommandResult(
+            handled=True,
+            text=f"🗜️ Compacted. Context reduced from {len(non_system)} → {new_count} messages.",
+            data={"compact": True},
+        )
 
     async def _cmd_export(self, user_id: str, channel_id: str) -> CommandResult:
         messages = await self.brain.memory.get_messages(user_id, channel_id)
