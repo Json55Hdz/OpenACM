@@ -276,7 +276,7 @@ class MemoryManager:
         """Return True if a compaction was scheduled and hasn't run yet."""
         return self._key(user_id, channel_id) in self._needs_compact
 
-    async def _compact(self, user_id: str, channel_id: str, force: bool = False) -> None:
+    async def _compact(self, user_id: str, channel_id: str, force: bool = False) -> str | None:
         """
         Summarize older messages into a single detailed summary message.
 
@@ -284,18 +284,19 @@ class MemoryManager:
         is fully paused during compaction (same behavior as Claude Code compact).
         Keeps: system prompt + summary + last COMPACT_KEEP_RECENT messages verbatim.
         Pass force=True to bypass the threshold check (used by /compact command).
+        Returns the summary text on success, None if skipped/failed.
         """
         key = self._key(user_id, channel_id)
         self._needs_compact.discard(key)
 
         if key in self._compacting:
-            return
+            return None
         self._compacting.add(key)
 
         try:
             msgs = self._cache.get(key, [])
             if not msgs:
-                return
+                return None
 
             has_system = msgs[0]["role"] == "system"
             system_msg = [msgs[0]] if has_system else []
@@ -303,14 +304,14 @@ class MemoryManager:
 
             threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
             if not force and len(rest) < threshold:
-                return
+                return None
 
             keep_count = getattr(self.config, "compact_keep_recent", _DEFAULT_COMPACT_KEEP_RECENT)
             to_summarize = rest[:-keep_count] if keep_count < len(rest) else []
             to_keep = rest[-keep_count:] if keep_count < len(rest) else rest
 
             if len(to_summarize) < 4:
-                return
+                return None
 
             # Build a rich transcript — include tool calls and results, don't truncate aggressively
             transcript_lines = []
@@ -353,7 +354,7 @@ class MemoryManager:
                 transcript_lines.append(f"{label}: {content}")
 
             if not transcript_lines:
-                return
+                return None
 
             transcript = "\n\n".join(transcript_lines)
 
@@ -371,7 +372,7 @@ class MemoryManager:
             summary_text = result.get("content", "").strip()
             if not summary_text:
                 log.warning("Compaction produced empty summary", key=key)
-                return
+                return None
 
             summary_msg = {
                 "role": "assistant",
@@ -395,8 +396,11 @@ class MemoryManager:
                     "summarized_messages": len(to_summarize),
                 })
 
+            return summary_text
+
         except Exception as e:
             log.error("Conversation compaction failed", error=str(e), key=key)
+            raise  # re-raise so _cmd_compact can report the error to the user
         finally:
             self._compacting.discard(key)
 

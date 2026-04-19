@@ -152,13 +152,22 @@ class CommandProcessor:
         # Force compaction regardless of threshold
         key = mem._key(user_id, channel_id)
         mem._needs_compact.discard(key)  # avoid double-fire with auto-compact
-        await mem._compact(user_id, channel_id, force=True)
+        try:
+            summary_text = await mem._compact(user_id, channel_id, force=True)
+        except Exception as e:
+            return CommandResult(
+                handled=True,
+                text=f"❌ Compaction failed: {e}",
+            )
 
         new_msgs = await mem.get_messages(user_id, channel_id)
         new_count = len([m for m in new_msgs if m.get("role") != "system"])
+
+        header = f"🗜️ Compacted {len(non_system)} → {new_count} messages.\n\n"
+        body = summary_text if summary_text else "(no summary produced)"
         return CommandResult(
             handled=True,
-            text=f"🗜️ Compacted. Context reduced from {len(non_system)} → {new_count} messages.",
+            text=header + body,
             data={"compact": True},
         )
 

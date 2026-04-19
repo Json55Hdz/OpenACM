@@ -983,7 +983,10 @@ class Brain:
                 "channel_id": channel_id,
                 "channel_type": channel_type,
             })
-            await self.memory._compact(user_id, channel_id)
+            try:
+                await self.memory._compact(user_id, channel_id)
+            except Exception as compact_err:
+                log.error("Auto-compaction failed", error=str(compact_err))
 
         messages = await self.memory.get_messages(user_id, channel_id)
 
