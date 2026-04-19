@@ -81,8 +81,13 @@ export function useWebSocket() {
     const token = authStore.getState().token;
     if (!token) return;
 
-    // Don't reconnect if already connected
-    if (chatWsRef.current && chatWsRef.current.readyState === WebSocket.OPEN) {
+    // Don't reconnect if already connected or connecting — prevents duplicate connections
+    // when connectChatWs is called multiple times in rapid succession (authStore subscribe
+    // fires on every state change; React StrictMode double-invokes effects).
+    if (chatWsRef.current && (
+      chatWsRef.current.readyState === WebSocket.OPEN ||
+      chatWsRef.current.readyState === WebSocket.CONNECTING
+    )) {
       return;
     }
 
@@ -170,8 +175,11 @@ export function useWebSocket() {
     const token = authStore.getState().token;
     if (!token) return;
 
-    // Don't reconnect if already connected
-    if (eventsWsRef.current && eventsWsRef.current.readyState === WebSocket.OPEN) {
+    // Don't reconnect if already connected or connecting
+    if (eventsWsRef.current && (
+      eventsWsRef.current.readyState === WebSocket.OPEN ||
+      eventsWsRef.current.readyState === WebSocket.CONNECTING
+    )) {
       return;
     }
 
