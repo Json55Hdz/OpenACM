@@ -104,6 +104,8 @@ class Brain:
         self._channel_tasks: dict[str, asyncio.Task] = {}
         # Queued message per channel while a task is running (one slot — latest wins)
         self._channel_queue: dict[str, tuple] = {}
+        # Per-channel cancel flag: set when user cancels, checked in the tool loop
+        self._cancel_flags: dict[str, asyncio.Event] = {}
         self.workflow_tracker = None  # injected by app.py
         self._pending_suggestions: dict[str, object] = {}  # key: "channel_id:user_id"
         # System prompt cache — skip get_or_create update when prompt hasn't changed
@@ -564,6 +566,8 @@ class Brain:
         if _prev and not _prev.done():
             is_cancel = content.strip().lower() in self._CANCEL_KEYWORDS
             if is_cancel:
+                # Set the per-channel flag so the tool loop stops at its next check
+                self._cancel_flags.setdefault(_task_key, asyncio.Event()).set()
                 _prev.cancel()
                 self._channel_tasks.pop(_task_key, None)
                 self._channel_queue.pop(_task_key, None)
@@ -587,7 +591,8 @@ class Brain:
                 })
                 return "⏳ Procesando algo, espera... (escribe «cancelar» para detener)"
 
-        # No active task — run immediately
+        # No active task — clear any stale cancel flag and run immediately
+        self._cancel_flags.setdefault(_task_key, asyncio.Event()).clear()
         self._channel_queue.pop(_task_key, None)
         task = asyncio.create_task(
             self._run_then_drain(content, user_id, channel_id, channel_type, attachments, is_transparent, _task_key)
@@ -1043,6 +1048,8 @@ class Brain:
         _last_tool_signature: str | None = None  # For repeated-call loop detection
         _repeated_call_count: int = 0
         _empty_response_retried: bool = False  # Guard: only inject the "write now" turn once
+        _task_key_for_cancel = f"{channel_type}:{channel_id}"
+        _cancel_event = self._cancel_flags.setdefault(_task_key_for_cancel, asyncio.Event())
 
         # ── Trace: record this request for debugging ──────────────────────────
         import time as _time
@@ -1061,6 +1068,13 @@ class Brain:
         # ─────────────────────────────────────────────────────────────────────
 
         while iterations < max_iterations:
+            # Check cancel flag at every iteration — catches cancels that came in
+            # while a subprocess was running in run_in_executor (CancelledError alone
+            # doesn't interrupt executor threads).
+            if _cancel_event.is_set():
+                _cancel_event.clear()
+                return "⏹ Cancelado."
+
             iterations += 1
             is_tool_loop = iterations > 1
 
@@ -1173,20 +1187,23 @@ class Brain:
                     if not _empty_response_retried:
                         _empty_response_retried = True
                         _swarm_hint = (
-                            "\nIMPORTANT: You MUST end with:\n"
+                            "\nYou MUST end your response with:\n"
                             "  TASK_STATUS: COMPLETED\n"
                             "  or TASK_STATUS: FAILED: <reason>"
                             if channel_type == "swarm" else ""
                         )
+                        # Use "system" role so the model does NOT treat this as
+                        # a user request — prevents hallucinating fake user messages.
                         messages = list(messages) + [{
-                            "role": "user",
+                            "role": "system",
                             "content": (
-                                "Write your final text response now based on everything you did. "
-                                "Do NOT call any more tools — just write your conclusion."
+                                "[INSTRUCTION]: Your last response was empty. "
+                                "Write your final summary now based on what you did. "
+                                "Do NOT call any more tools."
                                 + _swarm_hint
                             ),
                         }]
-                        log.warning("LLM returned empty content — injecting response-forcing turn")
+                        log.warning("LLM returned empty content — injecting response-forcing system turn")
                         continue
                     # Already retried — give up and go to summary call
                     log.warning("LLM returned empty content twice, going to summary")
