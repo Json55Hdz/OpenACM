@@ -634,6 +634,273 @@ class Brain:
 
         return result
 
+    async def _build_system_prompt(
+        self,
+        content: str,
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+    ) -> tuple[str, list]:
+        """Build the system prompt and return (system_prompt, messages)."""
+        system_prompt = self.config.system_prompt
+
+        if not getattr(self.config, "onboarding_completed", False):
+            system_prompt = (
+                "[SETUP MODE]: You are meeting your user for the first time. Be natural and conversational — no agendas, no lists, no robotic structure.\n"
+                "You need to collect 3 things across the conversation, each one naturally:\n"
+                "   1. Their name.\n"
+                "   2. What they want to call you.\n"
+                "   3. How they want you to behave (tone, style, personality).\n"
+                "Collect them one at a time through normal conversation — never announce that you have 'N questions' or a setup process. "
+                "Just chat, ask naturally, and wait for each answer before moving on.\n"
+                "Do NOT help with unrelated tasks until you have all 3.\n"
+                "Once you have all 3, call the `save_user_profile` tool to finish setup."
+            )
+        else:
+            rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
+            if len(rc_paths) == 0:
+                system_prompt += (
+                    "\n\n[SISTEMA]: Tienes activa la capacidad 'Code Resurrection' que indexa código antiguo del usuario. "
+                    "Pero NO hay ninguna ruta configurada en el sistema. Cuando consideres que la "
+                    "conversación actual está terminando naturalmente, ofrécele muy amistosamente usar Code Resurrection. "
+                    "Dile que puede pasarte la ruta del directorio por el chat para que tú la agregues automáticamente "
+                    "(usando la tool add_resurrection_path), O en su defecto, dale este enlace markdown exacto con formato de botón para "
+                    "que lo haga manualmente: `[Ir a Configuración](/config)`."
+                )
+
+        existing_messages = await self.memory.get_messages(user_id, channel_id)
+        is_new_conversation = len(existing_messages) == 0
+        openacm_context = get_openacm_context() if is_new_conversation else get_short_context()
+        system_prompt = f"{openacm_context}\n\n{system_prompt}"
+
+        if self.terminal_history:
+            recent = [e for e in self.terminal_history[-5:] if e.get("command")]
+            if recent:
+                term_lines = []
+                for e in recent:
+                    output = e.get("output", "").strip()
+                    if output:
+                        term_lines.append(f"$ {e['command']}\n{output[:200]}")
+                    else:
+                        term_lines.append(f"$ {e['command']}")
+                terminal_ctx = "\n".join(term_lines)
+                system_prompt += (
+                    f"\n\n## User's Recent Terminal Activity\n"
+                    f"The user has an interactive terminal open. "
+                    f"These are their recent commands and outputs:\n"
+                    f"```\n{terminal_ctx}\n```\n"
+                    f"Use this context to understand what the user is working on. "
+                    f"You can reference these results in your responses."
+                )
+
+        if self.skill_manager:
+            skills_prompt = await self.skill_manager.get_active_skills_prompt(content)
+            if skills_prompt:
+                system_prompt = f"{system_prompt}\n\n{skills_prompt}"
+                matched = self.skill_manager.last_matched_skill_names
+                if matched:
+                    await self.event_bus.emit(EVENT_SKILL_ACTIVE, {
+                        "skills": matched,
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                    })
+
+        if self.tool_registry:
+            mcp_tools = [t for t in self.tool_registry.tools.values() if t.category == "mcp"]
+            if mcp_tools:
+                servers: dict[str, list[str]] = {}
+                for t in mcp_tools:
+                    parts = t.name.split("__", 2)
+                    server = parts[1] if len(parts) >= 3 else "unknown"
+                    servers.setdefault(server, []).append(f"`{t.name}`")
+                srv_list = ", ".join(f"{srv}: {', '.join(names)}" for srv, names in servers.items())
+                system_prompt = f"{system_prompt}\n\nMCP servers connected: {srv_list}"
+
+        try:
+            from openacm.plugins import plugin_manager
+            for ext in plugin_manager.get_context_extensions():
+                system_prompt = f"{system_prompt}\n\n{ext}"
+        except Exception as e:
+            log.debug("Plugin context extension failed", error=str(e))
+
+        _sp_key = f"{channel_id}:{user_id}"
+        _sp_hash = hash(system_prompt)
+        if _sp_hash != self._system_prompt_hash.get(_sp_key):
+            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
+            self._system_prompt_hash[_sp_key] = _sp_hash
+        else:
+            messages = await self.memory.get_messages(user_id, channel_id)
+
+        return system_prompt, messages
+
+    async def _inject_rag_context(
+        self,
+        content: str,
+        channel_id: str,
+        channel_type: str,
+        messages: list,
+    ) -> list:
+        """Query RAG long-term memory and inject relevant context into messages."""
+        try:
+            from openacm.core.rag import _rag_engine
+            from openacm.core.events import EVENT_MEMORY_RECALL
+
+            if not (_rag_engine and _rag_engine.is_ready and content):
+                return messages
+
+            _rag_key = f"{channel_id}"
+            _prev_query, _cached_memories = self._rag_cache.get(_rag_key, ("", []))
+
+            def _word_overlap(a: str, b: str) -> float:
+                wa, wb = set(a.lower().split()), set(b.lower().split())
+                return len(wa & wb) / max(len(wa | wb), 1)
+
+            if bool(_cached_memories) and _word_overlap(content, _prev_query) >= 0.6:
+                memories = _cached_memories
+                log.debug("RAG cache hit", channel=channel_id)
+            else:
+                await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "searching",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": 0,
+                })
+                scored_results = await _rag_engine.query_with_scores(content, top_k=5)
+                _threshold = getattr(self.config, "rag_relevance_threshold", 0.5)
+                memories = [doc for doc, dist in scored_results if dist < _threshold][:2]
+                self._rag_cache[_rag_key] = (content, memories)
+
+            if memories:
+                await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "found",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": len(memories),
+                })
+                memory_block = "\n".join(f"- {m[:200]}" for m in memories)
+                memory_msg = {
+                    "role": "system",
+                    "content": (
+                        f"[Long-term memory — relevant fragments retrieved]:\n"
+                        f"{memory_block}\n"
+                        f"[Use this information if relevant to the current conversation.]\n"
+                        f"***\n"
+                        f"[MEMORIA DE CÓDIGO PASADO]: Si lo recuperado arriba contiene código "
+                        f"de proyectos antiguos escritos por el humano, IMPORTANTE: "
+                        f"Tú eres un Senior Developer. Analiza este código primero. Podría estar desactualizado "
+                        f"o contener malas prácticas o bugs de cuando el usuario era Junior. "
+                        f"EXTRAE la lógica de negocio y su intención, pero RE-ESCRÍBELO aplicando "
+                        f"principios limpios, modernos y robustos antes de usarlo o dárselo."
+                    ),
+                }
+                if len(messages) > 1 and messages[0]["role"] == "system":
+                    messages = [
+                        m for m in messages
+                        if not (m.get("role") == "system" and "Long-term memory" in str(m.get("content", "")))
+                    ]
+                    messages.insert(1, memory_msg)
+            else:
+                await self.event_bus.emit(EVENT_MEMORY_RECALL, {
+                    "status": "empty",
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                    "count": 0,
+                })
+        except Exception:
+            pass  # RAG is optional, never break the main flow
+
+        return messages
+
+    async def _resolve_attachment_content(
+        self,
+        content: str,
+        attachments: list[str],
+    ) -> str | list:
+        """Convert raw attachment IDs into structured LLM content (images, audio, PDFs, etc.)."""
+        import base64
+        from openacm.security.crypto import decrypt_file, get_media_dir
+
+        structured_content: list = []
+        if content:
+            structured_content.append({"type": "text", "text": content})
+
+        for att_id in attachments:
+            file_path = get_media_dir() / att_id
+            if not file_path.exists():
+                continue
+            try:
+                raw_bytes = decrypt_file(file_path)
+                b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                ext = file_path.suffix.lower()
+
+                mime = "application/octet-stream"
+                if ext == ".png":
+                    mime = "image/png"
+                elif ext in (".jpg", ".jpeg"):
+                    mime = "image/jpeg"
+                elif ext == ".gif":
+                    mime = "image/gif"
+                elif ext == ".webp":
+                    mime = "image/webp"
+
+                if mime.startswith("image/"):
+                    try:
+                        _vision_ok = litellm.supports_vision(model=self.llm_router.current_model)
+                    except Exception:
+                        _vision_ok = True
+                    if _vision_ok:
+                        structured_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                            "_file_id": att_id,
+                        })
+                    else:
+                        try:
+                            from markitdown import MarkItDown
+                            md_text = (MarkItDown().convert(str(file_path)).text_content or "").strip()
+                        except Exception:
+                            md_text = ""
+                        structured_content.append({
+                            "type": "text",
+                            "text": (
+                                f"[Image — {file_path.name}]:\n{md_text}"
+                                if md_text
+                                else f"[Image attached: {file_path.name} — active model does not support vision]"
+                            ),
+                        })
+                elif ext == ".pdf":
+                    text = self._extract_pdf_text(raw_bytes)
+                    structured_content.append({"type": "text", "text": f"[PDF — {file_path.name}]:\n{text}"})
+                elif ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac"):
+                    transcript = await self._transcribe_audio(raw_bytes, ext)
+                    if transcript:
+                        structured_content.append({"type": "text", "text": f"[Audio transcript]:\n{transcript}"})
+                    else:
+                        structured_content.append({
+                            "type": "text",
+                            "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",
+                        })
+                else:
+                    try:
+                        from markitdown import MarkItDown
+                        md_text = (MarkItDown().convert(str(file_path)).text_content or "").strip()
+                    except Exception:
+                        md_text = ""
+                    if md_text:
+                        structured_content.append({
+                            "type": "text",
+                            "text": f"[{file_path.name}]:\n{truncate(md_text, TRUNCATE_FILE_CONTEXT_CHARS)}",
+                        })
+                    else:
+                        structured_content.append({
+                            "type": "text",
+                            "text": f"[File attached: {file_path.name} ({ext})]",
+                        })
+            except Exception as e:
+                log.error("Failed to load attachment", error=str(e), file_id=att_id)
+
+        return structured_content if structured_content else content
+
     async def _run(
         self,
         content: str,
@@ -692,289 +959,16 @@ class Brain:
         # Accumulate tool calls for this agentic turn (for workflow tracking)
         _tool_sequence_for_turn: list[dict] = []
 
-        # Build system prompt with OpenACM context FIRST, then skills
-        system_prompt = self.config.system_prompt
-        
-        # Onboarding Persona - Absolute Priority
-        if not getattr(self.config, "onboarding_completed", False):
-            system_prompt = (
-                "[SETUP MODE]: You are meeting your user for the first time. Be natural and conversational — no agendas, no lists, no robotic structure.\n"
-                "You need to collect 3 things across the conversation, each one naturally:\n"
-                "   1. Their name.\n"
-                "   2. What they want to call you.\n"
-                "   3. How they want you to behave (tone, style, personality).\n"
-                "Collect them one at a time through normal conversation — never announce that you have 'N questions' or a setup process. "
-                "Just chat, ask naturally, and wait for each answer before moving on.\n"
-                "Do NOT help with unrelated tasks until you have all 3.\n"
-                "Once you have all 3, call the `save_user_profile` tool to finish setup."
-            )
-        else:
-            # Code Resurrection Onboarding
-            rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
-            if len(rc_paths) == 0:
-                system_prompt += (
-                    "\n\n[SISTEMA]: Tienes activa la capacidad 'Code Resurrection' que indexa código antiguo del usuario. "
-                    "Pero NO hay ninguna ruta configurada en el sistema. Cuando consideres que la "
-                    "conversación actual está terminando naturalmente, ofrécele muy amistosamente usar Code Resurrection. "
-                    "Dile que puede pasarte la ruta del directorio por el chat para que tú la agregues automáticamente "
-                    "(usando la tool add_resurrection_path), O en su defecto, dale este enlace markdown exacto con formato de botón para "
-                    "que lo haga manualmente: `[Ir a Configuración](/config)`."
-                )
+        # Build system prompt + fetch/create conversation messages
+        _system_prompt, messages = await self._build_system_prompt(content, user_id, channel_id, channel_type)
 
-        # 1. Agregar contexto de OpenACM — full on first message, short thereafter
-        existing_messages = await self.memory.get_messages(user_id, channel_id)
-        is_new_conversation = len(existing_messages) == 0
-        openacm_context = get_openacm_context() if is_new_conversation else get_short_context()
-        system_prompt = f"{openacm_context}\n\n{system_prompt}"
-
-        # 2. Agregar contexto de la terminal del usuario si hay historial reciente
-        if self.terminal_history:
-            recent = [
-                e for e in self.terminal_history[-5:] if e.get("command")
-            ]
-            if recent:
-                term_lines = []
-                for e in recent:
-                    output = e.get("output", "").strip()
-                    if output:
-                        term_lines.append(f"$ {e['command']}\n{output[:200]}")
-                    else:
-                        term_lines.append(f"$ {e['command']}")
-                terminal_ctx = "\n".join(term_lines)
-                system_prompt += (
-                    f"\n\n## User's Recent Terminal Activity\n"
-                    f"The user has an interactive terminal open. "
-                    f"These are their recent commands and outputs:\n"
-                    f"```\n{terminal_ctx}\n```\n"
-                    f"Use this context to understand what the user is working on. "
-                    f"You can reference these results in your responses."
-                )
-
-        # 3. Agregar skills relevantes si existen
-        if self.skill_manager:
-            skills_prompt = await self.skill_manager.get_active_skills_prompt(content)
-            if skills_prompt:
-                system_prompt = f"{system_prompt}\n\n{skills_prompt}"
-                matched = self.skill_manager.last_matched_skill_names
-                if matched:
-                    await self.event_bus.emit(EVENT_SKILL_ACTIVE, {
-                        "skills": matched,
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                    })
-
-        # 4. MCP tools — names only (schemas are already sent to the LLM in the tool list)
-        if self.tool_registry:
-            mcp_tools = [
-                t for t in self.tool_registry.tools.values() if t.category == "mcp"
-            ]
-            if mcp_tools:
-                servers: dict[str, list[str]] = {}
-                for t in mcp_tools:
-                    parts = t.name.split("__", 2)
-                    server = parts[1] if len(parts) >= 3 else "unknown"
-                    servers.setdefault(server, []).append(f"`{t.name}`")
-                srv_list = ", ".join(
-                    f"{srv}: {', '.join(names)}" for srv, names in servers.items()
-                )
-                system_prompt = f"{system_prompt}\n\nMCP servers connected: {srv_list}"
-
-        # 5. Plugin context extensions (each plugin injects its own instructions)
-        try:
-            from openacm.plugins import plugin_manager
-            for ext in plugin_manager.get_context_extensions():
-                system_prompt = f"{system_prompt}\n\n{ext}"
-        except Exception as e:
-            log.debug("Plugin context extension failed", error=str(e))
-
-        # Get or create conversation with system prompt — skip update if unchanged
-        _sp_key = f"{channel_id}:{user_id}"
-        _sp_hash = hash(system_prompt)
-        if _sp_hash != self._system_prompt_hash.get(_sp_key):
-            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
-            self._system_prompt_hash[_sp_key] = _sp_hash
-        else:
-            messages = await self.memory.get_messages(user_id, channel_id)
-
-        # RAG: Query long-term memory for relevant context (score-filtered)
-        # Cache: reuse previous results if the new query shares >60% of words with the last one.
-        try:
-            from openacm.core.rag import _rag_engine
-            from openacm.core.events import EVENT_MEMORY_RECALL
-
-            if _rag_engine and _rag_engine.is_ready and content:
-                _rag_key = f"{channel_id}:{user_id}"
-                _prev_query, _cached_memories = self._rag_cache.get(_rag_key, ("", []))
-
-                # Simple word-overlap similarity to decide whether to reuse cache
-                def _word_overlap(a: str, b: str) -> float:
-                    wa, wb = set(a.lower().split()), set(b.lower().split())
-                    return len(wa & wb) / max(len(wa | wb), 1)
-
-                _use_cache = (
-                    bool(_cached_memories)
-                    and _word_overlap(content, _prev_query) >= 0.6
-                )
-
-                if _use_cache:
-                    memories = _cached_memories
-                    log.debug("RAG cache hit", channel=channel_id)
-                else:
-                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
-                        "status": "searching",
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                        "count": 0,
-                    })
-                    scored_results = await _rag_engine.query_with_scores(content, top_k=5)
-                    _threshold = getattr(self.config, "rag_relevance_threshold", 0.5)
-                    memories = [doc for doc, dist in scored_results if dist < _threshold][:2]
-                    self._rag_cache[_rag_key] = (content, memories)
-
-                if memories:
-                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
-                        "status": "found",
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                        "count": len(memories),
-                    })
-                    memory_block = "\n".join(f"- {m[:200]}" for m in memories)
-                    memory_msg = {
-                        "role": "system",
-                        "content": (
-                            f"[Long-term memory — relevant fragments retrieved]:\n"
-                            f"{memory_block}\n"
-                            f"[Use this information if relevant to the current conversation.]\n"
-                            f"***\n"
-                            f"[MEMORIA DE CÓDIGO PASADO]: Si lo recuperado arriba contiene código "
-                            f"de proyectos antiguos escritos por el humano, IMPORTANTE: "
-                            f"Tú eres un Senior Developer. Analiza este código primero. Podría estar desactualizado "
-                            f"o contener malas prácticas o bugs de cuando el usuario era Junior. "
-                            f"EXTRAE la lógica de negocio y su intención, pero RE-ESCRÍBELO aplicando "
-                            f"principios limpios, modernos y robustos antes de usarlo o dárselo."
-                        ),
-                    }
-                    if len(messages) > 1 and messages[0]["role"] == "system":
-                        messages = [
-                            m for m in messages
-                            if not (
-                                m.get("role") == "system"
-                                and "Long-term memory" in str(m.get("content", ""))
-                            )
-                        ]
-                        messages.insert(1, memory_msg)
-                else:
-                    await self.event_bus.emit(EVENT_MEMORY_RECALL, {
-                        "status": "empty",
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                        "count": 0,
-                    })
-        except Exception:
-            pass  # RAG is optional, never break the main flow
+        # Inject RAG long-term memory context
+        messages = await self._inject_rag_context(content, channel_id, channel_type, messages)
 
         # Build structured content if there are attachments
         final_content = content
         if attachments:
-            import base64
-            from pathlib import Path
-            from openacm.security.crypto import decrypt_file, get_media_dir
-
-            structured_content = []
-            if content:
-                structured_content.append({"type": "text", "text": content})
-
-            for att_id in attachments:
-                file_path = get_media_dir() / att_id
-                if file_path.exists():
-                    try:
-                        raw_bytes = decrypt_file(file_path)
-                        b64 = base64.b64encode(raw_bytes).decode("utf-8")
-
-                        ext = file_path.suffix.lower()
-                        mime = "application/octet-stream"
-                        if ext in [".png"]:
-                            mime = "image/png"
-                        elif ext in [".jpg", ".jpeg"]:
-                            mime = "image/jpeg"
-                        elif ext in [".gif"]:
-                            mime = "image/gif"
-                        elif ext in [".webp"]:
-                            mime = "image/webp"
-
-                        if mime.startswith("image/"):
-                            # Check if the active model actually supports vision
-                            try:
-                                _vision_ok = litellm.supports_vision(
-                                    model=self.llm_router.current_model
-                                )
-                            except Exception:
-                                _vision_ok = True  # optimistic default
-
-                            if _vision_ok:
-                                structured_content.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                                    "_file_id": att_id,  # preserved for DB serialization
-                                })
-                            else:
-                                # Fallback: MarkItDown extracts EXIF metadata / OCR text
-                                try:
-                                    from markitdown import MarkItDown
-                                    _md_result = MarkItDown().convert(str(file_path))
-                                    md_text = (_md_result.text_content or "").strip()
-                                except Exception:
-                                    md_text = ""
-                                structured_content.append({
-                                    "type": "text",
-                                    "text": (
-                                        f"[Image — {file_path.name}]:\n{md_text}"
-                                        if md_text
-                                        else f"[Image attached: {file_path.name} — active model does not support vision]"
-                                    ),
-                                })
-                        elif ext == ".pdf":
-                            text = self._extract_pdf_text(raw_bytes)
-                            structured_content.append({
-                                "type": "text",
-                                "text": f"[PDF — {file_path.name}]:\n{text}",
-                            })
-                        elif ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac"):
-                            transcript = await self._transcribe_audio(raw_bytes, ext)
-                            if transcript:
-                                structured_content.append({
-                                    "type": "text",
-                                    "text": f"[Audio transcript]:\n{transcript}",
-                                })
-                            else:
-                                structured_content.append({
-                                    "type": "text",
-                                    "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",
-                                })
-                        else:
-                            # Use MarkItDown for everything else: docx, xlsx, pptx,
-                            # txt, csv, json, xml, html, zip, epub, and more.
-                            try:
-                                from markitdown import MarkItDown
-                                _md_result = MarkItDown().convert(str(file_path))
-                                md_text = (_md_result.text_content or "").strip()
-                            except Exception:
-                                md_text = ""
-                            if md_text:
-                                structured_content.append({
-                                    "type": "text",
-                                    "text": f"[{file_path.name}]:\n{truncate(md_text, TRUNCATE_FILE_CONTEXT_CHARS)}",
-                                })
-                            else:
-                                structured_content.append({
-                                    "type": "text",
-                                    "text": f"[File attached: {file_path.name} ({ext})]",
-                                })
-                    except Exception as e:
-                        log.error("Failed to load attachment", error=str(e), file_id=att_id)
-
-            if structured_content:
-                final_content = structured_content
+            final_content = await self._resolve_attachment_content(content, attachments)
 
         # Add user message
         if not is_transparent:

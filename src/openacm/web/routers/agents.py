@@ -21,6 +21,8 @@ from fastapi.staticfiles import StaticFiles
 
 from openacm.web.state import _state
 from openacm.web.broadcast import broadcast_event, _safe_ws_send, _broadcast_to_terminal
+from openacm.constants import TRUNCATE_RAG_CONTEXT_CHARS
+from openacm.utils.text import truncate
 
 log = structlog.get_logger()
 

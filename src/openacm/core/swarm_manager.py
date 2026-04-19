@@ -70,7 +70,7 @@ class SwarmManager:
         due to a previous crash. Also reset swarms stuck in 'running' to 'idle'.
         """
         try:
-            all_swarms = await self.db.get_swarms()
+            all_swarms = await self.db.list_swarms()
             for swarm in all_swarms:
                 swarm_id = swarm["id"]
                 # Reset swarm status
