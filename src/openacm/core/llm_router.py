@@ -15,6 +15,7 @@ import litellm
 import structlog
 
 from openacm.constants import TRUNCATE_LLM_ERROR_CHARS, DEFAULT_OLLAMA_BASE_URL
+from openacm.utils.text import truncate
 from openacm.core.config import LLMConfig
 from openacm.core.events import EventBus, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
 
@@ -560,7 +561,7 @@ class LLMRouter:
                         status=resp.status_code,
                         url=url,
                         model=model,
-                        response_body=body_text[:TRUNCATE_LLM_ERROR_CHARS],
+                        response_body=truncate(body_text, TRUNCATE_LLM_ERROR_CHARS),
                     )
                     raise httpx.HTTPStatusError(
                         f"Server error '{resp.status_code}' for url '{url}'",

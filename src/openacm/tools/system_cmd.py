@@ -183,12 +183,12 @@ async def run_command(
             full_command = command
 
         try:
-            from openacm.web.server import _channel_shells, ChannelShell
-            shell = _channel_shells.get(_channel_id)
+            from openacm.web.server import _state, ChannelShell
+            shell = _state.channel_shells.get(_channel_id)
             if not shell or not shell._alive:
                 shell = ChannelShell(_channel_id)
                 await shell.start()
-                _channel_shells[_channel_id] = shell
+                _state.channel_shells[_channel_id] = shell
             if _is_interactive_cmd(command):
                 return await shell.run_interactive_capture(full_command, timeout=float(timeout) if timeout > 0 else 600.0)
             return await shell.run_command_capture(full_command, timeout=float(timeout) if timeout > 0 else 30.0)

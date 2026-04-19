@@ -31,6 +31,7 @@ from openacm.constants import (
     SWARM_MAX_TASK_RETRIES,
     TRUNCATE_SWARM_TASK_OUTPUT_CHARS,
 )
+from openacm.utils.text import truncate
 
 log = structlog.get_logger()
 
@@ -1257,7 +1258,7 @@ Rules:
         # knows exactly what was built and can import/extend it correctly.
         if dep_outputs:
             dep_section = "\n\n".join(
-                f"### Output of: {title}\n\n{output[:TRUNCATE_SWARM_TASK_OUTPUT_CHARS]}{'...[truncated]' if len(output) > TRUNCATE_SWARM_TASK_OUTPUT_CHARS else ''}"
+                f"### Output of: {title}\n\n{truncate(output, TRUNCATE_SWARM_TASK_OUTPUT_CHARS)}"
                 for title, output in dep_outputs
             )
             parts.append(

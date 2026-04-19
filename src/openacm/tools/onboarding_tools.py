@@ -6,6 +6,7 @@ import yaml
 from pathlib import Path
 import structlog
 from openacm.constants import TRUNCATE_ONBOARDING_BEHAVIORS_CHARS
+from openacm.utils.text import truncate
 from openacm.tools.base import tool
 from openacm.core.config import _find_project_root
 
@@ -46,7 +47,7 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     _brain = kwargs.get("_brain")
 
     # Sanitization
-    behaviors = behaviors.strip()[:TRUNCATE_ONBOARDING_BEHAVIORS_CHARS]
+    behaviors = truncate(behaviors.strip(), TRUNCATE_ONBOARDING_BEHAVIORS_CHARS)
     user_name = user_name.strip()[:100]
     assistant_name = assistant_name.strip()[:100] or "OpenACM"
 
@@ -109,14 +110,14 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
 
     # Try to update the active config in memory dynamically (field by field to prevent losing refs)
     try:
-        from openacm.web.server import _config
-        if _config and _brain:
-            _config.assistant.name = assistant_name
-            _config.assistant.onboarding_completed = True
-            _config.assistant.system_prompt = new_prompt
-            _brain.config.name = assistant_name
-            _brain.config.onboarding_completed = True
-            _brain.config.system_prompt = new_prompt
+        from openacm.web.server import _state
+        if _state.config and _state.brain:
+            _state.config.assistant.name = assistant_name
+            _state.config.assistant.onboarding_completed = True
+            _state.config.assistant.system_prompt = new_prompt
+            _state.brain.config.name = assistant_name
+            _state.brain.config.onboarding_completed = True
+            _state.brain.config.system_prompt = new_prompt
     except Exception as e:
         log.warning("Could not update in-memory config after onboarding", error=str(e))
 

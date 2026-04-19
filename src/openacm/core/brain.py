@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from openacm.constants import TRUNCATE_PDF_CHARS, TRUNCATE_FILE_CONTEXT_CHARS
+from openacm.utils.text import truncate
 from openacm.core.config import AssistantConfig
 from openacm.core.local_router import LocalRouter
 from openacm.core.output_compressor import compress as compress_output, compression_summary
@@ -294,7 +295,7 @@ class Brain:
             result = converter.convert(stream, raises_on_error=False)
             md = result.document.export_to_markdown()
             if md and md.strip():
-                return md[:TRUNCATE_PDF_CHARS]
+                return truncate(md, TRUNCATE_PDF_CHARS)
         except Exception as e:
             log.debug("docling PDF extraction failed, falling back to pypdf", error=str(e))
 
@@ -304,7 +305,7 @@ class Brain:
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
             pages = [page.extract_text() or "" for page in reader.pages]
             text = "\n\n".join(p for p in pages if p.strip())
-            return text[:TRUNCATE_PDF_CHARS] or "[PDF has no extractable text]"
+            return truncate(text, TRUNCATE_PDF_CHARS) or "[PDF has no extractable text]"
         except ImportError:
             return "[pypdf not installed — install with: pip install pypdf]"
         except Exception as e:
@@ -962,7 +963,7 @@ class Brain:
                             if md_text:
                                 structured_content.append({
                                     "type": "text",
-                                    "text": f"[{file_path.name}]:\n{md_text[:TRUNCATE_FILE_CONTEXT_CHARS]}",
+                                    "text": f"[{file_path.name}]:\n{truncate(md_text, TRUNCATE_FILE_CONTEXT_CHARS)}",
                                 })
                             else:
                                 structured_content.append({

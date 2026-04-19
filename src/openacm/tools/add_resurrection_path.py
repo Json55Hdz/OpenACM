@@ -65,10 +65,10 @@ async def add_resurrection_path(path: str, **kwargs) -> str:
 
     # Try to update the active config in memory if running on the same process
     try:
-        from openacm.web.server import _config
-        if _config:
-            if str_path not in _config.resurrection_paths:
-                _config.resurrection_paths.append(str_path)
+        from openacm.web.server import _state
+        if _state.config:
+            if str_path not in _state.config.resurrection_paths:
+                _state.config.resurrection_paths.append(str_path)
     except Exception:
         pass
 

@@ -32,6 +32,7 @@ import json
 import yaml
 
 from openacm.constants import DEFAULT_WEB_PORT, DEFAULT_OLLAMA_BASE_URL, TRUNCATE_RAG_CONTEXT_CHARS
+from openacm.utils.text import truncate
 from openacm.core.config import AppConfig
 from openacm.core.brain import Brain
 from openacm.core.commands import CommandProcessor
@@ -41,57 +42,59 @@ from openacm.tools.registry import ToolRegistry
 
 log = structlog.get_logger()
 
-# Store connected WebSocket clients
-_ws_clients: set[WebSocket] = set()
-# Per-connection send locks to prevent concurrent write errors in websockets library
 import weakref as _weakref
-_ws_send_locks: "_weakref.WeakKeyDictionary[WebSocket, asyncio.Lock]" = _weakref.WeakKeyDictionary()
+from dataclasses import dataclass, field
 
-# Tools that produce shell-like output to show in the terminal panel
 _TERMINAL_TOOLS = {"run_command", "run_python", "python_kernel", "execute_command"}
 
-# Global refs (set during startup)
-_brain: Brain | None = None
-_database: Database | None = None
-_event_bus: EventBus | None = None
-_tool_registry: ToolRegistry | None = None
-_config: AppConfig | None = None
-_command_processor: CommandProcessor | None = None
-_channels: list = []
-_agent_bot_manager = None
-_mcp_manager = None
-_activity_watcher = None
-_cron_scheduler = None
-_swarm_manager = None
-_content_watcher = None
-_custom_provider_ids: set[str] = set()  # IDs of user-defined custom providers
-_onboarding_triggered_flags: dict[str, bool] = {}  # Track if onboarding was triggered for a channel
-# All currently connected chat WebSocket clients (web channel only).
-_chat_ws_clients: set = set()
-# Buffer for a response that couldn't be delivered to any active client.
-# Replayed to the next client that connects.
-_pending_chat_response: dict | None = None
 
-# ── Tool confirmation ─────────────────────────────────────────────────────────
-# Maps confirm_id → asyncio.Future[bool].  Created on the running event loop.
-_pending_confirmations: dict[str, asyncio.Future] = {}
-# Commands the user has approved for the entire session ("always allow this session").
-_session_allowed_commands: set[str] = set()
+@dataclass
+class ServerState:
+    # Core services
+    brain: Brain | None = None
+    database: Database | None = None
+    event_bus: EventBus | None = None
+    tool_registry: ToolRegistry | None = None
+    config: AppConfig | None = None
+    command_processor: CommandProcessor | None = None
+    channels: list = field(default_factory=list)
+    agent_bot_manager: object = None
+    mcp_manager: object = None
+    activity_watcher: object = None
+    cron_scheduler: object = None
+    swarm_manager: object = None
+    content_watcher: object = None
+    # Runtime sets
+    custom_provider_ids: set = field(default_factory=set)
+    onboarding_triggered_flags: dict = field(default_factory=dict)
+    chat_ws_clients: set = field(default_factory=set)
+    ws_clients: set = field(default_factory=set)
+    ws_send_locks: _weakref.WeakKeyDictionary = field(default_factory=_weakref.WeakKeyDictionary)
+    # Buffered response for next connecting client
+    pending_chat_response: dict | None = None
+    # Tool confirmation: confirm_id → asyncio.Future[bool]
+    pending_confirmations: dict = field(default_factory=dict)
+    session_allowed_commands: set = field(default_factory=set)
+    # Per-channel persistent shell sessions
+    channel_shells: dict = field(default_factory=dict)
+
+
+_state = ServerState()
 
 
 async def request_tool_confirmation(tool: str, command: str, channel_id: str) -> bool:
     """Emit a confirmation request event and block until the user approves or denies."""
     # Check if this command was already approved for the whole session.
-    if command in _session_allowed_commands:
+    if command in _state.session_allowed_commands:
         return True
 
     confirm_id = str(uuid.uuid4())[:8]
     loop = asyncio.get_event_loop()
     future: asyncio.Future = loop.create_future()
-    _pending_confirmations[confirm_id] = future
+    _state.pending_confirmations[confirm_id] = future
 
-    if _event_bus:
-        await _event_bus.emit(
+    if _state.event_bus:
+        await _state.event_bus.emit(
             "tool.confirmation_needed",
             {
                 "confirm_id": confirm_id,
@@ -106,7 +109,7 @@ async def request_tool_confirmation(tool: str, command: str, channel_id: str) ->
     except asyncio.TimeoutError:
         return False
     finally:
-        _pending_confirmations.pop(confirm_id, None)
+        _state.pending_confirmations.pop(confirm_id, None)
 
 
 # ─── Custom Provider Helpers (module-level so create_web_server can call them) ──
@@ -136,13 +139,12 @@ def _save_custom_providers(providers: list[dict]) -> None:
 
 def _apply_custom_providers(providers: list[dict]) -> None:
     """Inject custom providers into the live config + env and update the tracking set."""
-    global _custom_provider_ids, _config
-    if not _config:
+    if not _state.config:
         return
     for p in providers:
         pid = p["id"]
-        _custom_provider_ids.add(pid)
-        _config.llm.providers[pid] = {
+        _state.custom_provider_ids.add(pid)
+        _state.config.llm.providers[pid] = {
             "base_url": p["base_url"],
             "default_model": p.get("default_model", ""),
         }
@@ -273,7 +275,7 @@ def create_app() -> FastAPI:
         """Basic system info flags (encryption status, etc.)."""
         return {
             "version": _get_version(),
-            "messages_encrypted": _database.messages_encrypted if _database else False,
+            "messages_encrypted": _state.database.messages_encrypted if _state.database else False,
         }
 
     @app.post("/api/system/restart")
@@ -304,13 +306,13 @@ def create_app() -> FastAPI:
     @app.get("/api/stats")
     async def get_stats():
         """Get usage statistics."""
-        if not _database:
+        if not _state.database:
             return {"error": "Database not available"}
-        stats = await _database.get_stats()
+        stats = await _state.database.get_stats()
 
         # Add LLM router stats
-        if _brain and _brain.llm_router:
-            llm_stats = _brain.llm_router.get_stats()
+        if _state.brain and _state.brain.llm_router:
+            llm_stats = _state.brain.llm_router.get_stats()
             stats.update(llm_stats)
 
         return stats
@@ -318,16 +320,16 @@ def create_app() -> FastAPI:
     @app.get("/api/stats/history")
     async def get_stats_history(days: int = 30):
         """Get daily usage history."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_usage_history(days)
+        return await _state.database.get_usage_history(days)
 
     @app.get("/api/stats/channels")
     async def get_channel_stats():
         """Get per-channel stats."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_channel_stats()
+        return await _state.database.get_channel_stats()
 
     @app.get("/api/stats/detailed")
     async def get_detailed_stats(date_from: str | None = None, date_to: str | None = None):
@@ -337,12 +339,12 @@ def create_app() -> FastAPI:
             date_from: YYYY-MM-DD (inclusive lower bound)
             date_to:   YYYY-MM-DD (inclusive upper bound)
         """
-        if not _database:
+        if not _state.database:
             return {}
-        data = await _database.get_detailed_stats(date_from=date_from, date_to=date_to)
+        data = await _state.database.get_detailed_stats(date_from=date_from, date_to=date_to)
         # Merge in live router totals (not yet persisted to DB) — only when no date filter
-        if _brain and _brain.llm_router and not date_from and not date_to:
-            snap = _brain.llm_router.get_usage_snapshot()
+        if _state.brain and _state.brain.llm_router and not date_from and not date_to:
+            snap = _state.brain.llm_router.get_usage_snapshot()
             data["live"] = snap
         return data
 
@@ -389,7 +391,7 @@ def create_app() -> FastAPI:
     @app.get("/api/tools")
     async def get_tools():
         """List available tools."""
-        if not _tool_registry:
+        if not _state.tool_registry:
             return []
         return [
             {
@@ -398,15 +400,15 @@ def create_app() -> FastAPI:
                 "risk_level": t.risk_level,
                 "parameters": t.parameters,
             }
-            for t in _tool_registry.tools.values()
+            for t in _state.tool_registry.tools.values()
         ]
 
     @app.get("/api/tools/executions")
     async def get_tool_executions(limit: int = 50):
         """Get recent tool execution logs."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_tool_executions(limit)
+        return await _state.database.get_tool_executions(limit)
 
     @app.post("/api/tool/confirm")
     async def confirm_tool(request: Request):
@@ -418,9 +420,9 @@ def create_app() -> FastAPI:
         command = data.get("command", "")
 
         if approved and always_session and command:
-            _session_allowed_commands.add(command)
+            _state.session_allowed_commands.add(command)
 
-        future = _pending_confirmations.get(confirm_id)
+        future = _state.pending_confirmations.get(confirm_id)
         if future and not future.done():
             future.set_result(approved)
         return {"ok": True}
@@ -428,14 +430,14 @@ def create_app() -> FastAPI:
     @app.patch("/api/config/security")
     async def patch_security_config(request: Request):
         """Update security settings (execution_mode)."""
-        if not _config:
+        if not _state.config:
             return {"ok": False, "error": "No config loaded"}
         data = await request.json()
         mode = data.get("execution_mode")
         if mode and mode in ("yolo", "confirmation", "auto"):
-            _config.security.execution_mode = mode
-            if _database:
-                await _database.set_setting("security.execution_mode", mode)
+            _state.config.security.execution_mode = mode
+            if _state.database:
+                await _state.database.set_setting("security.execution_mode", mode)
             return {"ok": True, "execution_mode": mode}
         return {"ok": False, "error": "Invalid execution_mode"}
 
@@ -444,9 +446,9 @@ def create_app() -> FastAPI:
     @app.get("/api/config")
     async def get_config():
         """Get current configuration (sanitized)."""
-        if not _config:
+        if not _state.config:
             return {}
-        config_dict = _config.model_dump()
+        config_dict = _state.config.model_dump()
         # Remove sensitive data
         for provider in config_dict.get("llm", {}).get("providers", {}).values():
             if "api_key" in provider:
@@ -464,28 +466,28 @@ def create_app() -> FastAPI:
     @app.get("/api/config/model")
     async def get_current_model():
         """Get current LLM model."""
-        if not _brain:
+        if not _state.brain:
             return {"model": "unknown"}
         return {
-            "model": _brain.llm_router.current_model,
-            "provider": _brain.llm_router._current_provider,
+            "model": _state.brain.llm_router.current_model,
+            "provider": _state.brain.llm_router._current_provider,
         }
 
     @app.get("/api/config/model-params")
     async def get_model_params(provider: str = "", model: str = ""):
         """Get stored params for a provider+model (or current if omitted)."""
-        if not _brain:
+        if not _state.brain:
             return {}
         if provider and model:
-            provider_cfg = _config.llm.providers.get(provider, {}) if _config else {}
+            provider_cfg = _state.config.llm.providers.get(provider, {}) if _state.config else {}
             return provider_cfg.get("model_params", {}).get(model, {})
         # Current model
-        return _brain.llm_router._get_model_params()
+        return _state.brain.llm_router._get_model_params()
 
     @app.patch("/api/config/model-params")
     async def set_model_params(request: Request):
         """Save params for a provider+model."""
-        if not _brain or not _config:
+        if not _state.brain or not _state.config:
             raise HTTPException(503, "Not ready")
         data = await request.json()
         provider = data.get("provider", "")
@@ -493,11 +495,11 @@ def create_app() -> FastAPI:
         if not provider or not model:
             raise HTTPException(400, "provider and model required")
         params = {k: data[k] for k in ("temperature", "max_tokens", "top_p") if k in data}
-        _brain.llm_router.set_model_params(provider, model, params)
+        _state.brain.llm_router.set_model_params(provider, model, params)
         # Persist to DB
-        if _database:
-            all_mp = {p: cfg.get("model_params", {}) for p, cfg in _config.llm.providers.items() if cfg.get("model_params")}
-            await _database.set_setting("llm.model_params", json.dumps(all_mp))
+        if _state.database:
+            all_mp = {p: cfg.get("model_params", {}) for p, cfg in _state.config.llm.providers.items() if cfg.get("model_params")}
+            await _state.database.set_setting("llm.model_params", json.dumps(all_mp))
         return {"ok": True}
 
     # Providers that don't need an API key
@@ -505,19 +507,19 @@ def create_app() -> FastAPI:
 
     def _is_cli_provider_id(provider_id: str) -> bool:
         """Return True if a provider_id is a CLI-type provider in config."""
-        if not _config:
+        if not _state.config:
             return False
-        return _config.llm.providers.get(provider_id, {}).get("type") == "cli"
+        return _state.config.llm.providers.get(provider_id, {}).get("type") == "cli"
 
     def _get_provider_status() -> dict[str, bool]:
         """Derive provider status dynamically from config, using {ID}_API_KEY convention."""
-        if not _config:
+        if not _state.config:
             return {}
         result: dict[str, bool] = {}
-        for provider_id in _config.llm.providers:
+        for provider_id in _state.config.llm.providers:
             if provider_id in _NO_KEY_PROVIDERS or _is_cli_provider_id(provider_id):
                 result[provider_id] = True
-            elif provider_id in _custom_provider_ids:
+            elif provider_id in _state.custom_provider_ids:
                 # Custom providers are always "configured" — user added them deliberately.
                 # For keyless local endpoints (LM Studio etc.) they just work.
                 result[provider_id] = True
@@ -549,7 +551,7 @@ def create_app() -> FastAPI:
     @app.get("/api/config/status")
     async def get_config_status():
         """Check if essential configuration is missing (e.g. LLM API Key)."""
-        if not _config or not _brain:
+        if not _state.config or not _state.brain:
             return {"needs_setup": True}
         # Check if ANY provider has a real key configured (derived dynamically from config)
         provider_statuses = _get_provider_status()
@@ -558,7 +560,7 @@ def create_app() -> FastAPI:
             ok for pid, ok in provider_statuses.items() if pid not in _NO_KEY_PROVIDERS
         )
         if not keyed_configured:
-            return {"needs_setup": True, "provider": _brain.llm_router._current_provider}
+            return {"needs_setup": True, "provider": _state.brain.llm_router._current_provider}
         return {"needs_setup": False}
 
     # Pending OAuth2 flow state (flow object keyed by state string)
@@ -640,7 +642,7 @@ def create_app() -> FastAPI:
         if not creds_path.exists():
             raise HTTPException(status_code=400, detail="Upload google_credentials.json first")
 
-        port = _config.web.port if _config else DEFAULT_WEB_PORT
+        port = _state.config.web.port if _state.config else DEFAULT_WEB_PORT
         redirect_uri = f"http://localhost:{port}/api/config/google/callback"
 
         flow = Flow.from_client_secrets_file(
@@ -756,19 +758,19 @@ def create_app() -> FastAPI:
 
             # Stop and remove ALL existing Telegram channel instances first
             # (prevents stale duplicates accumulating across wizard re-runs)
-            existing = [ch for ch in _channels if isinstance(ch, TelegramChannel)]
+            existing = [ch for ch in _state.channels if isinstance(ch, TelegramChannel)]
             for ch in existing:
                 asyncio.create_task(ch.stop())
-                _channels.remove(ch)
+                _state.channels.remove(ch)
 
             # Create a fresh channel with the new token
-            if _config and _brain and _event_bus and new_token:
-                _config.channels.telegram.enabled = True
-                _config.channels.telegram.token = new_token
+            if _state.config and _state.brain and _state.event_bus and new_token:
+                _state.config.channels.telegram.enabled = True
+                _state.config.channels.telegram.token = new_token
                 ch = TelegramChannel(
-                    _config.channels.telegram, _brain, _event_bus, _database
+                    _state.config.channels.telegram, _state.brain, _state.event_bus, _state.database
                 )
-                _channels.append(ch)
+                _state.channels.append(ch)
                 asyncio.create_task(ch.start())
                 log.info("Telegram bot (re)created with updated token")
 
@@ -843,15 +845,14 @@ def create_app() -> FastAPI:
     @app.delete("/api/config/custom_providers/{provider_id}")
     async def delete_custom_provider(provider_id: str):
         """Remove a custom provider."""
-        global _custom_provider_ids
         providers = _load_custom_providers()
         new_providers = [p for p in providers if p["id"] != provider_id]
         if len(new_providers) == len(providers):
             raise HTTPException(status_code=404, detail="Provider not found")
         _save_custom_providers(new_providers)
-        _custom_provider_ids.discard(provider_id)
-        if _config and provider_id in _config.llm.providers:
-            del _config.llm.providers[provider_id]
+        _state.custom_provider_ids.discard(provider_id)
+        if _state.config and provider_id in _state.config.llm.providers:
+            del _state.config.llm.providers[provider_id]
         env_key = f"{provider_id.upper()}_API_KEY"
         os.environ.pop(env_key, None)
         log.info("Custom provider deleted", id=provider_id)
@@ -860,32 +861,32 @@ def create_app() -> FastAPI:
     @app.get("/api/config/local_router")
     async def get_local_router_config():
         """Get LocalRouter configuration and live stats."""
-        if not _brain:
+        if not _state.brain:
             return {"enabled": False}
-        stats = _brain.local_router.get_stats()
+        stats = _state.brain.local_router.get_stats()
         return {
-            "enabled": not _brain.local_router.observation_mode,
-            "observation_mode": _brain.local_router.observation_mode,
-            "confidence_threshold": _brain.local_router.confidence_threshold,
+            "enabled": not _state.brain.local_router.observation_mode,
+            "observation_mode": _state.brain.local_router.observation_mode,
+            "confidence_threshold": _state.brain.local_router.confidence_threshold,
             **stats,
         }
 
     @app.post("/api/config/local_router")
     async def set_local_router_config(request: Request):
         """Update LocalRouter settings at runtime (no restart needed)."""
-        if not _brain:
+        if not _state.brain:
             raise HTTPException(status_code=503, detail="Brain not available")
         data = await request.json()
         if "enabled" in data:
-            _brain.local_router.observation_mode = not bool(data["enabled"])
+            _state.brain.local_router.observation_mode = not bool(data["enabled"])
         if "confidence_threshold" in data:
             val = float(data["confidence_threshold"])
             if 0.5 <= val <= 1.0:
-                _brain.local_router.confidence_threshold = val
+                _state.brain.local_router.confidence_threshold = val
         return {
             "status": "ok",
-            "enabled": not _brain.local_router.observation_mode,
-            "confidence_threshold": _brain.local_router.confidence_threshold,
+            "enabled": not _state.brain.local_router.observation_mode,
+            "confidence_threshold": _state.brain.local_router.confidence_threshold,
         }
 
     # ─── Code Resurrection API ────────────────────────────────
@@ -893,9 +894,9 @@ def create_app() -> FastAPI:
     @app.get("/api/config/resurrection_paths")
     async def get_resurrection_paths():
         """Get current Code Resurrection paths and watcher status."""
-        if not _config:
+        if not _state.config:
             return {"paths": [], "indexed_files": 0}
-        paths = list(getattr(_config, "resurrection_paths", []))
+        paths = list(getattr(_state.config, "resurrection_paths", []))
         # Read progress from state file
         indexed_count = 0
         try:
@@ -910,7 +911,7 @@ def create_app() -> FastAPI:
     @app.post("/api/config/resurrection_paths")
     async def add_resurrection_path_api(request: Request):
         """Add a path to Code Resurrection."""
-        if not _config:
+        if not _state.config:
             raise HTTPException(status_code=503, detail="Config not available")
         data = await request.json()
         new_path = data.get("path", "").strip()
@@ -920,8 +921,8 @@ def create_app() -> FastAPI:
         if not p.exists() or not p.is_dir():
             raise HTTPException(status_code=400, detail=f"Path does not exist or is not a directory: {new_path}")
         str_path = str(p)
-        if str_path not in _config.resurrection_paths:
-            _config.resurrection_paths.append(str_path)
+        if str_path not in _state.config.resurrection_paths:
+            _state.config.resurrection_paths.append(str_path)
             # Persist to YAML
             try:
                 from openacm.core.config import _find_project_root
@@ -930,24 +931,24 @@ def create_app() -> FastAPI:
                 if config_file.exists():
                     with open(config_file, "r", encoding="utf-8") as f:
                         cfg_data = yaml.safe_load(f) or {}
-                cfg_data["resurrection_paths"] = list(_config.resurrection_paths)
+                cfg_data["resurrection_paths"] = list(_state.config.resurrection_paths)
                 config_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(config_file, "w", encoding="utf-8") as f:
                     yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
             except Exception as e:
                 log.warning("Failed to persist resurrection paths", error=str(e))
-        return {"paths": list(_config.resurrection_paths)}
+        return {"paths": list(_state.config.resurrection_paths)}
 
     @app.delete("/api/config/resurrection_paths")
     async def remove_resurrection_path_api(request: Request):
         """Remove a path from Code Resurrection."""
-        if not _config:
+        if not _state.config:
             raise HTTPException(status_code=503, detail="Config not available")
         data = await request.json()
         rm_path = data.get("path", "").strip()
         if not rm_path:
             raise HTTPException(status_code=400, detail="path is required")
-        _config.resurrection_paths = [p for p in _config.resurrection_paths if p != rm_path]
+        _state.config.resurrection_paths = [p for p in _state.config.resurrection_paths if p != rm_path]
         # Persist to YAML
         try:
             from openacm.core.config import _find_project_root
@@ -956,30 +957,30 @@ def create_app() -> FastAPI:
             if config_file.exists():
                 with open(config_file, "r", encoding="utf-8") as f:
                     cfg_data = yaml.safe_load(f) or {}
-            cfg_data["resurrection_paths"] = list(_config.resurrection_paths)
+            cfg_data["resurrection_paths"] = list(_state.config.resurrection_paths)
             config_file.parent.mkdir(parents=True, exist_ok=True)
             with open(config_file, "w", encoding="utf-8") as f:
                 yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
         except Exception as e:
             log.warning("Failed to persist resurrection paths", error=str(e))
-        return {"paths": list(_config.resurrection_paths)}
+        return {"paths": list(_state.config.resurrection_paths)}
 
     @app.get("/api/config/rag_threshold")
     async def get_rag_threshold():
         """Get the current RAG relevance threshold."""
-        if not _config:
+        if not _state.config:
             return {"threshold": 0.5}
-        return {"threshold": getattr(_config.assistant, "rag_relevance_threshold", 0.5)}
+        return {"threshold": getattr(_state.config.assistant, "rag_relevance_threshold", 0.5)}
 
     @app.post("/api/config/rag_threshold")
     async def set_rag_threshold(request: Request):
         """Set the RAG relevance threshold and persist to config.yaml."""
-        if not _config:
+        if not _state.config:
             raise HTTPException(status_code=503, detail="Config not available")
         data = await request.json()
         threshold = float(data.get("threshold", 0.5))
         threshold = max(0.1, min(0.95, threshold))  # clamp to [0.1, 0.95]
-        _config.assistant.rag_relevance_threshold = threshold
+        _state.config.assistant.rag_relevance_threshold = threshold
         # Persist to yaml
         root = _find_project_root()
         config_file = root / "config" / "local.yaml"
@@ -997,26 +998,26 @@ def create_app() -> FastAPI:
     @app.get("/api/config/compaction")
     async def get_compaction_config():
         """Get conversation auto-compaction settings."""
-        if not _config:
+        if not _state.config:
             return {"compact_threshold": 25, "compact_keep_recent": 6}
         return {
-            "compact_threshold": getattr(_config.assistant, "compact_threshold", 25),
-            "compact_keep_recent": getattr(_config.assistant, "compact_keep_recent", 6),
+            "compact_threshold": getattr(_state.config.assistant, "compact_threshold", 25),
+            "compact_keep_recent": getattr(_state.config.assistant, "compact_keep_recent", 6),
         }
 
     @app.post("/api/config/compaction")
     async def set_compaction_config(request: Request):
         """Update conversation auto-compaction settings and persist to config file."""
-        if not _config:
+        if not _state.config:
             raise HTTPException(status_code=503, detail="Config not available")
         data = await request.json()
 
         if "compact_threshold" in data:
             val = int(data["compact_threshold"])
-            _config.assistant.compact_threshold = max(5, min(200, val))
+            _state.config.assistant.compact_threshold = max(5, min(200, val))
         if "compact_keep_recent" in data:
             val = int(data["compact_keep_recent"])
-            _config.assistant.compact_keep_recent = max(2, min(20, val))
+            _state.config.assistant.compact_keep_recent = max(2, min(20, val))
 
         # Persist to config file
         from openacm.core.config import _find_project_root
@@ -1028,14 +1029,14 @@ def create_app() -> FastAPI:
                 cfg_data = yaml.safe_load(f) or {}
         if "A" not in cfg_data:
             cfg_data["A"] = {}
-        cfg_data["A"]["compact_threshold"] = _config.assistant.compact_threshold
-        cfg_data["A"]["compact_keep_recent"] = _config.assistant.compact_keep_recent
+        cfg_data["A"]["compact_threshold"] = _state.config.assistant.compact_threshold
+        cfg_data["A"]["compact_keep_recent"] = _state.config.assistant.compact_keep_recent
         with open(config_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
 
         return {
-            "compact_threshold": _config.assistant.compact_threshold,
-            "compact_keep_recent": _config.assistant.compact_keep_recent,
+            "compact_threshold": _state.config.assistant.compact_threshold,
+            "compact_keep_recent": _state.config.assistant.compact_keep_recent,
         }
 
     @app.post("/api/config/verbose_channels")
@@ -1051,8 +1052,8 @@ def create_app() -> FastAPI:
         """Check if Ollama is running and return installed models."""
         import httpx
         base = DEFAULT_OLLAMA_BASE_URL
-        if _config:
-            base = _config.llm.providers.get("ollama", {}).get("base_url", base)
+        if _state.config:
+            base = _state.config.llm.providers.get("ollama", {}).get("base_url", base)
         try:
             async with httpx.AsyncClient(timeout=2.0) as client:
                 resp = await client.get(f"{base}/api/tags")
@@ -1199,11 +1200,11 @@ def create_app() -> FastAPI:
     @app.get("/api/config/available_models")
     async def get_available_models():
         """Fetch available models from the current provider's API."""
-        if not _brain or not _config:
+        if not _state.brain or not _state.config:
             return []
 
-        provider = _brain.llm_router._current_provider
-        settings = _config.llm.providers.get(provider, {})
+        provider = _state.brain.llm_router._current_provider
+        settings = _state.config.llm.providers.get(provider, {})
         base_url = settings.get("base_url")
 
 
@@ -1253,16 +1254,16 @@ def create_app() -> FastAPI:
         data = await request.json()
         model = data.get("model", "")
         provider = data.get("provider", None)
-        if model and _brain:
-            _brain.llm_router.set_model(model, provider=provider)
+        if model and _state.brain:
+            _state.brain.llm_router.set_model(model, provider=provider)
             # Persist model choice to database
-            if _database:
-                await _database.set_setting("llm.current_model", _brain.llm_router.current_model)
-                await _database.set_setting("llm.current_provider", _brain.llm_router._current_provider)
+            if _state.database:
+                await _state.database.set_setting("llm.current_model", _state.brain.llm_router.current_model)
+                await _state.database.set_setting("llm.current_provider", _state.brain.llm_router._current_provider)
             return {
                 "status": "ok",
-                "model": _brain.llm_router.current_model,
-                "provider": _brain.llm_router._current_provider,
+                "model": _state.brain.llm_router.current_model,
+                "provider": _state.brain.llm_router._current_provider,
             }
         return {"status": "error", "message": "No model specified"}
 
@@ -1271,9 +1272,9 @@ def create_app() -> FastAPI:
     @app.get("/api/conversations")
     async def get_conversations():
         """Get recent conversations."""
-        if not _database:
+        if not _state.database:
             return []
-        stats = await _database.get_channel_stats()
+        stats = await _state.database.get_channel_stats()
         # Map DB field names to what the frontend expects
         for row in stats:
             if "last_updated" in row and "last_timestamp" not in row:
@@ -1285,21 +1286,21 @@ def create_app() -> FastAPI:
     @app.get("/api/conversations/{channel_id}/{user_id}")
     async def get_conversation(channel_id: str, user_id: str, limit: int = 50):
         """Get conversation history."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_conversation(user_id, channel_id, limit)
+        return await _state.database.get_conversation(user_id, channel_id, limit)
 
     @app.delete("/api/conversations/{channel_id}/{user_id}")
     async def delete_conversation(channel_id: str, user_id: str):
         """Delete conversation history for a user/channel pair (memory + database)."""
-        if not _brain:
+        if not _state.brain:
             raise HTTPException(status_code=503, detail="Brain not available")
         # Clear in-memory cache
-        await _brain.memory.clear(user_id, channel_id)
+        await _state.brain.memory.clear(user_id, channel_id)
         # Delete from database so it doesn't reload on next access
         deleted_rows = 0
-        if _database:
-            deleted_rows = await _database.delete_conversation_messages(user_id, channel_id)
+        if _state.database:
+            deleted_rows = await _state.database.delete_conversation_messages(user_id, channel_id)
         return {"status": "ok", "deleted_rows": deleted_rows}
 
     # ─── API: Commands ────────────────────────────────────────
@@ -1307,7 +1308,7 @@ def create_app() -> FastAPI:
     @app.post("/api/chat/command")
     async def run_command(request: Request):
         """Execute a slash command via REST (used by dashboard buttons)."""
-        if not _command_processor:
+        if not _state.command_processor:
             raise HTTPException(status_code=503, detail="Command processor not available")
         data = await request.json()
         command = data.get("command", "").strip()
@@ -1321,7 +1322,7 @@ def create_app() -> FastAPI:
         cmd = parts[0]
         args = parts[1] if len(parts) > 1 else ""
 
-        result = await _command_processor.handle(cmd, args, user_id, channel_id)
+        result = await _state.command_processor.handle(cmd, args, user_id, channel_id)
         if not result.handled:
             return {"text": f"Unknown command: {cmd}", "data": None}
         return {"text": result.text, "data": result.data}
@@ -1335,14 +1336,13 @@ def create_app() -> FastAPI:
             await websocket.close(code=4001, reason="Unauthorized")
             return
         await websocket.accept()
-        global _pending_chat_response
-        _chat_ws_clients.add(websocket)
+        _state.chat_ws_clients.add(websocket)
 
         # Replay any response buffered while no client was connected
-        if _pending_chat_response is not None:
+        if _state.pending_chat_response is not None:
             try:
-                await websocket.send_json(_pending_chat_response)
-                _pending_chat_response = None
+                await websocket.send_json(_state.pending_chat_response)
+                _state.pending_chat_response = None
             except Exception:
                 pass
 
@@ -1350,17 +1350,17 @@ def create_app() -> FastAPI:
         # Note: at connect time we don't have the explicit target channel from the JSON payload, 
         # so we assume the default 'web' context.
         session_key = "web-web"
-        if not _onboarding_triggered_flags.get(session_key, False):
-            if _config and getattr(_config.assistant, "onboarding_completed", False) is False:
-                if _brain and _database:
-                    _onboarding_triggered_flags[session_key] = True
+        if not _state.onboarding_triggered_flags.get(session_key, False):
+            if _state.config and getattr(_state.config.assistant, "onboarding_completed", False) is False:
+                if _state.brain and _state.database:
+                    _state.onboarding_triggered_flags[session_key] = True
                     async def _trigger_onboarding_greeting():
                         _user = "web"
                         _channel = "web"
                         _channel_type = "web"
                         try:
                             # Determine if user is completely new or if this is a post-update flow
-                            hist = await _database.get_conversation(_user, _channel, limit=1)
+                            hist = await _state.database.get_conversation(_user, _channel, limit=1)
                             is_new_user = len(hist) == 0
 
                             if is_new_user:
@@ -1379,7 +1379,7 @@ def create_app() -> FastAPI:
                             )
                             # Let the frontend mount before sending the message
                             await asyncio.sleep(1.0)
-                            result = await _brain.llm_router.chat(
+                            result = await _state.brain.llm_router.chat(
                                 messages=[
                                     {"role": "system", "content": onboarding_system},
                                     {"role": "user", "content": user_instruction},
@@ -1418,8 +1418,8 @@ def create_app() -> FastAPI:
 
                 # Cancel request — forward a cancel keyword to the brain
                 if data.get("type") == "cancel":
-                    if _brain:
-                        asyncio.create_task(_brain.process_message(
+                    if _state.brain:
+                        asyncio.create_task(_state.brain.process_message(
                             content="cancelar",
                             user_id=target_user,
                             channel_id=target_channel,
@@ -1431,11 +1431,11 @@ def create_app() -> FastAPI:
                     continue
 
                 # Intercept slash commands before sending to brain
-                if content.startswith("/") and _command_processor:
+                if content.startswith("/") and _state.command_processor:
                     parts = content.split(maxsplit=1)
                     cmd = parts[0]
                     args = parts[1] if len(parts) > 1 else ""
-                    result = await _command_processor.handle(
+                    result = await _state.command_processor.handle(
                         cmd, args, target_user, target_channel
                     )
                     if result.handled:
@@ -1449,13 +1449,13 @@ def create_app() -> FastAPI:
                             return
                         continue
 
-                if _brain:
+                if _state.brain:
                     try:
                         # Snapshot usage counters before the call to compute per-turn delta
-                        _router = _brain.llm_router if _brain else None
+                        _router = _state.brain.llm_router if _state.brain else None
                         usage_before = _router.get_usage_snapshot() if _router else {}
 
-                        response = await _brain.process_message(
+                        response = await _state.brain.process_message(
                             content=content,
                             user_id=target_user,
                             channel_id=target_channel,
@@ -1499,7 +1499,7 @@ def create_app() -> FastAPI:
                         }
                         delivered = False
                         # Try original connection first, then any other active client
-                        for target in [websocket] + [c for c in _chat_ws_clients if c is not websocket]:
+                        for target in [websocket] + [c for c in _state.chat_ws_clients if c is not websocket]:
                             try:
                                 await _safe_ws_send(target, payload)
                                 delivered = True
@@ -1508,7 +1508,7 @@ def create_app() -> FastAPI:
                                 continue
                         if not delivered:
                             # No live client at all — buffer for the next connect
-                            _pending_chat_response = payload
+                            _state.pending_chat_response = payload
                         if target is not websocket:
                             # Original WS is dead — exit its handler
                             return
@@ -1537,7 +1537,7 @@ def create_app() -> FastAPI:
         except WebSocketDisconnect:
             pass
         finally:
-            _chat_ws_clients.discard(websocket)
+            _state.chat_ws_clients.discard(websocket)
 
     # ─── WebSocket: Terminal ─────────────────────────────────
 
@@ -1553,7 +1553,7 @@ def create_app() -> FastAPI:
         await websocket.accept()
 
         # Get or create the persistent PTY shell for this channel
-        shell = _channel_shells.get(channel_id)
+        shell = _state.channel_shells.get(channel_id)
         if not shell or not shell._alive:
             shell = ChannelShell(channel_id)
             try:
@@ -1563,7 +1563,7 @@ def create_app() -> FastAPI:
                 await websocket.send_json({"type": "error", "data": f"Failed to start shell: {e}"})
                 await websocket.close()
                 return
-            _channel_shells[channel_id] = shell
+            _state.channel_shells[channel_id] = shell
 
         shell.clients.add(websocket)
 
@@ -1584,24 +1584,24 @@ def create_app() -> FastAPI:
                     data = msg.get("data", "")
                     await shell.write(data)
                     # Track printable commands in brain history
-                    if _brain and hasattr(_brain, "terminal_history"):
+                    if _state.brain and hasattr(_state.brain, "terminal_history"):
                         cmd_clean = data.strip()
                         if cmd_clean and cmd_clean != "\n" and len(cmd_clean) > 1:
-                            if _brain.terminal_history:
-                                _brain.terminal_history[-1]["_closed"] = True
-                            _brain.terminal_history.append({
+                            if _state.brain.terminal_history:
+                                _state.brain.terminal_history[-1]["_closed"] = True
+                            _state.brain.terminal_history.append({
                                 "command": cmd_clean, "output": "", "_closed": False,
                             })
-                            if len(_brain.terminal_history) > 30:
-                                _brain.terminal_history[:] = _brain.terminal_history[-30:]
+                            if len(_state.brain.terminal_history) > 30:
+                                _state.brain.terminal_history[:] = _state.brain.terminal_history[-30:]
 
                 elif msg_type == "chat_input":
                     # Route message to the LLM brain (chat mode in terminal)
-                    if _brain:
+                    if _state.brain:
                         text = msg.get("data", "").strip()
                         if text:
                             asyncio.create_task(
-                                _brain.process_message(text, "web", channel_id, "web")
+                                _state.brain.process_message(text, "web", channel_id, "web")
                             )
 
                 elif msg_type == "signal":
@@ -1630,7 +1630,7 @@ def create_app() -> FastAPI:
             await websocket.close(code=4001, reason="Unauthorized")
             return
         await websocket.accept()
-        _ws_clients.add(websocket)
+        _state.ws_clients.add(websocket)
 
         try:
             while True:
@@ -1640,18 +1640,18 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         finally:
-            _ws_clients.discard(websocket)
+            _state.ws_clients.discard(websocket)
 
     # ─── API: Terminal ─────────────────────────────────────────
 
     @app.get("/api/terminal/history")
     async def get_terminal_history():
         """Get recent terminal command history (used by AI as context)."""
-        if not _brain:
+        if not _state.brain:
             return []
         history = [
             {"command": e.get("command", ""), "output": e.get("output", "")[:500]}
-            for e in _brain.terminal_history[-20:]
+            for e in _state.brain.terminal_history[-20:]
             if e.get("command")
         ]
         return history
@@ -1661,26 +1661,26 @@ def create_app() -> FastAPI:
     @app.get("/api/skills")
     async def get_skills():
         """Get all skills with their status."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             return []
-        skills = await _brain.skill_manager.get_all_skills()
+        skills = await _state.brain.skill_manager.get_all_skills()
         return skills
 
     @app.get("/api/skills/active")
     async def get_active_skills():
         """Get only active skills."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             return []
-        skills = await _brain.skill_manager.get_all_skills()
+        skills = await _state.brain.skill_manager.get_all_skills()
         return [s for s in skills if s.get("is_active")]
 
     @app.post("/api/skills")
     async def create_skill(request: Request):
         """Create a new skill."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             raise HTTPException(status_code=503, detail="Skill manager not available")
         data = await request.json()
-        skill = await _brain.skill_manager.create_skill(
+        skill = await _state.brain.skill_manager.create_skill(
             name=data["name"],
             description=data["description"],
             content=data["content"],
@@ -1691,9 +1691,9 @@ def create_app() -> FastAPI:
     @app.post("/api/skills/{skill_id}/toggle")
     async def toggle_skill(skill_id: int):
         """Toggle skill active status."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             raise HTTPException(status_code=503, detail="Skill manager not available")
-        result = await _brain.skill_manager.toggle_skill(skill_id)
+        result = await _state.brain.skill_manager.toggle_skill(skill_id)
         if not result:
             raise HTTPException(status_code=404, detail="Skill not found")
         return {"status": "ok", "toggled": True}
@@ -1701,10 +1701,10 @@ def create_app() -> FastAPI:
     @app.put("/api/skills/{skill_id}")
     async def update_skill(skill_id: int, request: Request):
         """Update a skill."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             raise HTTPException(status_code=503, detail="Skill manager not available")
         data = await request.json()
-        result = await _brain.skill_manager.update_skill(
+        result = await _state.brain.skill_manager.update_skill(
             skill_id,
             description=data.get("description"),
             content=data.get("content"),
@@ -1717,9 +1717,9 @@ def create_app() -> FastAPI:
     @app.delete("/api/skills/{skill_id}")
     async def delete_skill(skill_id: int):
         """Delete a custom skill."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             raise HTTPException(status_code=503, detail="Skill manager not available")
-        result = await _brain.skill_manager.delete_skill(skill_id)
+        result = await _state.brain.skill_manager.delete_skill(skill_id)
         if not result:
             raise HTTPException(status_code=404, detail="Skill not found or is built-in")
         return {"status": "ok", "deleted": True}
@@ -1727,15 +1727,15 @@ def create_app() -> FastAPI:
     @app.post("/api/skills/generate")
     async def generate_skill(request: Request):
         """Generate a new skill using LLM."""
-        if not _brain or not _brain.skill_manager:
+        if not _state.brain or not _state.brain.skill_manager:
             raise HTTPException(status_code=503, detail="Skill manager not available")
         data = await request.json()
         try:
-            skill = await _brain.skill_manager.generate_skill(
+            skill = await _state.brain.skill_manager.generate_skill(
                 name=data["name"],
                 description=data["description"],
                 use_cases=data.get("use_cases", ""),
-                llm_router=_brain.llm_router,
+                llm_router=_state.brain.llm_router,
             )
             return skill
         except Exception as e:
@@ -1753,21 +1753,21 @@ def create_app() -> FastAPI:
     @app.get("/api/agents")
     async def get_agents():
         """List all agents."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        agents = await _database.get_all_agents()
+        agents = await _state.database.get_all_agents()
         return [_agent_public(a) for a in agents]
 
     @app.post("/api/agents")
     async def create_agent(request: Request):
         """Create a new agent."""
         import secrets as _secrets
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
         if not data.get("name") or not data.get("system_prompt"):
             raise HTTPException(status_code=400, detail="name and system_prompt required")
-        agent_id = await _database.create_agent(
+        agent_id = await _state.database.create_agent(
             name=data["name"],
             description=data.get("description", ""),
             system_prompt=data["system_prompt"],
@@ -1775,45 +1775,45 @@ def create_app() -> FastAPI:
             webhook_secret=_secrets.token_urlsafe(32),
             telegram_token=data.get("telegram_token", ""),
         )
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         # Start Telegram bot if token provided
-        if _agent_bot_manager and agent.get("telegram_token", "").strip():
-            asyncio.create_task(_agent_bot_manager.start_bot(agent))
+        if _state.agent_bot_manager and agent.get("telegram_token", "").strip():
+            asyncio.create_task(_state.agent_bot_manager.start_bot(agent))
         return agent  # include secret on creation so user can copy it
 
     @app.get("/api/agents/{agent_id}")
     async def get_agent(agent_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         return _agent_public(agent)
 
     @app.put("/api/agents/{agent_id}")
     async def update_agent(agent_id: int, request: Request):
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
         allowed_fields = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
-        ok = await _database.update_agent(agent_id, **kwargs)
+        ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         # Restart bot if telegram_token was part of the update
-        if _agent_bot_manager and ("telegram_token" in kwargs or "is_active" in kwargs):
-            asyncio.create_task(_agent_bot_manager.restart_bot(agent_id))
+        if _state.agent_bot_manager and ("telegram_token" in kwargs or "is_active" in kwargs):
+            asyncio.create_task(_state.agent_bot_manager.restart_bot(agent_id))
         return _agent_public(agent)
 
     @app.delete("/api/agents/{agent_id}")
     async def delete_agent(agent_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         # Stop bot before deleting
-        if _agent_bot_manager:
-            asyncio.create_task(_agent_bot_manager.stop_bot(agent_id))
-        ok = await _database.delete_agent(agent_id)
+        if _state.agent_bot_manager:
+            asyncio.create_task(_state.agent_bot_manager.stop_bot(agent_id))
+        ok = await _state.database.delete_agent(agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok", "deleted": True}
@@ -1821,9 +1821,9 @@ def create_app() -> FastAPI:
     @app.get("/api/agents/{agent_id}/secret")
     async def get_agent_secret(agent_id: int):
         """Return the webhook secret (used once after creation)."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {"webhook_secret": agent["webhook_secret"]}
@@ -1836,10 +1836,10 @@ def create_app() -> FastAPI:
         Required header: X-Agent-Secret: <webhook_secret>
         Body: { "message": "...", "user_id": "anonymous" }
         """
-        if not _database or not _brain:
+        if not _state.database or not _state.brain:
             raise HTTPException(status_code=503, detail="Service not ready")
 
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         if not agent.get("is_active"):
@@ -1858,10 +1858,10 @@ def create_app() -> FastAPI:
 
         from openacm.core.agent_runner import AgentRunner
         runner = AgentRunner(
-            llm_router=_brain.llm_router,
-            tool_registry=_brain.tool_registry,
-            memory=_brain.memory,
-            event_bus=_brain.event_bus,
+            llm_router=_state.brain.llm_router,
+            tool_registry=_state.brain.tool_registry,
+            memory=_state.brain.memory,
+            event_bus=_state.brain.event_bus,
         )
         response = await runner.run(agent=agent, message=message, user_id=user_id)
         return {"response": response, "agent": agent["name"]}
@@ -1875,7 +1875,7 @@ def create_app() -> FastAPI:
           - description: str  (what the agent should do)
           - file: optional PDF / TXT / MD document for extra context
         """
-        if not _brain:
+        if not _state.brain:
             raise HTTPException(status_code=503, detail="Service not ready")
 
         from fastapi import Form, UploadFile, File as FastAPIFile
@@ -1914,7 +1914,7 @@ def create_app() -> FastAPI:
                     doc_parts.append(f"[{fname}]\n{raw.decode('utf-8', errors='replace')}")
             if doc_parts:
                 combined = "\n\n---\n\n".join(doc_parts)
-                doc_text = combined[:TRUNCATE_RAG_CONTEXT_CHARS]
+                doc_text = truncate(combined, TRUNCATE_RAG_CONTEXT_CHARS)
         else:
             data = await request.json()
             description = str(data.get("description", "")).strip()
@@ -1938,7 +1938,7 @@ def create_app() -> FastAPI:
         )
 
         try:
-            response = await _brain.llm_router.chat(
+            response = await _state.brain.llm_router.chat(
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant that generates AI agent configurations. Always respond with valid JSON only."},
                     {"role": "user", "content": generation_prompt},
@@ -1964,9 +1964,9 @@ def create_app() -> FastAPI:
     @app.post("/api/agents/{agent_id}/test")
     async def test_agent(agent_id: int, request: Request):
         """Test an agent from the UI (no secret needed, uses dashboard auth)."""
-        if not _database or not _brain:
+        if not _state.database or not _state.brain:
             raise HTTPException(status_code=503, detail="Service not ready")
-        agent = await _database.get_agent(agent_id)
+        agent = await _state.database.get_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         data = await request.json()
@@ -1976,10 +1976,10 @@ def create_app() -> FastAPI:
 
         from openacm.core.agent_runner import AgentRunner
         runner = AgentRunner(
-            llm_router=_brain.llm_router,
-            tool_registry=_brain.tool_registry,
-            memory=_brain.memory,
-            event_bus=_brain.event_bus,
+            llm_router=_state.brain.llm_router,
+            tool_registry=_state.brain.tool_registry,
+            memory=_state.brain.memory,
+            event_bus=_state.brain.event_bus,
         )
         response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
         return {"response": response}
@@ -1989,16 +1989,16 @@ def create_app() -> FastAPI:
     @app.get("/api/debug/traces")
     async def get_brain_traces(limit: int = 20):
         """Return the last N agentic loop traces for debugging."""
-        if not _brain:
+        if not _state.brain:
             return []
-        traces = list(reversed(_brain._traces[-limit:]))
+        traces = list(reversed(_state.brain._traces[-limit:]))
         return traces
 
     @app.delete("/api/debug/traces")
     async def clear_brain_traces():
         """Clear all stored traces."""
-        if _brain:
-            _brain._traces.clear()
+        if _state.brain:
+            _state.brain._traces.clear()
         return {"status": "ok"}
 
     # ─── API: MCP Servers ────────────────────────────────────
@@ -2006,21 +2006,21 @@ def create_app() -> FastAPI:
     @app.get("/api/mcp/servers")
     async def get_mcp_servers():
         """List all configured MCP servers with their connection status."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             return []
-        return _mcp_manager.get_status()
+        return _state.mcp_manager.get_status()
 
     @app.post("/api/mcp/servers")
     async def add_mcp_server(request: Request):
         """Add (or replace) an MCP server configuration."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             raise HTTPException(status_code=503, detail="MCP manager not available")
         data = await request.json()
         name = data.get("name", "").strip()
         if not name:
             raise HTTPException(status_code=400, detail="name is required")
         try:
-            cfg = _mcp_manager.add_server(data)
+            cfg = _state.mcp_manager.add_server(data)
             return {"status": "ok", **cfg.to_dict()}
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2028,11 +2028,11 @@ def create_app() -> FastAPI:
     @app.put("/api/mcp/servers/{server_name}")
     async def update_mcp_server(server_name: str, request: Request):
         """Update an MCP server configuration."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             raise HTTPException(status_code=503, detail="MCP manager not available")
         data = await request.json()
         try:
-            cfg = _mcp_manager.update_server(server_name, data)
+            cfg = _state.mcp_manager.update_server(server_name, data)
             return {"status": "ok", **cfg.to_dict()}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
@@ -2040,19 +2040,19 @@ def create_app() -> FastAPI:
     @app.delete("/api/mcp/servers/{server_name}")
     async def delete_mcp_server(server_name: str):
         """Remove an MCP server configuration (disconnects if active)."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             raise HTTPException(status_code=503, detail="MCP manager not available")
-        _mcp_manager.remove_server(server_name)
+        _state.mcp_manager.remove_server(server_name)
         return {"status": "ok", "deleted": server_name}
 
     @app.post("/api/mcp/servers/{server_name}/connect")
     async def connect_mcp_server(server_name: str):
         """Connect to an MCP server."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             raise HTTPException(status_code=503, detail="MCP manager not available")
-        if server_name not in _mcp_manager.servers:
+        if server_name not in _state.mcp_manager.servers:
             raise HTTPException(status_code=404, detail="Server not found")
-        conn = await _mcp_manager.connect(server_name)
+        conn = await _state.mcp_manager.connect(server_name)
         return {
             "status": "ok" if conn.connected else "error",
             "connected": conn.connected,
@@ -2063,9 +2063,9 @@ def create_app() -> FastAPI:
     @app.post("/api/mcp/servers/{server_name}/disconnect")
     async def disconnect_mcp_server(server_name: str):
         """Disconnect from an MCP server."""
-        if not _mcp_manager:
+        if not _state.mcp_manager:
             raise HTTPException(status_code=503, detail="MCP manager not available")
-        await _mcp_manager.disconnect(server_name)
+        await _state.mcp_manager.disconnect(server_name)
         return {"status": "ok", "disconnected": server_name}
 
     # ─── API: Routines ───────────────────────────────────────
@@ -2084,23 +2084,23 @@ def create_app() -> FastAPI:
     @app.get("/api/routines")
     async def get_routines():
         """List all detected routines."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_all_routines()
+        return await _state.database.get_all_routines()
 
     @app.post("/api/routines/{routine_id}/execute")
     async def execute_routine(routine_id: int):
         """Execute a routine (launch its apps)."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        routine = await _database.get_routine(routine_id)
+        routine = await _state.database.get_routine(routine_id)
         if not routine:
             raise HTTPException(status_code=404, detail="Routine not found")
         try:
             from openacm.watchers.routine_executor import RoutineExecutor
             executor = RoutineExecutor()
             results = await executor.execute(routine)
-            await _database.record_routine_run(routine_id)
+            await _state.database.record_routine_run(routine_id)
             return {"status": "ok", "results": results}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
@@ -2109,10 +2109,10 @@ def create_app() -> FastAPI:
     async def update_routine(routine_id: int, request: Request):
         """Update a routine (name, status, trigger_data, apps).
         Auto-creates or deletes a cron job when the status changes to/from active."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
 
-        current = await _database.get_routine(routine_id)
+        current = await _state.database.get_routine(routine_id)
         if not current:
             raise HTTPException(status_code=404, detail="Routine not found")
 
@@ -2124,25 +2124,25 @@ def create_app() -> FastAPI:
         if "apps" in kwargs and isinstance(kwargs["apps"], list):
             kwargs["apps"] = json.dumps(kwargs["apps"])
 
-        ok = await _database.update_routine(routine_id, **kwargs)
+        ok = await _state.database.update_routine(routine_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Routine not found")
 
-        updated = await _database.get_routine(routine_id)
+        updated = await _state.database.get_routine(routine_id)
 
         # ── Auto cron management on activate / deactivate ─────────────────────
         new_status = kwargs.get("status", current.get("status"))
         old_status = current.get("status")
 
-        if _cron_scheduler and new_status != old_status:
+        if _state.cron_scheduler and new_status != old_status:
             if new_status in ("inactive", "pending") and old_status == "active":
                 # Delete the cron job that was driving this routine
                 existing_cron_id = current.get("cron_job_id")
                 if existing_cron_id:
-                    await _database.delete_cron_job(int(existing_cron_id))
-                    await _database.update_routine(routine_id, cron_job_id=None)
-                    await _cron_scheduler._sync_jobs()
-                    updated = await _database.get_routine(routine_id)
+                    await _state.database.delete_cron_job(int(existing_cron_id))
+                    await _state.database.update_routine(routine_id, cron_job_id=None)
+                    await _state.cron_scheduler._sync_jobs()
+                    updated = await _state.database.get_routine(routine_id)
 
             elif new_status == "active":
                 # Create a cron job if the trigger is time-based
@@ -2151,7 +2151,7 @@ def create_app() -> FastAPI:
                     try:
                         trigger_data = json.loads(updated.get("trigger_data") or "{}")
                         cron_expr = _routine_cron_expr(trigger_data)
-                        job = await _database.create_cron_job(
+                        job = await _state.database.create_cron_job(
                             name=f"Rutina: {updated.get('name', 'Rutina')}",
                             description=f"Ejecuta automáticamente la rutina #{routine_id}",
                             cron_expr=cron_expr,
@@ -2160,9 +2160,9 @@ def create_app() -> FastAPI:
                             is_enabled=True,
                         )
                         if job:
-                            await _database.update_routine(routine_id, cron_job_id=job["id"])
-                            await _cron_scheduler._sync_jobs()
-                            updated = await _database.get_routine(routine_id)
+                            await _state.database.update_routine(routine_id, cron_job_id=job["id"])
+                            await _state.cron_scheduler._sync_jobs()
+                            updated = await _state.database.get_routine(routine_id)
                     except Exception as _exc:
                         log.warning("Failed to create cron job for routine", error=str(_exc))
 
@@ -2171,9 +2171,9 @@ def create_app() -> FastAPI:
     @app.delete("/api/routines/{routine_id}")
     async def delete_routine(routine_id: int):
         """Delete a routine."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        ok = await _database.delete_routine(routine_id)
+        ok = await _state.database.delete_routine(routine_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Routine not found")
         return {"status": "ok", "deleted": routine_id}
@@ -2181,12 +2181,12 @@ def create_app() -> FastAPI:
     @app.post("/api/routines/analyze")
     async def analyze_routines():
         """Trigger pattern analysis and return newly created routines."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         try:
             from openacm.watchers.pattern_analyzer import PatternAnalyzer
-            llm = _brain.llm_router if _brain else None
-            analyzer = PatternAnalyzer(_database, llm_router=llm)
+            llm = _state.brain.llm_router if _state.brain else None
+            analyzer = PatternAnalyzer(_state.database, llm_router=llm)
             new_routines = await analyzer.analyze()
             return {"status": "ok", "new_routines": len(new_routines), "routines": new_routines}
         except Exception as exc:
@@ -2198,11 +2198,11 @@ def create_app() -> FastAPI:
     @app.get("/api/activity/stats")
     async def get_activity_stats():
         """Return per-app usage stats, total hours tracked, and session count."""
-        if not _database:
+        if not _state.database:
             return {"apps": [], "total_hours": 0, "session_count": 0}
-        app_stats = await _database.get_app_stats()
-        total_hours = await _database.get_activity_hours()
-        session_count = await _database.get_activity_count()
+        app_stats = await _state.database.get_app_stats()
+        total_hours = await _state.database.get_activity_hours()
+        session_count = await _state.database.get_activity_count()
         return {
             "apps": app_stats,
             "total_hours": round(total_hours, 2),
@@ -2212,23 +2212,23 @@ def create_app() -> FastAPI:
     @app.get("/api/activity/sessions")
     async def get_recent_sessions(limit: int = 30):
         """Return recent app focus sessions."""
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_recent_app_sessions(limit)
+        return await _state.database.get_recent_app_sessions(limit)
 
     @app.get("/api/watcher/status")
     async def get_watcher_status():
         """Return activity watcher running status and encryption info."""
-        encrypted = _database._enc is not None if _database else False
-        key_path = _database._enc.key_path if (encrypted and _database) else None
-        if _activity_watcher is None:
+        encrypted = _state.database._enc is not None if _state.database else False
+        key_path = _state.database._enc.key_path if (encrypted and _state.database) else None
+        if _state.activity_watcher is None:
             return {"running": False, "current_app": None, "sessions_recorded": 0,
                     "encrypted": encrypted, "key_path": key_path}
         return {
-            "running": _activity_watcher.is_running,
-            "current_app": _activity_watcher.current_app,
-            "current_title": _activity_watcher.current_title,
-            "sessions_recorded": _activity_watcher.sessions_recorded,
+            "running": _state.activity_watcher.is_running,
+            "current_app": _state.activity_watcher.current_app,
+            "current_title": _state.activity_watcher.current_title,
+            "sessions_recorded": _state.activity_watcher.sessions_recorded,
             "encrypted": encrypted,
             "key_path": key_path,
         }
@@ -2246,15 +2246,15 @@ def create_app() -> FastAPI:
     @app.get("/api/cron/jobs")
     async def list_cron_jobs():
         """List all cron jobs."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        jobs = await _database.get_all_cron_jobs()
+        jobs = await _state.database.get_all_cron_jobs()
         return {"jobs": jobs}
 
     @app.post("/api/cron/jobs")
     async def create_cron_job(request: Request):
         """Create a new cron job."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
         name = data.get("name", "").strip()
@@ -2270,7 +2270,7 @@ def create_app() -> FastAPI:
         from openacm.watchers.cron_scheduler import compute_next_run
         next_run = compute_next_run(cron_expr)
 
-        job = await _database.create_cron_job(
+        job = await _state.database.create_cron_job(
             name=name,
             description=data.get("description", ""),
             cron_expr=cron_expr,
@@ -2280,16 +2280,16 @@ def create_app() -> FastAPI:
             next_run=next_run,
         )
         # Reload scheduler in-memory jobs
-        if _cron_scheduler:
-            await _cron_scheduler._sync_jobs()
+        if _state.cron_scheduler:
+            await _state.cron_scheduler._sync_jobs()
         return job
 
     @app.get("/api/cron/jobs/{job_id}")
     async def get_cron_job(job_id: int):
         """Get a single cron job."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        job = await _database.get_cron_job(job_id)
+        job = await _state.database.get_cron_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Cron job not found")
         return job
@@ -2297,9 +2297,9 @@ def create_app() -> FastAPI:
     @app.put("/api/cron/jobs/{job_id}")
     async def update_cron_job(job_id: int, request: Request):
         """Update a cron job."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        existing = await _database.get_cron_job(job_id)
+        existing = await _state.database.get_cron_job(job_id)
         if not existing:
             raise HTTPException(status_code=404, detail="Cron job not found")
         data = await request.json()
@@ -2314,64 +2314,64 @@ def create_app() -> FastAPI:
         if "action_type" in updates and updates["action_type"] not in _VALID_ACTION_TYPES:
             raise HTTPException(status_code=400, detail=f"action_type must be one of {_VALID_ACTION_TYPES}")
 
-        await _database.update_cron_job(job_id, **updates)
-        if _cron_scheduler:
-            await _cron_scheduler._sync_jobs()
-        return await _database.get_cron_job(job_id)
+        await _state.database.update_cron_job(job_id, **updates)
+        if _state.cron_scheduler:
+            await _state.cron_scheduler._sync_jobs()
+        return await _state.database.get_cron_job(job_id)
 
     @app.delete("/api/cron/jobs/{job_id}")
     async def delete_cron_job(job_id: int):
         """Delete a cron job."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        ok = await _database.delete_cron_job(job_id)
+        ok = await _state.database.delete_cron_job(job_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Cron job not found")
-        if _cron_scheduler:
-            await _cron_scheduler._sync_jobs()
+        if _state.cron_scheduler:
+            await _state.cron_scheduler._sync_jobs()
         return {"status": "ok", "deleted": job_id}
 
     @app.post("/api/cron/jobs/{job_id}/trigger")
     async def trigger_cron_job(job_id: int):
         """Immediately trigger a cron job."""
-        if not _cron_scheduler:
+        if not _state.cron_scheduler:
             raise HTTPException(status_code=503, detail="Cron scheduler not running")
-        result = await _cron_scheduler.trigger_now(job_id)
+        result = await _state.cron_scheduler.trigger_now(job_id)
         return result
 
     @app.post("/api/cron/jobs/{job_id}/toggle")
     async def toggle_cron_job(job_id: int):
         """Toggle a cron job enabled/disabled."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        job = await _database.get_cron_job(job_id)
+        job = await _state.database.get_cron_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Cron job not found")
         new_state = not bool(job.get("is_enabled", 1))
-        await _database.update_cron_job(job_id, is_enabled=new_state)
-        if _cron_scheduler:
-            await _cron_scheduler._sync_jobs()
+        await _state.database.update_cron_job(job_id, is_enabled=new_state)
+        if _state.cron_scheduler:
+            await _state.cron_scheduler._sync_jobs()
         return {"status": "ok", "is_enabled": new_state}
 
     @app.get("/api/cron/runs")
     async def get_cron_runs(job_id: int | None = None, limit: int = 50):
         """Get cron job run history."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        runs = await _database.get_cron_runs(job_id=job_id, limit=min(limit, 200))
+        runs = await _state.database.get_cron_runs(job_id=job_id, limit=min(limit, 200))
         return {"runs": runs}
 
     @app.get("/api/cron/status")
     async def get_cron_status():
         """Return scheduler running status and job summary."""
-        if _cron_scheduler is None:
+        if _state.cron_scheduler is None:
             return {"running": False, "job_count": 0, "enabled_count": 0,
                     "next_job_name": None, "next_job_at": None}
-        jobs = list(_cron_scheduler._jobs.values())
+        jobs = list(_state.cron_scheduler._jobs.values())
         enabled = [j for j in jobs if j.is_enabled]
-        next_job = _cron_scheduler.next_due_job()
+        next_job = _state.cron_scheduler.next_due_job()
         return {
-            "running": _cron_scheduler.is_running,
+            "running": _state.cron_scheduler.is_running,
             "job_count": len(jobs),
             "enabled_count": len(enabled),
             "next_job_name": next_job.name if next_job else None,
@@ -2382,14 +2382,14 @@ def create_app() -> FastAPI:
 
     @app.get("/api/swarms")
     async def list_swarms():
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.list_swarms()
+        return await _state.database.list_swarms()
 
     @app.post("/api/swarms")
     async def create_swarm(request: Request):
         """Create a swarm from multipart form data (name, goal, global_model, files)."""
-        if not _swarm_manager:
+        if not _state.swarm_manager:
             raise HTTPException(503, "Swarm manager not initialized")
         form = await request.form()
         name = str(form.get("name", "New Swarm"))
@@ -2410,7 +2410,7 @@ def create_app() -> FastAPI:
                     content = "(binary file — skipped)"
                 file_contents.append({"filename": field_value.filename or field_name, "content": content})
 
-        swarm = await _swarm_manager.create_swarm(
+        swarm = await _state.swarm_manager.create_swarm(
             name=name,
             goal=goal,
             file_contents=file_contents or None,
@@ -2420,100 +2420,100 @@ def create_app() -> FastAPI:
 
     @app.get("/api/swarms/{swarm_id}")
     async def get_swarm(swarm_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        swarm = await _database.get_swarm(swarm_id)
+        swarm = await _state.database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
-        workers = await _database.get_swarm_workers(swarm_id)
-        tasks = await _database.get_swarm_tasks(swarm_id)
+        workers = await _state.database.get_swarm_workers(swarm_id)
+        tasks = await _state.database.get_swarm_tasks(swarm_id)
         return {**swarm, "workers": workers, "tasks": tasks}
 
     @app.delete("/api/swarms/{swarm_id}")
     async def delete_swarm(swarm_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        ok = await _database.delete_swarm(swarm_id)
+        ok = await _state.database.delete_swarm(swarm_id)
         if not ok:
             raise HTTPException(404, "Swarm not found")
         return {"ok": True}
 
     @app.post("/api/swarms/{swarm_id}/plan")
     async def plan_swarm(swarm_id: int):
-        if not _swarm_manager:
+        if not _state.swarm_manager:
             raise HTTPException(503, "Swarm manager not initialized")
-        swarm = await _database.get_swarm(swarm_id)
+        swarm = await _state.database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
         try:
-            result = await _swarm_manager.plan_swarm(swarm_id)
+            result = await _state.swarm_manager.plan_swarm(swarm_id)
         except Exception as exc:
             raise HTTPException(500, detail=str(exc)) from exc
-        workers = await _database.get_swarm_workers(swarm_id)
-        tasks = await _database.get_swarm_tasks(swarm_id)
+        workers = await _state.database.get_swarm_workers(swarm_id)
+        tasks = await _state.database.get_swarm_tasks(swarm_id)
         return {**result, "workers": workers, "tasks": tasks}
 
     @app.post("/api/swarms/{swarm_id}/start")
     async def start_swarm(swarm_id: int):
-        if not _swarm_manager:
+        if not _state.swarm_manager:
             raise HTTPException(503, "Swarm manager not initialized")
-        swarm = await _database.get_swarm(swarm_id)
+        swarm = await _state.database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
         if swarm["status"] not in ("planned", "paused"):
             raise HTTPException(400, f"Cannot start swarm in '{swarm['status']}' status. Plan it first.")
-        await _swarm_manager.start_swarm(swarm_id)
+        await _state.swarm_manager.start_swarm(swarm_id)
         return {"ok": True, "status": "running"}
 
     @app.post("/api/swarms/{swarm_id}/stop")
     async def stop_swarm(swarm_id: int):
-        if not _swarm_manager:
+        if not _state.swarm_manager:
             raise HTTPException(503, "Swarm manager not initialized")
-        await _swarm_manager.stop_swarm(swarm_id)
+        await _state.swarm_manager.stop_swarm(swarm_id)
         return {"ok": True, "status": "paused"}
 
     @app.put("/api/swarms/{swarm_id}/workers/{worker_id}")
     async def update_swarm_worker(swarm_id: int, worker_id: int, request: Request):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
         body = await request.json()
         allowed = {"name", "role", "description", "system_prompt", "model", "allowed_tools"}
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
             raise HTTPException(400, "No valid fields to update")
-        await _database.update_swarm_worker(worker_id, **updates)
-        workers = await _database.get_swarm_workers(swarm_id)
+        await _state.database.update_swarm_worker(worker_id, **updates)
+        workers = await _state.database.get_swarm_workers(swarm_id)
         return next((w for w in workers if w["id"] == worker_id), {})
 
     @app.get("/api/swarms/{swarm_id}/messages")
     async def get_swarm_messages(swarm_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        return await _database.get_swarm_messages(swarm_id)
+        return await _state.database.get_swarm_messages(swarm_id)
 
     @app.post("/api/swarms/{swarm_id}/complete")
     async def complete_swarm(swarm_id: int):
         """Mark a swarm as completed (user-initiated)."""
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        swarm = await _database.get_swarm(swarm_id)
+        swarm = await _state.database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
-        await _database.update_swarm(swarm_id, status="completed")
-        if _swarm_manager:
-            await _swarm_manager._emit_swarm_event(swarm_id, "completed", {"manual": True})
+        await _state.database.update_swarm(swarm_id, status="completed")
+        if _state.swarm_manager:
+            await _state.swarm_manager._emit_swarm_event(swarm_id, "completed", {"manual": True})
         return {"ok": True, "status": "completed"}
 
     @app.post("/api/swarms/{swarm_id}/message")
     async def post_swarm_message(swarm_id: int, request: Request):
         """Send a user message to the swarm (feedback, new instructions, etc.)."""
-        if not _swarm_manager:
+        if not _state.swarm_manager:
             raise HTTPException(503, "Swarm manager not initialized")
         body = await request.json()
         message = str(body.get("message", "")).strip()
         if not message:
             raise HTTPException(400, "message is required")
-        result = await _swarm_manager.send_user_message(swarm_id, message)
+        result = await _state.swarm_manager.send_user_message(swarm_id, message)
         return {"ok": True, "result": result}
 
     @app.websocket("/ws/swarms/{swarm_id}")
@@ -2525,10 +2525,10 @@ def create_app() -> FastAPI:
         await websocket.accept()
         try:
             while True:
-                swarm = await _database.get_swarm(swarm_id) if _database else None
-                workers = await _database.get_swarm_workers(swarm_id) if _database else []
-                tasks = await _database.get_swarm_tasks(swarm_id) if _database else []
-                messages = await _database.get_swarm_messages(swarm_id) if _database else []
+                swarm = await _state.database.get_swarm(swarm_id) if _state.database else None
+                workers = await _state.database.get_swarm_workers(swarm_id) if _state.database else []
+                tasks = await _state.database.get_swarm_tasks(swarm_id) if _state.database else []
+                messages = await _state.database.get_swarm_messages(swarm_id) if _state.database else []
                 await websocket.send_json({
                     "swarm": swarm,
                     "workers": workers,
@@ -2545,48 +2545,48 @@ def create_app() -> FastAPI:
 
     @app.get("/api/content/queue")
     async def list_content_queue(status: str = "", limit: int = 50):
-        if not _database:
+        if not _state.database:
             return []
-        items = await _database.get_content_queue(status=status or None, limit=limit)
-        pending_count = await _database.count_pending_content()
+        items = await _state.database.get_content_queue(status=status or None, limit=limit)
+        pending_count = await _state.database.count_pending_content()
         return {"items": items, "pending_count": pending_count}
 
     @app.post("/api/content/queue/{item_id}/approve")
     async def approve_content(item_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        item = await _database.get_content_item(item_id)
+        item = await _state.database.get_content_item(item_id)
         if not item:
             raise HTTPException(404, "Content item not found")
-        await _database.update_content_status(item_id, "approved")
+        await _state.database.update_content_status(item_id, "approved")
         await broadcast_event("content:approved", {"item_id": item_id})
         return {"ok": True, "status": "approved"}
 
     @app.post("/api/content/queue/{item_id}/reject")
     async def reject_content(item_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        item = await _database.get_content_item(item_id)
+        item = await _state.database.get_content_item(item_id)
         if not item:
             raise HTTPException(404, "Content item not found")
-        await _database.update_content_status(item_id, "rejected")
+        await _state.database.update_content_status(item_id, "rejected")
         await broadcast_event("content:rejected", {"item_id": item_id})
         return {"ok": True, "status": "rejected"}
 
     @app.delete("/api/content/queue/{item_id}")
     async def delete_content_item(item_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        ok = await _database.delete_content_item(item_id)
+        ok = await _state.database.delete_content_item(item_id)
         if not ok:
             raise HTTPException(404, "Content item not found")
         return {"ok": True}
 
     @app.get("/api/content/pending-count")
     async def content_pending_count():
-        if not _database:
+        if not _state.database:
             return {"count": 0}
-        count = await _database.count_pending_content()
+        count = await _state.database.count_pending_content()
         return {"count": count}
 
     @app.get("/api/content/sessions")
@@ -2614,32 +2614,32 @@ def create_app() -> FastAPI:
 
     @app.get("/api/swarm-templates")
     async def list_swarm_templates():
-        if not _database:
+        if not _state.database:
             return []
-        return await _database.get_all_swarm_templates()
+        return await _state.database.get_all_swarm_templates()
 
     @app.post("/api/swarm-templates")
     async def create_swarm_template(request: Request):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
         body = await request.json()
         if not body.get("name") or not body.get("goal_template"):
             raise HTTPException(400, "name and goal_template are required")
-        tmpl_id = await _database.create_swarm_template(
+        tmpl_id = await _state.database.create_swarm_template(
             name=body["name"],
             description=body.get("description", ""),
             goal_template=body["goal_template"],
             workers=json.dumps(body.get("workers", [])),
             global_model=body.get("global_model") or None,
         )
-        tmpl = await _database.get_swarm_template(tmpl_id)
+        tmpl = await _state.database.get_swarm_template(tmpl_id)
         return tmpl
 
     @app.delete("/api/swarm-templates/{tmpl_id}")
     async def delete_swarm_template(tmpl_id: int):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        ok = await _database.delete_swarm_template(tmpl_id)
+        ok = await _state.database.delete_swarm_template(tmpl_id)
         if not ok:
             raise HTTPException(404, "Template not found")
         return {"ok": True}
@@ -2648,30 +2648,30 @@ def create_app() -> FastAPI:
 
     @app.get("/api/social/credentials")
     async def list_social_credentials():
-        if not _database:
+        if not _state.database:
             return []
         # Return without the raw credential values (just status)
-        return await _database.get_all_social_credentials()
+        return await _state.database.get_all_social_credentials()
 
     @app.post("/api/social/credentials")
     async def save_social_credentials(request: Request):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
         body = await request.json()
         platform = body.get("platform", "")
         credentials = body.get("credentials", {})
         if platform not in ("facebook", "reddit"):
             raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
-        await _database.save_social_credentials(platform, json.dumps(credentials))
+        await _state.database.save_social_credentials(platform, json.dumps(credentials))
         return {"ok": True, "platform": platform}
 
     @app.post("/api/social/credentials/{platform}/verify")
     async def verify_social_credentials(platform: str):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
         if platform not in ("facebook", "reddit"):
             raise HTTPException(400, "platform must be 'facebook' or 'reddit'")
-        row = await _database.get_social_credentials(platform)
+        row = await _state.database.get_social_credentials(platform)
         if not row:
             raise HTTPException(404, f"No credentials saved for {platform}")
         creds = json.loads(row["credentials"])
@@ -2686,7 +2686,7 @@ def create_app() -> FastAPI:
                     r = await client.get("https://graph.facebook.com/me", params={"access_token": token})
                 if r.status_code == 200:
                     name = r.json().get("name", "?")
-                    await _database.save_social_credentials(platform, json.dumps(creds), verified=True)
+                    await _state.database.save_social_credentials(platform, json.dumps(creds), verified=True)
                     return {"ok": True, "message": f"Authenticated as '{name}'"}
                 err = r.json().get("error", {}).get("message", r.text[:200])
                 return {"ok": False, "message": err}
@@ -2704,7 +2704,7 @@ def create_app() -> FastAPI:
                     user_agent=creds.get("user_agent", "OpenACM/1.0"),
                 )
                 me = reddit.user.me()
-                await _database.save_social_credentials(platform, json.dumps(creds), verified=True)
+                await _state.database.save_social_credentials(platform, json.dumps(creds), verified=True)
                 return {"ok": True, "message": f"Authenticated as u/{me.name}"}
             except ImportError:
                 return {"ok": False, "message": "praw not installed — run: pip install praw"}
@@ -2713,9 +2713,9 @@ def create_app() -> FastAPI:
 
     @app.delete("/api/social/credentials/{platform}")
     async def delete_social_credentials(platform: str):
-        if not _database:
+        if not _state.database:
             raise HTTPException(503, "Database not available")
-        ok = await _database.delete_social_credentials(platform)
+        ok = await _state.database.delete_social_credentials(platform)
         if not ok:
             raise HTTPException(404, f"No credentials for {platform}")
         return {"ok": True}
@@ -2756,11 +2756,11 @@ def create_app() -> FastAPI:
 
 async def _safe_ws_send(client: WebSocket, message: dict) -> bool:
     """Send a JSON message to a WebSocket client, serializing writes with a per-connection lock."""
-    lock = _ws_send_locks.get(client)
+    lock = _state.ws_send_locks.get(client)
     if lock is None:
         lock = asyncio.Lock()
         try:
-            _ws_send_locks[client] = lock
+            _state.ws_send_locks[client] = lock
         except TypeError:
             pass  # unhashable — skip lock
     async with lock:
@@ -2769,20 +2769,19 @@ async def _safe_ws_send(client: WebSocket, message: dict) -> bool:
 
 async def broadcast_event(event_type: str, data: dict[str, Any]):
     """Broadcast an event to all connected WebSocket clients."""
-    global _ws_clients
-    if not _ws_clients:
+    if not _state.ws_clients:
         return
 
     message = {"type": event_type, **data}
     disconnected = set()
 
-    for client in list(_ws_clients):
+    for client in list(_state.ws_clients):
         try:
             await _safe_ws_send(client, message)
         except Exception:
             disconnected.add(client)
 
-    _ws_clients -= disconnected
+    _state.ws_clients -= disconnected
 
 
 class ChannelShell:
@@ -3091,13 +3090,11 @@ class ChannelShell:
             pass
 
 
-# Per-channel persistent shell sessions
-_channel_shells: dict[str, ChannelShell] = {}
 
 
 async def _broadcast_to_terminal(data: dict[str, Any], channel_id: str = "web") -> None:
     """Broadcast a structured message to the terminal for a specific channel."""
-    shell = _channel_shells.get(channel_id)
+    shell = _state.channel_shells.get(channel_id)
     if shell and shell._alive:
         await shell._broadcast_json(data)
 
@@ -3117,20 +3114,19 @@ async def create_web_server(
     content_watcher=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
-    global _brain, _database, _event_bus, _tool_registry, _config, _command_processor, _channels, _agent_bot_manager, _mcp_manager, _activity_watcher, _cron_scheduler, _swarm_manager, _content_watcher
-    _brain = brain
-    _database = database
-    _event_bus = event_bus
-    _tool_registry = tool_registry
-    _activity_watcher = activity_watcher
-    _cron_scheduler = cron_scheduler
-    _swarm_manager = swarm_manager
-    _content_watcher = content_watcher
-    _config = config
-    _command_processor = CommandProcessor(brain, database)
-    _channels = channels or []
-    _agent_bot_manager = agent_bot_manager
-    _mcp_manager = mcp_manager
+    _state.brain = brain
+    _state.database = database
+    _state.event_bus = event_bus
+    _state.tool_registry = tool_registry
+    _state.activity_watcher = activity_watcher
+    _state.cron_scheduler = cron_scheduler
+    _state.swarm_manager = swarm_manager
+    _state.content_watcher = content_watcher
+    _state.config = config
+    _state.command_processor = CommandProcessor(brain, database)
+    _state.channels = channels or []
+    _state.agent_bot_manager = agent_bot_manager
+    _state.mcp_manager = mcp_manager
 
     # Load and apply user-defined custom providers on startup
     _apply_custom_providers(_load_custom_providers())

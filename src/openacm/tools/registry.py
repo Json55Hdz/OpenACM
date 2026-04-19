@@ -15,6 +15,7 @@ import numpy as np
 import structlog
 
 from openacm.constants import SEMANTIC_TOOL_THRESHOLD, TRUNCATE_TOOL_RESULT_CHARS
+from openacm.utils.text import truncate
 from openacm.core.events import EventBus
 from openacm.security.sandbox import Sandbox
 from openacm.storage.database import Database
@@ -434,7 +435,7 @@ class ToolRegistry:
                 channel_id=channel_id,
                 tool_name=tool_name,
                 arguments=json.dumps(arguments, default=str),
-                result=result_str[:TRUNCATE_TOOL_RESULT_CHARS],
+                result=truncate(result_str, TRUNCATE_TOOL_RESULT_CHARS),
                 success=success,
                 elapsed_ms=elapsed_ms,
             )

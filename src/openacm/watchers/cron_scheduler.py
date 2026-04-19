@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from openacm.constants import TRUNCATE_CRON_OUTPUT_CHARS
+from openacm.utils.text import truncate
 
 log = structlog.get_logger()
 
@@ -309,7 +310,7 @@ class CronScheduler:
             channel_id="cron",
             channel_type="cron",
         )
-        return str(response)[:TRUNCATE_CRON_OUTPUT_CHARS]
+        return truncate(str(response), TRUNCATE_CRON_OUTPUT_CHARS)
 
     async def _run_routine(self, payload: dict) -> str:
         routine_id = payload.get("routine_id")
@@ -403,7 +404,7 @@ class CronScheduler:
             output = stdout.decode("utf-8", errors="replace").strip()
             if proc.returncode != 0:
                 raise RuntimeError(f"Exit code {proc.returncode}: {output[:500]}")
-            return output[:TRUNCATE_CRON_OUTPUT_CHARS]
+            return truncate(output, TRUNCATE_CRON_OUTPUT_CHARS)
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError(f"Command timed out after {timeout}s")
