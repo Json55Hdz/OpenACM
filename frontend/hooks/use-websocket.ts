@@ -99,6 +99,10 @@ export function useWebSocket() {
     chatWsRef.current = ws;
     storeRef.current.setWs(ws);
 
+    ws.onopen = () => {
+      storeRef.current.setWsConnected(true);
+    };
+
     ws.onmessage = (event) => {
       const data: WebSocketMessage = JSON.parse(event.data);
 

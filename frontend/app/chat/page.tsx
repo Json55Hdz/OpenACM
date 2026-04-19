@@ -647,6 +647,7 @@ export default function ChatPage() {
     memoryRecall,
   } = useChatStore();
 
+  const wsConnected = useChatStore((s) => s.wsConnected);
   const sendMessage = useChatStore((s) => s.sendMessageFn);
   const cancelMessage = useChatStore((s) => s.cancelMessageFn);
   const pendingOnboardingGreeting = useChatStore((s) => s.pendingOnboardingGreeting);
@@ -678,6 +679,10 @@ export default function ChatPage() {
   const audioChunksRef = useRef<Blob[]>([]);
   // Track which conversation we last loaded history for
   const loadedKeyRef = useRef('');
+  // Only show reconnecting overlay after first successful connection
+  const hasConnectedRef = useRef(false);
+  useEffect(() => { if (wsConnected) hasConnectedRef.current = true; }, [wsConnected]);
+  const showReconnecting = hasConnectedRef.current && !wsConnected;
 
   // Load conversation history when a new conversation is selected
   useEffect(() => {
@@ -1065,7 +1070,15 @@ export default function ChatPage() {
         </div>
         
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-950">
+        <div className="flex-1 flex flex-col min-w-0 bg-slate-950 relative">
+          {/* Reconnecting overlay — shown only after first connection, when backend drops */}
+          {showReconnecting && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-sm">
+              <Loader2 size={36} className="text-blue-400 animate-spin mb-4" />
+              <p className="text-slate-200 text-sm font-medium">Reconnecting to backend…</p>
+              <p className="text-slate-500 text-xs mt-1">Your conversation will resume automatically</p>
+            </div>
+          )}
           {/* Chat Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
             <div className="flex items-center gap-3">
