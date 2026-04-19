@@ -102,18 +102,36 @@ async def get_webpage(url: str, max_length: int = 5000, **kwargs) -> str:
             response.raise_for_status()
             html = response.text
 
-        # Simple HTML to text conversion
-        # Remove script and style elements
-        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL)
-        # Remove HTML tags
-        text = re.sub(r"<[^>]+>", " ", text)
-        # Normalize whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        # Decode HTML entities
-        import html as html_lib
+        # HTML → plain text via stdlib parser (safe, no regex bypass vectors)
+        from html.parser import HTMLParser
 
-        text = html_lib.unescape(text)
+        class _TextExtractor(HTMLParser):
+            SKIP_TAGS = {"script", "style", "head", "noscript", "template"}
+
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self._parts: list[str] = []
+                self._skip: int = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag in self.SKIP_TAGS:
+                    self._skip += 1
+
+            def handle_endtag(self, tag):
+                if tag in self.SKIP_TAGS and self._skip:
+                    self._skip -= 1
+
+            def handle_data(self, data):
+                if not self._skip:
+                    self._parts.append(data)
+
+            def get_text(self):
+                return " ".join(self._parts)
+
+        extractor = _TextExtractor()
+        extractor.feed(html)
+        text = extractor.get_text()
+        text = re.sub(r"\s+", " ", text).strip()
 
         if len(text) > max_length:
             text = text[:max_length] + "\n\n[... content truncated]"

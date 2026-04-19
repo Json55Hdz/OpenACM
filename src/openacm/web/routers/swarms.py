@@ -240,13 +240,18 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/content/sessions")
     async def list_content_sessions(date: str = ""):
+        import re as _re
         from pathlib import Path as _Path
         workspace = _Path(os.environ.get("OPENACM_WORKSPACE", "workspace"))
         base = workspace / "content" / "sessions"
         if not base.exists():
             return {"dates": [], "sessions": []}
         if date:
-            session_dir = base / date
+            if not _re.match(r'^\d{4}-\d{2}-\d{2}$', date):
+                raise HTTPException(status_code=400, detail="Invalid date format")
+            session_dir = (base / date).resolve()
+            if not session_dir.is_relative_to(base.resolve()):
+                raise HTTPException(status_code=400, detail="Invalid date format")
             if not session_dir.exists():
                 return {"dates": [], "sessions": []}
             sessions = []

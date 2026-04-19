@@ -186,7 +186,11 @@ def create_app() -> FastAPI:
     @app.get("/{full_path:path}", response_class=HTMLResponse)
     async def serve_spa(full_path: str):
         # Try to serve the exact file (e.g. /dashboard/__next._full.txt, /dashboard/index.html)
-        candidate = static_dir / full_path
+        candidate = (static_dir / full_path).resolve()
+        static_root = static_dir.resolve()
+        if not candidate.is_relative_to(static_root):
+            # Path traversal attempt — silently fall through to SPA index
+            candidate = static_root
         if candidate.exists() and candidate.is_file():
             return FileResponse(str(candidate))
         # Try with trailing index.html (e.g. /dashboard/ → /dashboard/index.html)

@@ -23,6 +23,10 @@ def decrypt_file(file_path: Path) -> bytes:
     Handles legacy Fernet-encrypted files transparently so old files still work.
     New files are stored plain.
     """
+    file_path = Path(file_path).resolve()
+    media_root = get_media_dir().resolve()
+    if not file_path.is_relative_to(media_root):
+        raise ValueError(f"Access denied: {file_path} is outside media directory")
     with open(file_path, "rb") as f:
         data = f.read()
     # Legacy Fernet tokens start with 'gAAAAA' (base64-encoded header)

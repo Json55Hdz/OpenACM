@@ -37,7 +37,11 @@ def register_routes(app: FastAPI) -> None:
         file_bytes = await file.read()
 
         from openacm.security.crypto import get_media_dir
-        ext = "".join(Path(file.filename).suffixes) or ".bin"
+        # Only keep the final extension and strip any path components from the filename
+        raw_suffix = Path(file.filename or "").suffix if file.filename else ""
+        # Whitelist safe extensions; reject anything with non-alphanum chars
+        import re as _re
+        ext = raw_suffix if _re.match(r'^\.[a-zA-Z0-9]{1,10}$', raw_suffix) else ".bin"
         file_id = secrets.token_hex(16)
         file_name = f"{file_id}{ext}"
         dest_path = get_media_dir() / file_name
@@ -72,7 +76,13 @@ def register_routes(app: FastAPI) -> None:
         """Retrieve a media file. Handles legacy Fernet-encrypted files transparently."""
         from openacm.security.crypto import decrypt_file, get_media_dir
 
-        file_path = get_media_dir() / file_name
+        # Reject any path traversal attempts before touching the filesystem
+        if "/" in file_name or "\\" in file_name or ".." in file_name:
+            raise HTTPException(status_code=400, detail="Invalid file name")
+        media_dir = get_media_dir()
+        file_path = (media_dir / file_name).resolve()
+        if not file_path.is_relative_to(media_dir.resolve()):
+            raise HTTPException(status_code=400, detail="Invalid file name")
         if not file_path.exists():
             raise HTTPException(status_code=404, detail="Media not found")
 

@@ -13,7 +13,7 @@ dependencies = [
     
     # Web
     "fastapi>=0.115",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.20",
     "uvicorn[standard]>=0.30",
     "websockets>=13.0",
     
@@ -41,9 +41,9 @@ dependencies = [
     
     # Multimodal & Crypto
     "mss>=9.0",
-    "Pillow>=10.0",
-    "cryptography>=41.0",
-    "pypdf>=4.0",
+    "Pillow>=11.0",
+    "cryptography>=43.0",
+    "pypdf>=5.0",
     "markitdown[docx,xlsx,pptx,audio-transcription]>=0.1",
     "chonkie[sentence]>=1.0",
     "docling>=2.0",
