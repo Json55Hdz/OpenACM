@@ -5,7 +5,7 @@
 # OpenACM — Open Autonomous Agent
 
 <p align="center">
-  <img src="https://img.shields.io/npm/v/openacm?label=npm&color=cb0000&logo=npm" />
+  <img src="https://img.shields.io/npm/v/open-acm?label=npm&color=cb0000&logo=npm" />
   <img src="https://img.shields.io/badge/license-MIT-green" />
   <img src="https://img.shields.io/badge/Python-3.12+-blue?logo=python" />
   <img src="https://img.shields.io/badge/Next.js-15-black?logo=next.js" />
