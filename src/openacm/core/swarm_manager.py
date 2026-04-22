@@ -147,6 +147,8 @@ class SwarmManager:
         if not swarm:
             raise ValueError(f"Swarm {swarm_id} not found")
 
+        # Clear any existing workers/tasks from a previous plan before re-planning
+        await self.db.clear_swarm_plan(swarm_id)
         await self.db.update_swarm(swarm_id, status="planning")
         await self._emit_swarm_event(swarm_id, "planning")
 

@@ -332,6 +332,9 @@ export function useWebSocket() {
         const forKey = data.channel_id && data.user_id
           ? `${data.channel_id}:${data.user_id}`
           : undefined;
+        // Deduplicate: skip if the last message is already a compaction note
+        const msgs = storeRef.current.messages;
+        if (msgs.length > 0 && msgs[msgs.length - 1].compactionNote) return;
         storeRef.current.addMessage({
           content: '',
           role: 'system',

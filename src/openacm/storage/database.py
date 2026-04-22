@@ -1881,6 +1881,14 @@ class Database:
         await self._db.commit()
         return cursor.rowcount > 0
 
+    async def clear_swarm_plan(self, swarm_id: int) -> None:
+        """Delete all workers and tasks for a swarm (used before re-planning)."""
+        if not self._db:
+            return
+        await self._db.execute("DELETE FROM swarm_tasks WHERE swarm_id = ?", (swarm_id,))
+        await self._db.execute("DELETE FROM swarm_workers WHERE swarm_id = ?", (swarm_id,))
+        await self._db.commit()
+
     # ─── Swarm Workers ────────────────────────────────────────────────────────
 
     async def create_swarm_worker(

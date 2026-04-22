@@ -620,7 +620,7 @@ export default function CronPage() {
       ]);
       if (jobsRes.ok) {
         const d = await jobsRes.json();
-        setJobs(d.jobs ?? []);
+        setJobs(Array.isArray(d) ? d : (d.jobs ?? []));
       }
       if (statusRes.ok) {
         setStatus(await statusRes.json());

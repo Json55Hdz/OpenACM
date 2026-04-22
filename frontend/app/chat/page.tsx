@@ -751,7 +751,8 @@ export default function ChatPage() {
         userId: currentTarget.user,
         channelId: currentTarget.channel,
       });
-      if (result.text) {
+      // Compact responses are shown via the memory.compacted WS event bubble — skip the text
+      if (result.text && !result.data?.compact) {
         addMessage({ content: result.text, role: 'system' });
       }
       // Handle special data payloads
@@ -768,7 +769,6 @@ export default function ChatPage() {
       if (command.startsWith('/new') || command.startsWith('/clear') || command.startsWith('/reset')) {
         setMessages([]);
       }
-      // Compact: show the summary as a compaction note bubble in the UI
       if (command.startsWith('/compact') && result.data?.compact) {
         setIsCompacting(false);
       }

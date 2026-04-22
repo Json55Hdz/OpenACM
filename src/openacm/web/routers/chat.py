@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import re
+import secrets
 import uuid
 from pathlib import Path
 from typing import Any
@@ -338,8 +339,9 @@ def register_routes(app: FastAPI) -> None:
                 attachments = data.get("attachments", [])
 
                 # Context routing (defaults to web)
-                target_user = data.get("target_user_id", "web")
-                target_channel = data.get("target_channel_id", "web")
+                # Accept both target_*_id (frontend) and plain *_id (API/tests)
+                target_user = data.get("target_user_id") or data.get("user_id", "web")
+                target_channel = data.get("target_channel_id") or data.get("channel_id", "web")
                 target_type = (
                     "web"
                     if target_channel == "web"

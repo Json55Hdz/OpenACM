@@ -45,7 +45,7 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         jobs = await _state.database.get_all_cron_jobs()
-        return {"jobs": jobs}
+        return jobs
 
     @app.post("/api/cron/jobs")
     async def create_cron_job(request: Request):
