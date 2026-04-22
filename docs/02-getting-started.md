@@ -13,9 +13,30 @@
 
 ---
 
-## Installation (Recommended — Scripts)
+## Installation (Recommended — One-Liner)
 
-OpenACM ships with setup and run scripts that handle everything automatically.
+No need to clone the repo manually. Run this from anywhere:
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.sh | bash
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.ps1 | iex
+```
+
+This clones the repo to `~/OpenACM`, runs the full setup, and offers to launch OpenACM when done.
+
+> To install to a custom path, set `OPENACM_DIR` first:  
+> `OPENACM_DIR=/opt/openacm curl -fsSL ... | bash`
+
+---
+
+## Installation (Manual — Already have git)
+
+If you prefer to clone yourself:
 
 ### 1. Clone the repository
 
@@ -24,9 +45,7 @@ git clone https://github.com/Json55Hdz/OpenACM.git
 cd OpenACM
 ```
 
-### 2. Run the setup script
-
-The setup script creates the virtual environment, installs all Python dependencies, and builds the frontend in one step.
+### 2. Run setup
 
 **Windows:**
 ```
@@ -35,25 +54,29 @@ setup.bat
 
 **macOS / Linux:**
 ```bash
-chmod +x setup.sh
+chmod +x setup.sh acm.sh update.sh
 ./setup.sh
 ```
 
-### 3. Start OpenACM
-
-From now on, every time you want to run OpenACM:
-
-**Windows:**
-```
-run.bat
-```
-
-**macOS / Linux:**
-```bash
-./run.sh
-```
-
 That's it. Open your browser at `http://127.0.0.1:47821`.
+
+---
+
+## The `acm` CLI
+
+After installation, use `acm` (or `./acm` on macOS/Linux) as your single entry point:
+
+| Command | Description |
+|---------|-------------|
+| `acm install` | First-time setup |
+| `acm start` | Start OpenACM |
+| `acm stop` | Stop a running instance |
+| `acm status` | Check if OpenACM is running |
+| `acm update` | Pull latest + sync deps + rebuild frontend |
+| `acm repair` | Reinstall Python deps without pulling git |
+
+**Windows:** `acm start`  
+**macOS / Linux:** `./acm start`
 
 > **No config needed upfront.** The onboarding wizard will guide you through choosing your LLM provider, entering API keys, and setting up channels — all from the browser.
 
@@ -167,7 +190,10 @@ Available in both web chat and the terminal console:
 
 ```
 OpenACM/
-├── setup.bat / setup.sh      # One-time setup script
+├── install.ps1 / install.sh   # Bootstrap: clone + setup (run from anywhere)
+├── acm.bat / acm.sh           # Unified CLI: install/update/start/stop/status
+├── setup.bat / setup.sh       # One-time setup script
+├── update.bat / update.sh     # Pull + sync deps + rebuild frontend
 ├── run.bat / run.sh           # Start OpenACM
 ├── config/
 │   ├── default.yaml           # Main configuration file
@@ -200,16 +226,25 @@ OpenACM/
 
 ## Updating OpenACM
 
-```bash
-git pull
+**Windows:**
+```
+acm update
+```
+or
+```
+update.bat
 ```
 
-Then re-run the setup script to update dependencies and rebuild the frontend:
+**macOS / Linux:**
+```bash
+./acm update
+```
+or
+```bash
+./update.sh
+```
 
-**Windows:** `setup.bat`  
-**macOS / Linux:** `./setup.sh`
-
-The database schema is automatically migrated on startup.
+This runs `git pull`, syncs Python dependencies, and rebuilds the frontend in one step. The database schema is automatically migrated on startup.
 
 ---
 

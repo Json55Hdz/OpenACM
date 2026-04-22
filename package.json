@@ -1,0 +1,27 @@
+{
+  "name": "open-acm",
+  "version": "0.2.0",
+  "description": "Tier-1 Autonomous AI Agent — CLI installer and launcher",
+  "license": "MIT",
+  "author": "Json55Hdz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Json55Hdz/OpenACM.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "autonomous",
+    "llm",
+    "openacm"
+  ],
+  "bin": {
+    "openacm": "bin/openacm.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

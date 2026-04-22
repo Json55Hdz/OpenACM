@@ -1,0 +1,21 @@
+# Only ship bin/ — everything else is the Python/frontend source
+src/
+frontend/
+docs/
+config/
+data/
+workspace/
+skills/
+.venv/
+.opencode/
+*.bat
+*.ps1
+*.sh
+*.py
+*.toml
+*.yaml
+*.yml
+*.md
+*.db
+*.env*
+tests/

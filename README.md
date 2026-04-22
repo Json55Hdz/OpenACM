@@ -5,6 +5,7 @@
 # OpenACM — Open Autonomous Agent
 
 <p align="center">
+  <img src="https://img.shields.io/npm/v/openacm?label=npm&color=cb0000&logo=npm" />
   <img src="https://img.shields.io/badge/license-MIT-green" />
   <img src="https://img.shields.io/badge/Python-3.12+-blue?logo=python" />
   <img src="https://img.shields.io/badge/Next.js-15-black?logo=next.js" />
@@ -38,13 +39,49 @@ No subscriptions. No cloud dependency. Your data stays local.
 
 ## Quick Start
 
-### Prerequisites
+### Option A — npm (recommended)
+
+Requires Node.js 18+ and git.
+
+```bash
+npm i -g open-acm
+openacm install   # clones the repo and runs full setup
+openacm start     # launch OpenACM
+```
+
+Or without installing globally:
+```bash
+npx open-acm install
+npx open-acm start
+```
+
+**CLI commands:** `install` · `start` · `stop` · `status` · `update` · `repair` · `uninstall`
+
+---
+
+### Option B — One-liner
+
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.sh | bash
+```
+
+**Windows (PowerShell as Administrator):**
+```powershell
+iwr -useb https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.ps1 | iex
+```
+
+---
+
+### Option C — Manual clone
+
+#### Prerequisites
 
 - Python 3.12+
 - Node.js 20+
 - An API key from any supported LLM provider
 
-### Windows
+#### Windows
 
 ```powershell
 git clone https://github.com/Json55Hdz/OpenACM.git
@@ -57,7 +94,7 @@ Next time just run:
 .\run.bat
 ```
 
-### Linux / macOS
+#### Linux / macOS
 
 ```bash
 git clone https://github.com/Json55Hdz/OpenACM.git
