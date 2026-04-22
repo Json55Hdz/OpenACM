@@ -26,7 +26,7 @@ if not exist "%VENV_PYTHON%" (
 
 :: Build frontend (ensures latest code is always served)
 echo [*] Building frontend...
-call "%~dp0build-frontend.bat"
+call "%~dp0scripts\build-frontend.bat"
 if errorlevel 1 (
     echo [ERROR] Frontend build failed.
     pause

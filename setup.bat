@@ -14,7 +14,7 @@ TITLE OpenACM - Setup [Admin]
 cd /d "%~dp0"
 
 :: ── Run PowerShell setup ──────────────────────────────────────────────────────
-powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0setup.ps1"
+powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0scripts\setup.ps1"
 
 :: Save ERRORLEVEL immediately — any other command (echo, if, etc.) would reset it
 set "SETUP_RESULT=%ERRORLEVEL%"

@@ -2,7 +2,7 @@
 TITLE OpenACM - Update
 
 cd /d "%~dp0"
-powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0update.ps1"
+powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0scripts\update.ps1"
 set "UPDATE_RESULT=%ERRORLEVEL%"
 
 if "%UPDATE_RESULT%"=="0" (
