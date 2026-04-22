@@ -45,6 +45,10 @@ export function useWebSocket() {
   const eventsReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Debounce compaction events — backend can fire the same event multiple times
+  const lastCompactionRef = useRef(0);
+  // Debounce tool.called — same tool+args can arrive multiple times in rapid succession
+  const lastToolCallRef = useRef<Map<string, number>>(new Map());
 
   const clearThinkingTimeout = () => {
     if (thinkingTimeoutRef.current) {
@@ -273,6 +277,11 @@ export function useWebSocket() {
         }
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
+        // Deduplicate: same tool+args arriving multiple times within 1s = broadcast storm
+        const toolKey = `${data.tool}::${data.arguments ?? ''}`;
+        const now = Date.now();
+        if (now - (lastToolCallRef.current.get(toolKey) ?? 0) < 1000) return;
+        lastToolCallRef.current.set(toolKey, now);
         addMessage({
           content: `Executing: ${data.tool || 'tool'}`,
           role: 'system',
@@ -286,17 +295,12 @@ export function useWebSocket() {
         // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.result') {
         if (data.channel_id !== currentTarget.channel) return;
-        addMessage({
-          content: `${data.tool || 'Tool'} completed`,
-          role: 'system',
-          badge: 'Tool',
-          toolCall: {
-            tool: data.tool || '',
-            arguments: '',
-            result: data.result || '',
-            status: 'completed',
-          },
-        });
+        // Update the existing running tool call in-place (no duplicate message)
+        storeRef.current.updateToolCall(
+          data.tool || '',
+          data.result || '',
+          'completed',
+        );
         // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.validation') {
         if (data.channel_id !== currentTarget.channel) return;
@@ -329,12 +333,14 @@ export function useWebSocket() {
           },
         });
       } else if (data.type === 'memory.compacted') {
+        // Debounce: backend sometimes fires this event multiple times for the same compaction
+        const now = Date.now();
+        if (now - lastCompactionRef.current < 3000) return;
+        lastCompactionRef.current = now;
+
         const forKey = data.channel_id && data.user_id
           ? `${data.channel_id}:${data.user_id}`
           : undefined;
-        // Deduplicate: skip if the last message is already a compaction note
-        const msgs = storeRef.current.messages;
-        if (msgs.length > 0 && msgs[msgs.length - 1].compactionNote) return;
         storeRef.current.addMessage({
           content: '',
           role: 'system',

@@ -3,7 +3,18 @@
 import { useState, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useConfig, useAPI, useMemoryStats, useClearMemory } from '@/hooks/use-api';
-import { useSetModel, useProviderStatus, useGoogleStatus, useSaveGoogleCredentials, useDeleteGoogleCredentials, useStartGoogleAuth, useCustomProviders, useAddCustomProvider, useUpdateCustomProvider, useDeleteCustomProvider } from '@/hooks/use-setup';
+import {
+  useSetModel,
+  useProviderStatus,
+  useGoogleStatus,
+  useSaveGoogleCredentials,
+  useDeleteGoogleCredentials,
+  useStartGoogleAuth,
+  useCustomProviders,
+  useAddCustomProvider,
+  useUpdateCustomProvider,
+  useDeleteCustomProvider,
+} from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
@@ -44,52 +55,207 @@ import {
   ScrollText,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
 const tc = translations.config;
+
+// ─── Section card wrapper ─────────────────────────────────────────────────────
 
 function ConfigSection({
   title,
   subtitle,
   icon: Icon,
   children,
+  id,
 }: {
   title: string;
   subtitle?: string;
   icon: React.ElementType;
   children: React.ReactNode;
+  id?: string;
 }) {
   return (
-    <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
-      <div className="px-6 py-4 border-b border-slate-800 bg-slate-800/30">
-        <div className="flex items-center gap-3">
-          <Icon size={20} className="text-blue-400" />
-          <div>
-            <h3 className="font-semibold text-white">{title}</h3>
-            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-          </div>
+    <div
+      id={id}
+      style={{
+        background: 'var(--acm-card)',
+        border: '1px solid var(--acm-border)',
+        borderRadius: 'var(--acm-radius)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          borderBottom: '1px solid var(--acm-border)',
+          padding: '14px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            background: 'var(--acm-elev)',
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            color: 'var(--acm-accent)',
+          }}
+        >
+          <Icon size={16} />
+        </div>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--acm-fg)' }}>{title}</div>
+          {subtitle && (
+            <div className="mono" style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginTop: 2 }}>
+              {subtitle}
+            </div>
+          )}
         </div>
       </div>
-      <div className="p-6">{children}</div>
+      <div style={{ padding: '20px' }}>{children}</div>
     </div>
   );
 }
+
+// ─── Divider ──────────────────────────────────────────────────────────────────
+
+function Divider() {
+  return (
+    <div style={{ height: 1, background: 'var(--acm-border)', margin: '16px 0' }} />
+  );
+}
+
+// ─── Toggle row ───────────────────────────────────────────────────────────────
+
+function ToggleRow({
+  label,
+  description,
+  value,
+  onToggle,
+  disabled = false,
+  badge,
+}: {
+  label: string;
+  description?: string;
+  value: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--acm-fg-2)', fontSize: 13, fontWeight: 500 }}>
+          {label}
+          {badge}
+        </div>
+        {description && (
+          <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginTop: 3 }}>{description}</p>
+        )}
+      </div>
+      <button
+        onClick={onToggle}
+        disabled={disabled}
+        style={{
+          color: value ? 'var(--acm-accent)' : 'var(--acm-fg-4)',
+          background: 'none',
+          border: 'none',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          padding: 0,
+          opacity: disabled ? 0.4 : 1,
+          flexShrink: 0,
+        }}
+      >
+        {value ? <ToggleRight size={26} /> : <ToggleLeft size={26} />}
+      </button>
+    </div>
+  );
+}
+
+// ─── Stat tile ────────────────────────────────────────────────────────────────
+
+function StatTile({
+  label,
+  value,
+  sub,
+  icon: Icon,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  icon?: React.ElementType;
+}) {
+  return (
+    <div
+      style={{
+        border: '1px solid var(--acm-border)',
+        borderRadius: 'var(--acm-radius)',
+        padding: '14px 16px',
+        background: 'var(--acm-elev)',
+      }}
+    >
+      <div className="label" style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+        {Icon && <Icon size={11} style={{ color: 'var(--acm-accent)' }} />}
+        {label}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--acm-fg)', lineHeight: 1 }}>{value}</div>
+      {sub && <div className="mono" style={{ fontSize: 10, color: 'var(--acm-fg-4)', marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── Info row ─────────────────────────────────────────────────────────────────
+
+function InfoRow({ label, value, copyable = false }: { label: string; value: string; copyable?: boolean }) {
+  const handleCopy = () => {
+    navigator.clipboard.writeText(value);
+    toast.success('Copied to clipboard');
+  };
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '10px 0',
+        borderBottom: '1px solid var(--acm-border)',
+      }}
+    >
+      <span style={{ fontSize: 12, color: 'var(--acm-fg-3)' }}>{label}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span className="mono" style={{ fontSize: 12, color: 'var(--acm-fg-2)' }}>{value}</span>
+        {copyable && (
+          <button
+            onClick={handleCopy}
+            style={{ color: 'var(--acm-fg-4)', background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
+          >
+            <Copy size={12} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── RAG threshold control ────────────────────────────────────────────────────
 
 function RagThresholdControl({ fetchAPI }: { fetchAPI: (url: string, opts?: RequestInit) => Promise<unknown> }) {
   const [threshold, setThreshold] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetchAPI('/api/config/rag_threshold').then((data: unknown) => {
-      const d = data as { threshold?: number };
-      if (typeof d?.threshold === 'number') setThreshold(d.threshold);
-    }).catch(() => {});
+    fetchAPI('/api/config/rag_threshold')
+      .then((data: unknown) => {
+        const d = data as { threshold?: number };
+        if (typeof d?.threshold === 'number') setThreshold(d.threshold);
+      })
+      .catch(() => {});
   }, [fetchAPI]);
 
   const save = async (val: number) => {
@@ -109,24 +275,28 @@ function RagThresholdControl({ fetchAPI }: { fetchAPI: (url: string, opts?: Requ
 
   if (threshold === null) return null;
 
-  const label = threshold <= 0.3
-    ? 'Very strict — only near-identical matches'
-    : threshold <= 0.5
-    ? 'Balanced — recommended'
-    : threshold <= 0.7
-    ? 'Loose — more context, more noise'
-    : 'Very loose — almost everything gets recalled';
+  const label =
+    threshold <= 0.3
+      ? 'Very strict — only near-identical matches'
+      : threshold <= 0.5
+      ? 'Balanced — recommended'
+      : threshold <= 0.7
+      ? 'Loose — more context, more noise'
+      : 'Very loose — almost everything gets recalled';
 
   return (
-    <div className="space-y-2 pt-1 border-t border-slate-800">
-      <div className="flex items-center justify-between">
+    <div>
+      <Divider />
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
         <div>
-          <p className="text-sm font-medium text-slate-300">Recall relevance threshold</p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Cosine distance cutoff for long-term memory recall. Lower = stricter (fewer but more accurate results). Higher = more context but may pull in unrelated memories.
-          </p>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--acm-fg-2)' }}>Recall relevance threshold</div>
+          <div style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginTop: 3, maxWidth: 400 }}>
+            Cosine distance cutoff for long-term memory recall. Lower = stricter (fewer but more accurate). Higher = more context but may pull unrelated memories.
+          </div>
         </div>
-        <span className="text-sm font-mono text-blue-400 ml-4 shrink-0">{threshold.toFixed(2)}</span>
+        <span className="mono" style={{ fontSize: 13, color: 'var(--acm-accent)', flexShrink: 0 }}>
+          {threshold.toFixed(2)}
+        </span>
       </div>
       <input
         type="range"
@@ -137,69 +307,231 @@ function RagThresholdControl({ fetchAPI }: { fetchAPI: (url: string, opts?: Requ
         onChange={(e) => setThreshold(parseFloat(e.target.value))}
         onMouseUp={(e) => save(parseFloat((e.target as HTMLInputElement).value))}
         onTouchEnd={(e) => save(parseFloat((e.target as HTMLInputElement).value))}
-        className="w-full accent-blue-500"
         disabled={saving}
+        style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
       />
-      <div className="flex justify-between text-[10px] text-slate-600">
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--acm-fg-4)', marginTop: 4 }}>
         <span>0.1 — strict</span>
-        <span className="text-slate-400 italic">{label}</span>
+        <span style={{ fontStyle: 'italic', color: 'var(--acm-fg-3)' }}>{label}</span>
         <span>0.95 — loose</span>
       </div>
     </div>
   );
 }
 
+// ─── Nav item ─────────────────────────────────────────────────────────────────
 
-function InfoRow({
+function NavItem({
   label,
-  value,
-  copyable = false,
+  icon: Icon,
+  active,
+  onClick,
 }: {
   label: string;
-  value: string;
-  copyable?: boolean;
+  icon: React.ElementType;
+  active: boolean;
+  onClick: () => void;
 }) {
-  const handleCopy = () => {
-    navigator.clipboard.writeText(value);
-    toast.success('Copied to clipboard');
-  };
-
   return (
-    <div className="flex items-center justify-between py-3 border-b border-slate-800 last:border-b-0">
-      <span className="text-sm text-slate-400">{label}</span>
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-slate-200 font-mono">{value}</span>
-        {copyable && (
-          <button
-            onClick={handleCopy}
-            className="p-1 text-slate-500 hover:text-blue-400 transition-colors"
-          >
-            <Copy size={14} />
-          </button>
-        )}
-      </div>
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 12px',
+        fontSize: 13,
+        fontWeight: active ? 600 : 400,
+        color: active ? 'var(--acm-accent)' : 'var(--acm-fg-3)',
+        background: active ? 'var(--acm-card)' : 'transparent',
+        borderRadius: 6,
+        border: 'none',
+        borderLeft: active ? '2px solid var(--acm-accent)' : '2px solid transparent',
+        cursor: 'pointer',
+        textAlign: 'left',
+        transition: 'all 140ms ease',
+      }}
+      className={active ? '' : 'nav-inactive'}
+    >
+      <Icon size={14} style={{ flexShrink: 0 }} />
+      {label}
+    </button>
+  );
+}
+
+// ─── Nav group label ──────────────────────────────────────────────────────────
+
+function NavGroupLabel({ children }: { children: string }) {
+  return (
+    <div className="label" style={{ padding: '12px 12px 4px', color: 'var(--acm-fg-4)' }}>
+      {children}
     </div>
   );
 }
+
+// ─── Provider card ────────────────────────────────────────────────────────────
+
+function ProviderCard({
+  name,
+  description,
+  active,
+  configured,
+  onClick,
+}: {
+  name: string;
+  description?: string;
+  active: boolean;
+  configured: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: active
+          ? 'var(--acm-accent-soft)'
+          : configured
+          ? 'var(--acm-elev)'
+          : 'var(--acm-card)',
+        border: `1px solid ${
+          active
+            ? 'oklch(0.84 0.16 82 / 0.25)'
+            : 'var(--acm-border)'
+        }`,
+        borderRadius: 'var(--acm-radius)',
+        padding: '12px 14px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        width: '100%',
+        opacity: configured ? 1 : 0.5,
+        transition: 'all 140ms ease',
+      }}
+    >
+      <div
+        style={{
+          fontWeight: 600,
+          fontSize: 13,
+          color: active ? 'var(--acm-accent)' : 'var(--acm-fg-2)',
+          marginBottom: 2,
+        }}
+      >
+        {name}
+      </div>
+      {description && (
+        <div className="mono" style={{ fontSize: 10, color: 'var(--acm-fg-4)', lineHeight: 1.4 }}>
+          {description}
+        </div>
+      )}
+      {active && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+          <span className="dot dot-ok" />
+          <span style={{ fontSize: 10, color: 'var(--acm-ok)' }}>Active</span>
+        </div>
+      )}
+    </button>
+  );
+}
+
+// ─── Custom provider card (dashed) ────────────────────────────────────────────
+
+function AddProviderCard({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: 'transparent',
+        border: '1px dashed var(--acm-border-strong)',
+        borderRadius: 'var(--acm-radius)',
+        padding: '12px 14px',
+        textAlign: 'center',
+        cursor: 'pointer',
+        width: '100%',
+        color: 'var(--acm-fg-4)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 6,
+        transition: 'all 140ms ease',
+      }}
+      className="nav-inactive"
+    >
+      <Plus size={16} />
+      <span style={{ fontSize: 12 }}>Add Custom Provider</span>
+    </button>
+  );
+}
+
+// ─── Main config page ─────────────────────────────────────────────────────────
+
+type NavSection =
+  | 'providers'
+  | 'custom-providers'
+  | 'model'
+  | 'memory'
+  | 'telegram'
+  | 'google'
+  | 'stitch'
+  | 'router'
+  | 'security'
+  | 'resurrection'
+  | 'raw';
+
+const NAV_GROUPS: { group: string; items: { id: NavSection; label: string; icon: React.ElementType }[] }[] = [
+  {
+    group: 'AI',
+    items: [
+      { id: 'providers', label: 'LLM Providers', icon: Settings },
+      { id: 'custom-providers', label: 'Custom Providers', icon: Server },
+      { id: 'model', label: 'Default Model', icon: Bot },
+      { id: 'memory', label: 'Memory & RAG', icon: Brain },
+      { id: 'router', label: 'Intent Router', icon: Zap },
+    ],
+  },
+  {
+    group: 'Integrations',
+    items: [
+      { id: 'telegram', label: 'Telegram', icon: Send },
+      { id: 'google', label: 'Google Services', icon: Globe2 },
+      { id: 'stitch', label: 'Google Stitch', icon: Paintbrush },
+    ],
+  },
+  {
+    group: 'System',
+    items: [
+      { id: 'security', label: 'Security', icon: Shield },
+      { id: 'resurrection', label: 'Code Resurrection', icon: Archive },
+      { id: 'raw', label: 'Raw Config', icon: Terminal },
+    ],
+  },
+];
 
 export default function ConfigPage() {
   const router = useRouter();
   const { fetchAPI } = useAPI();
   const [appVersion, setAppVersion] = useState('');
+  const [activeSection, setActiveSection] = useState<NavSection>('providers');
+
   useEffect(() => {
-    fetchAPI('/api/system/info').then(d => { if (d.version) setAppVersion(`v${d.version}`); }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchAPI('/api/system/info')
+      .then((d: any) => { if (d.version) setAppVersion(`v${d.version}`); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   const { config, model, isLoading, updateExecutionMode } = useConfig();
   const setModelMut = useSetModel();
   const saveSetup = useSaveSetup();
+
+  // ─── Debug / verbose ────────────────────────────────────────────────────────
   const [isVerbose, setIsVerbose] = useState(false);
+
+  // ─── Intent router ──────────────────────────────────────────────────────────
   const [routerEnabled, setRouterEnabled] = useState(true);
   const [routerObservation, setRouterObservation] = useState(false);
   const [routerThreshold, setRouterThreshold] = useState(0.88);
   const [routerStats, setRouterStats] = useState<Record<string, unknown> | null>(null);
   const [routerLoading, setRouterLoading] = useState(false);
-
 
   const toggleDebugMode = async (next: boolean) => {
     setIsVerbose(next);
@@ -210,41 +542,46 @@ export default function ConfigPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: next }),
       });
-    } catch {
-      // API call is best-effort — UI state is already saved in localStorage
-    }
+    } catch { /* best-effort */ }
   };
 
-  // Load debug mode from localStorage (instant, no auth needed)
-  // Then sync router config from API
   useEffect(() => {
     const saved = localStorage.getItem('openacm_debug_mode');
     if (saved !== null) setIsVerbose(saved === 'true');
 
     fetchAPI('/api/config/local_router')
-      .then(d => {
+      .then((d: any) => {
         setRouterEnabled(d.enabled ?? true);
         setRouterObservation(d.observation_mode ?? false);
         setRouterThreshold(d.confidence_threshold ?? 0.88);
         setRouterStats(d);
       })
       .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleRouterToggle = async (field: 'enabled' | 'observation_mode', value: boolean) => {
     setRouterLoading(true);
     try {
-      const body = field === 'enabled' ? { enabled: value } : { enabled: routerEnabled, observation_mode: value };
-      const data = await fetchAPI('/api/config/local_router', {
+      const body =
+        field === 'enabled'
+          ? { enabled: value }
+          : { enabled: routerEnabled, observation_mode: value };
+      const data: any = await fetchAPI('/api/config/local_router', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       setRouterEnabled(data.enabled);
-      toast.success(field === 'enabled'
-        ? (value ? 'Local Router enabled' : 'Local Router disabled')
-        : (value ? 'Observation mode ON — router classifies but does not execute' : 'Fast-path active — router bypasses LLM for simple intents'));
+      toast.success(
+        field === 'enabled'
+          ? value
+            ? 'Local Router enabled'
+            : 'Local Router disabled'
+          : value
+          ? 'Observation mode ON — router classifies but does not execute'
+          : 'Fast-path active — router bypasses LLM for simple intents'
+      );
     } catch {
       toast.error('Failed to update router config');
     } finally {
@@ -262,7 +599,8 @@ export default function ConfigPage() {
       });
     } catch { /* silent */ }
   };
-  // Code Resurrection state
+
+  // ─── Code Resurrection ──────────────────────────────────────────────────────
   const [resurrectionPaths, setResurrectionPaths] = useState<string[]>([]);
   const [resurrectionIndexed, setResurrectionIndexed] = useState(0);
   const [newResurrectionPath, setNewResurrectionPath] = useState('');
@@ -270,12 +608,12 @@ export default function ConfigPage() {
 
   useEffect(() => {
     fetchAPI('/api/config/resurrection_paths')
-      .then(d => {
+      .then((d: any) => {
         setResurrectionPaths(d.paths ?? []);
         setResurrectionIndexed(d.indexed_files ?? 0);
       })
       .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleAddResurrectionPath = async () => {
@@ -283,7 +621,7 @@ export default function ConfigPage() {
     if (!path) return;
     setResurrectionLoading(true);
     try {
-      const data = await fetchAPI('/api/config/resurrection_paths', {
+      const data: any = await fetchAPI('/api/config/resurrection_paths', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -301,7 +639,7 @@ export default function ConfigPage() {
   const handleRemoveResurrectionPath = async (path: string) => {
     setResurrectionLoading(true);
     try {
-      const data = await fetchAPI('/api/config/resurrection_paths', {
+      const data: any = await fetchAPI('/api/config/resurrection_paths', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -315,170 +653,9 @@ export default function ConfigPage() {
     }
   };
 
+  // ─── JSON config ────────────────────────────────────────────────────────────
   const [jsonConfig, setJsonConfig] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [telegramToken, setTelegramToken] = useState('');
-  const [customModel, setCustomModel] = useState('');
-  const [customProvider, setCustomProvider] = useState('');
-  const [savedCustomModels, setSavedCustomModels] = useState<Record<string, string[]>>({});
-  const [googleCredJson, setGoogleCredJson] = useState('');
-  const [stitchKey, setStitchKey] = useState('');
-  const [stitchSaving, setStitchSaving] = useState(false);
-  const [modelParams, setModelParams] = useState<{temperature?: number; max_tokens?: number; top_p?: number}>({});
-  const [paramsSaving, setParamsSaving] = useState(false);
-
-  const handleStitchSave = async () => {
-    if (!stitchKey.trim()) return;
-    setStitchSaving(true);
-    try {
-      await saveSetup.mutateAsync({ STITCH_API_KEY: stitchKey.trim() });
-      setStitchKey('');
-      toast.success('Stitch API key saved');
-    } catch {
-      toast.error('Failed to save Stitch API key');
-    } finally {
-      setStitchSaving(false);
-    }
-  };
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('openacm_custom_models');
-      if (stored) setSavedCustomModels(JSON.parse(stored));
-    } catch {}
-  }, []);
-
-  const persistCustomModel = (modelName: string, providerId: string) => {
-    setSavedCustomModels(prev => {
-      const list = prev[providerId] ?? [];
-      if (list.includes(modelName)) return prev;
-      const updated = { ...prev, [providerId]: [...list, modelName] };
-      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
-  const removeCustomModel = (modelName: string, providerId: string) => {
-    setSavedCustomModels(prev => {
-      const updated = { ...prev, [providerId]: (prev[providerId] ?? []).filter(m => m !== modelName) };
-      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
-  useEffect(() => {
-    if (!model?.model || !model?.provider) return;
-    fetchAPI(`/api/config/model-params?provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`)
-      .then(d => setModelParams((d as {temperature?: number; max_tokens?: number; top_p?: number}) || {}))
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model?.model, model?.provider]);
-
-  const handleSaveParams = async () => {
-    if (!model?.model || !model?.provider) return;
-    setParamsSaving(true);
-    try {
-      await fetchAPI('/api/config/model-params', {
-        method: 'PATCH',
-        body: JSON.stringify({ provider: model.provider, model: model.model, ...modelParams }),
-      });
-      toast.success('Model parameters saved');
-    } catch {
-      toast.error('Failed to save parameters');
-    } finally {
-      setParamsSaving(false);
-    }
-  };
-
-  // Compaction settings
-  const [compactThreshold, setCompactThreshold] = useState(25);
-  const [compactKeepRecent, setCompactKeepRecent] = useState(6);
-  const [compactionSaving, setCompactionSaving] = useState(false);
-
-  useEffect(() => {
-    fetchAPI('/api/config/compaction')
-      .then((d: unknown) => {
-        const data = d as { compact_threshold?: number; compact_keep_recent?: number };
-        if (typeof data?.compact_threshold === 'number') setCompactThreshold(data.compact_threshold);
-        if (typeof data?.compact_keep_recent === 'number') setCompactKeepRecent(data.compact_keep_recent);
-      })
-      .catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const saveCompactionSettings = async (threshold: number, keepRecent: number) => {
-    setCompactionSaving(true);
-    try {
-      await fetchAPI('/api/config/compaction', {
-        method: 'POST',
-        body: JSON.stringify({ compact_threshold: threshold, compact_keep_recent: keepRecent }),
-      });
-      toast.success('Compaction settings saved');
-    } catch {
-      toast.error('Failed to save compaction settings');
-    } finally {
-      setCompactionSaving(false);
-    }
-  };
-
-  const { data: memoryStats } = useMemoryStats();
-  const clearMemory = useClearMemory();
-
-  const handleClearMemory = async () => {
-    if (!window.confirm('¿Estás seguro de que quieres borrar TODA la memoria RAG? Esta acción no se puede deshacer.')) return;
-    try {
-      const result = await clearMemory.mutateAsync();
-      toast.success(`Memoria borrada — ${result?.deleted ?? 0} documentos eliminados`);
-    } catch {
-      toast.error('Error al borrar la memoria');
-    }
-  };
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-  };
-
-  const { data: providerStatus } = useProviderStatus();
-  const { data: googleStatus } = useGoogleStatus();
-  const { data: customProviders = [] } = useCustomProviders();
-  const addCustomProvider = useAddCustomProvider();
-  const updateCustomProvider = useUpdateCustomProvider();
-  const deleteCustomProvider = useDeleteCustomProvider();
-
-  const [showAddCustomProvider, setShowAddCustomProvider] = useState(false);
-  const [cpForm, setCpForm] = useState({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
-  const [editingCpId, setEditingCpId] = useState<string | null>(null);
-  const [editCpForm, setEditCpForm] = useState({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
-
-  const handleAddCustomProvider = async () => {
-    const { name, base_url, api_key, default_model, suggested_models } = cpForm;
-    if (!name.trim() || !base_url.trim()) return;
-    const suggested = suggested_models.split(',').map(s => s.trim()).filter(Boolean);
-    await addCustomProvider.mutateAsync({ name: name.trim(), base_url: base_url.trim(), api_key: api_key.trim() || undefined, default_model: default_model.trim() || undefined, suggested_models: suggested.length ? suggested : undefined });
-    setCpForm({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
-    setShowAddCustomProvider(false);
-  };
-
-  const handleUpdateCustomProvider = async (id: string) => {
-    const { name, base_url, api_key, default_model, suggested_models } = editCpForm;
-    const suggested = suggested_models.split(',').map(s => s.trim()).filter(Boolean);
-    await updateCustomProvider.mutateAsync({ id, name: name.trim(), base_url: base_url.trim(), api_key: api_key.trim() || undefined, default_model: default_model.trim(), suggested_models: suggested });
-    setEditingCpId(null);
-  };
-  const saveGoogleCreds = useSaveGoogleCredentials();
-  const deleteGoogleCreds = useDeleteGoogleCredentials();
-  const startGoogleAuth = useStartGoogleAuth();
-
-  // Initialize JSON config when data loads
-  useState(() => {
-    if (config) {
-      setJsonConfig(JSON.stringify(config, null, 2));
-    }
-  });
 
   const handleSaveConfig = async () => {
     setIsSaving(true);
@@ -499,6 +676,100 @@ export default function ConfigPage() {
     }
   };
 
+  // ─── Telegram ───────────────────────────────────────────────────────────────
+  const [telegramToken, setTelegramToken] = useState('');
+
+  const handleTelegramSave = async () => {
+    if (telegramToken.trim()) {
+      await saveSetup.mutateAsync({ TELEGRAM_TOKEN: telegramToken.trim() });
+      toast.success('Telegram token saved');
+      setTelegramToken('');
+    }
+  };
+
+  // ─── Stitch ─────────────────────────────────────────────────────────────────
+  const [stitchKey, setStitchKey] = useState('');
+  const [stitchSaving, setStitchSaving] = useState(false);
+
+  const handleStitchSave = async () => {
+    if (!stitchKey.trim()) return;
+    setStitchSaving(true);
+    try {
+      await saveSetup.mutateAsync({ STITCH_API_KEY: stitchKey.trim() });
+      setStitchKey('');
+      toast.success('Stitch API key saved');
+    } catch {
+      toast.error('Failed to save Stitch API key');
+    } finally {
+      setStitchSaving(false);
+    }
+  };
+
+  // ─── Model selection ────────────────────────────────────────────────────────
+  const [customModel, setCustomModel] = useState('');
+  const [customProvider, setCustomProvider] = useState('');
+  const [savedCustomModels, setSavedCustomModels] = useState<Record<string, string[]>>({});
+  const [modelParams, setModelParams] = useState<{ temperature?: number; max_tokens?: number; top_p?: number }>({});
+  const [paramsSaving, setParamsSaving] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('openacm_custom_models');
+      if (stored) setSavedCustomModels(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const persistCustomModel = (modelName: string, providerId: string) => {
+    setSavedCustomModels((prev) => {
+      const list = prev[providerId] ?? [];
+      if (list.includes(modelName)) return prev;
+      const updated = { ...prev, [providerId]: [...list, modelName] };
+      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const removeCustomModel = (modelName: string, providerId: string) => {
+    setSavedCustomModels((prev) => {
+      const updated = {
+        ...prev,
+        [providerId]: (prev[providerId] ?? []).filter((m) => m !== modelName),
+      };
+      localStorage.setItem('openacm_custom_models', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  useEffect(() => {
+    if (!model?.model || !model?.provider) return;
+    fetchAPI(
+      `/api/config/model-params?provider=${encodeURIComponent(model.provider)}&model=${encodeURIComponent(model.model)}`
+    )
+      .then((d) =>
+        setModelParams(
+          (d as { temperature?: number; max_tokens?: number; top_p?: number }) || {}
+        )
+      )
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.model, model?.provider]);
+
+  const handleSaveParams = async () => {
+    if (!model?.model || !model?.provider) return;
+    setParamsSaving(true);
+    try {
+      await fetchAPI('/api/config/model-params', {
+        method: 'PATCH',
+        body: JSON.stringify({ provider: model.provider, model: model.model, ...modelParams }),
+      });
+      toast.success('Model parameters saved');
+    } catch {
+      toast.error('Failed to save parameters');
+    } finally {
+      setParamsSaving(false);
+    }
+  };
+
   const handleSetModel = (modelName: string, providerId: string) => {
     setModelMut.mutate({ model: modelName, provider: providerId });
   };
@@ -511,562 +782,1434 @@ export default function ConfigPage() {
     setCustomModel('');
   };
 
-  // Build provider list from API response, merging static definitions with custom ones
+  // ─── Compaction ─────────────────────────────────────────────────────────────
+  const [compactThreshold, setCompactThreshold] = useState(25);
+  const [compactKeepRecent, setCompactKeepRecent] = useState(6);
+  const [compactionSaving, setCompactionSaving] = useState(false);
+
+  useEffect(() => {
+    fetchAPI('/api/config/compaction')
+      .then((d: unknown) => {
+        const data = d as { compact_threshold?: number; compact_keep_recent?: number };
+        if (typeof data?.compact_threshold === 'number') setCompactThreshold(data.compact_threshold);
+        if (typeof data?.compact_keep_recent === 'number') setCompactKeepRecent(data.compact_keep_recent);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveCompactionSettings = async (threshold: number, keepRecent: number) => {
+    setCompactionSaving(true);
+    try {
+      await fetchAPI('/api/config/compaction', {
+        method: 'POST',
+        body: JSON.stringify({ compact_threshold: threshold, compact_keep_recent: keepRecent }),
+      });
+      toast.success('Compaction settings saved');
+    } catch {
+      toast.error('Failed to save compaction settings');
+    } finally {
+      setCompactionSaving(false);
+    }
+  };
+
+  // ─── Memory ─────────────────────────────────────────────────────────────────
+  const { data: memoryStats } = useMemoryStats();
+  const clearMemory = useClearMemory();
+
+  const handleClearMemory = async () => {
+    if (
+      !window.confirm(
+        '¿Estás seguro de que quieres borrar TODA la memoria RAG? Esta acción no se puede deshacer.'
+      )
+    )
+      return;
+    try {
+      const result = await clearMemory.mutateAsync();
+      toast.success(`Memoria borrada — ${result?.deleted ?? 0} documentos eliminados`);
+    } catch {
+      toast.error('Error al borrar la memoria');
+    }
+  };
+
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  };
+
+  // ─── Providers ──────────────────────────────────────────────────────────────
+  const { data: providerStatus } = useProviderStatus();
+  const { data: googleStatus } = useGoogleStatus();
+  const { data: customProviders = [] } = useCustomProviders();
+  const addCustomProvider = useAddCustomProvider();
+  const updateCustomProvider = useUpdateCustomProvider();
+  const deleteCustomProvider = useDeleteCustomProvider();
+
+  const [showAddCustomProvider, setShowAddCustomProvider] = useState(false);
+  const [cpForm, setCpForm] = useState({
+    name: '',
+    base_url: '',
+    api_key: '',
+    default_model: '',
+    suggested_models: '',
+  });
+  const [editingCpId, setEditingCpId] = useState<string | null>(null);
+  const [editCpForm, setEditCpForm] = useState({
+    name: '',
+    base_url: '',
+    api_key: '',
+    default_model: '',
+    suggested_models: '',
+  });
+
+  const handleAddCustomProvider = async () => {
+    const { name, base_url, api_key, default_model, suggested_models } = cpForm;
+    if (!name.trim() || !base_url.trim()) return;
+    const suggested = suggested_models
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await addCustomProvider.mutateAsync({
+      name: name.trim(),
+      base_url: base_url.trim(),
+      api_key: api_key.trim() || undefined,
+      default_model: default_model.trim() || undefined,
+      suggested_models: suggested.length ? suggested : undefined,
+    });
+    setCpForm({ name: '', base_url: '', api_key: '', default_model: '', suggested_models: '' });
+    setShowAddCustomProvider(false);
+  };
+
+  const handleUpdateCustomProvider = async (id: string) => {
+    const { name, base_url, api_key, default_model, suggested_models } = editCpForm;
+    const suggested = suggested_models
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await updateCustomProvider.mutateAsync({
+      id,
+      name: name.trim(),
+      base_url: base_url.trim(),
+      api_key: api_key.trim() || undefined,
+      default_model: default_model.trim(),
+      suggested_models: suggested,
+    });
+    setEditingCpId(null);
+  };
+
+  const saveGoogleCreds = useSaveGoogleCredentials();
+  const deleteGoogleCreds = useDeleteGoogleCredentials();
+  const startGoogleAuth = useStartGoogleAuth();
+  const [googleCredJson, setGoogleCredJson] = useState('');
+
+  // Build merged provider list
   const configuredProviders = Object.entries(providerStatus?.providers ?? {})
     .filter(([, enabled]) => enabled)
     .map(([id]) => {
       const staticDef = getProviderById(id);
       if (staticDef) return staticDef;
-      const customDef = customProviders.find(cp => cp.id === id);
-      if (customDef) return {
-        id: customDef.id,
-        name: customDef.name,
-        envVar: '',
-        needsKey: customDef.has_key,
-        suggestedModels: customDef.suggested_models,
-        apiKeyUrl: '',
-        description: `Custom — ${customDef.base_url}`,
-      };
+      const customDef = customProviders.find((cp) => cp.id === id);
+      if (customDef)
+        return {
+          id: customDef.id,
+          name: customDef.name,
+          envVar: '',
+          needsKey: customDef.has_key,
+          suggestedModels: customDef.suggested_models,
+          apiKeyUrl: '',
+          description: `Custom — ${customDef.base_url}`,
+        };
       return { id, name: id, envVar: '', needsKey: true, suggestedModels: [], apiKeyUrl: '', description: '' };
     });
   const activeProviderId = model?.provider || '';
 
-  const handleTelegramSave = async () => {
-    if (telegramToken.trim()) {
-      await saveSetup.mutateAsync({ TELEGRAM_TOKEN: telegramToken.trim() });
-      toast.success('Telegram token saved');
-      setTelegramToken('');
-    }
+  // ─── Section scroll helper ───────────────────────────────────────────────────
+  const scrollTo = (id: NavSection) => {
+    setActiveSection(id);
+    const el = document.getElementById(`section-${id}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <AppLayout>
-      <div className="p-6 lg:p-8">
-        {/* Header */}
-        <header className="mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold text-white">{tc.title}</h1>
-              <p className="text-slate-400 mt-1">{tc.subtitle}</p>
-            </div>
-          </div>
-        </header>
+      <div
+        style={{
+          minHeight: '100vh',
+          background: 'var(--acm-base)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {/* Page header */}
+        <div style={{ padding: '24px 28px 0' }}>
+          <span className="acm-breadcrumb">System / Config</span>
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'var(--acm-fg)',
+              margin: 0,
+              marginBottom: 4,
+            }}
+          >
+            {tc.title}
+          </h1>
+          <p style={{ fontSize: 13, color: 'var(--acm-fg-3)', margin: 0 }}>{tc.subtitle}</p>
+        </div>
 
-        {/* Config Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* LLM Providers */}
-          <div className="lg:col-span-2">
+        {/* Body: left nav + right content */}
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            gap: 0,
+            padding: '20px 28px 40px',
+            alignItems: 'flex-start',
+          }}
+        >
+          {/* ── Left sidebar nav ── */}
+          <nav
+            style={{
+              width: 210,
+              flexShrink: 0,
+              position: 'sticky',
+              top: 20,
+              paddingRight: 16,
+            }}
+          >
+            {NAV_GROUPS.map((group) => (
+              <div key={group.group}>
+                <NavGroupLabel>{group.group}</NavGroupLabel>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {group.items.map((item) => (
+                    <NavItem
+                      key={item.id}
+                      label={item.label}
+                      icon={item.icon}
+                      active={activeSection === item.id}
+                      onClick={() => scrollTo(item.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Save all */}
+            <div style={{ marginTop: 24, paddingRight: 0 }}>
+              <button
+                onClick={handleSaveConfig}
+                disabled={isSaving}
+                className="btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
+              >
+                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save all
+              </button>
+            </div>
+
+            {/* System info */}
+            <div style={{ marginTop: 20, padding: '12px 12px', background: 'var(--acm-card)', border: '1px solid var(--acm-border)', borderRadius: 'var(--acm-radius)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                <span className="dot dot-ok" />
+                <span style={{ fontSize: 11, color: 'var(--acm-ok)' }}>System Online</span>
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--acm-fg-4)' }}>
+                OpenACM {appVersion || 'v0.1.0'}
+              </div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--acm-fg-4)' }}>Next.js 16 · React 19</div>
+              <button
+                onClick={() => router.push('/onboarding?force=true')}
+                style={{
+                  marginTop: 10,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 11,
+                  color: 'var(--acm-accent)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              >
+                <Wand2 size={11} />
+                Setup Wizard
+              </button>
+            </div>
+          </nav>
+
+          {/* ── Right content ── */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 20,
+            }}
+            className="acm-scroll"
+          >
+
+            {/* ── LLM Providers ── */}
             <ConfigSection
+              id="section-providers"
               title={tc.providers.title}
               subtitle={tc.providers.subtitle}
               icon={Settings}
             >
               <ProviderSetupForm mode="config" />
-            </ConfigSection>
-          </div>
 
-          {/* Custom Providers */}
-          <div className="lg:col-span-2">
-            <ConfigSection
-              title="Custom Providers"
-              subtitle="Add any OpenAI-compatible endpoint — LM Studio, Together AI, Groq, etc."
-              icon={Server}
-            >
-              <div className="space-y-4">
-                {/* Existing custom providers list */}
-                {customProviders.length > 0 && (
-                  <div className="space-y-2">
-                    {customProviders.map((cp) => (
-                      <div key={cp.id} className="rounded-lg border border-slate-700/50 bg-slate-800/30 overflow-hidden">
-                        {editingCpId === cp.id ? (
-                          <div className="p-4 space-y-3">
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block text-xs text-slate-500 mb-1">Name</label>
-                                <input
-                                  value={editCpForm.name}
-                                  onChange={e => setEditCpForm(p => ({ ...p, name: e.target.value }))}
-                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-slate-500 mb-1">Base URL</label>
-                                <input
-                                  value={editCpForm.base_url}
-                                  onChange={e => setEditCpForm(p => ({ ...p, base_url: e.target.value }))}
-                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-slate-500 mb-1">Default Model</label>
-                                <input
-                                  value={editCpForm.default_model}
-                                  onChange={e => setEditCpForm(p => ({ ...p, default_model: e.target.value }))}
-                                  placeholder="e.g. llama-3.1-8b"
-                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                              <div>
-                                <label className="block text-xs text-slate-500 mb-1">API Key (leave blank to keep existing)</label>
-                                <input
-                                  type="password"
-                                  value={editCpForm.api_key}
-                                  onChange={e => setEditCpForm(p => ({ ...p, api_key: e.target.value }))}
-                                  placeholder="sk-..."
-                                  className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs text-slate-500 mb-1">Suggested Models (comma-separated)</label>
-                              <input
-                                value={editCpForm.suggested_models}
-                                onChange={e => setEditCpForm(p => ({ ...p, suggested_models: e.target.value }))}
-                                placeholder="model-a, model-b"
-                                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              />
-                            </div>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleUpdateCustomProvider(cp.id)}
-                                disabled={updateCustomProvider.isPending}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
-                              >
-                                {updateCustomProvider.isPending ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                                Save
-                              </button>
-                              <button onClick={() => setEditingCpId(null)} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm transition-colors">
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="px-4 py-3 flex items-center justify-between">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-white">{cp.name}</span>
-                                {cp.has_key && <span className="text-[10px] bg-green-500/15 text-green-400 border border-green-500/30 rounded px-1.5 py-0.5">Key set</span>}
-                              </div>
-                              <div className="text-xs text-slate-500 font-mono truncate mt-0.5">{cp.base_url}</div>
-                              {cp.default_model && <div className="text-xs text-slate-400 mt-0.5">Default: <span className="font-mono">{cp.default_model}</span></div>}
-                            </div>
-                            <div className="flex items-center gap-1 ml-3">
-                              <button
-                                onClick={() => {
-                                  setEditingCpId(cp.id);
-                                  setEditCpForm({ name: cp.name, base_url: cp.base_url, api_key: '', default_model: cp.default_model, suggested_models: cp.suggested_models.join(', ') });
-                                }}
-                                className="p-1.5 text-slate-500 hover:text-blue-400 transition-colors"
-                                title="Edit"
-                              >
-                                <Pencil size={14} />
-                              </button>
-                              <button
-                                onClick={() => deleteCustomProvider.mutate(cp.id)}
-                                disabled={deleteCustomProvider.isPending}
-                                className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
-                                title="Delete"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
+              {/* Provider cards overview */}
+              {configuredProviders.length > 0 && (
+                <div>
+                  <Divider />
+                  <div className="label" style={{ marginBottom: 12 }}>Configured providers</div>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                      gap: 10,
+                    }}
+                  >
+                    {configuredProviders.map((prov) => (
+                      <ProviderCard
+                        key={prov.id}
+                        name={prov.name}
+                        description={prov.description}
+                        active={activeProviderId === prov.id}
+                        configured={true}
+                        onClick={() => {}}
+                      />
                     ))}
                   </div>
-                )}
+                </div>
+              )}
+            </ConfigSection>
 
-                {/* Add form */}
+            {/* ── Custom Providers ── */}
+            <ConfigSection
+              id="section-custom-providers"
+              title="Custom Providers"
+              subtitle="OpenAI-compatible endpoints — LM Studio, Together AI, Groq, Ollama, etc."
+              icon={Server}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* Existing custom providers */}
+                {customProviders.map((cp) => (
+                  <div
+                    key={cp.id}
+                    style={{
+                      border: '1px solid var(--acm-border)',
+                      borderRadius: 'var(--acm-radius)',
+                      overflow: 'hidden',
+                      background: 'var(--acm-elev)',
+                    }}
+                  >
+                    {editingCpId === cp.id ? (
+                      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                          <div>
+                            <label className="label" style={{ display: 'block', marginBottom: 8 }}>Name</label>
+                            <input
+                              className="acm-input"
+                              value={editCpForm.name}
+                              onChange={(e) => setEditCpForm((p) => ({ ...p, name: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="label" style={{ display: 'block', marginBottom: 8 }}>Base URL</label>
+                            <input
+                              className="acm-input mono"
+                              value={editCpForm.base_url}
+                              onChange={(e) => setEditCpForm((p) => ({ ...p, base_url: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="label" style={{ display: 'block', marginBottom: 8 }}>Default Model</label>
+                            <input
+                              className="acm-input mono"
+                              placeholder="e.g. llama-3.1-8b"
+                              value={editCpForm.default_model}
+                              onChange={(e) => setEditCpForm((p) => ({ ...p, default_model: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                              API Key (blank = keep)
+                            </label>
+                            <input
+                              type="password"
+                              className="acm-input"
+                              placeholder="sk-..."
+                              value={editCpForm.api_key}
+                              onChange={(e) => setEditCpForm((p) => ({ ...p, api_key: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                            Suggested Models (comma-separated)
+                          </label>
+                          <input
+                            className="acm-input mono"
+                            placeholder="model-a, model-b"
+                            value={editCpForm.suggested_models}
+                            onChange={(e) => setEditCpForm((p) => ({ ...p, suggested_models: e.target.value }))}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            className="btn-primary"
+                            onClick={() => handleUpdateCustomProvider(cp.id)}
+                            disabled={updateCustomProvider.isPending}
+                          >
+                            {updateCustomProvider.isPending ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <Save size={13} />
+                            )}
+                            Save
+                          </button>
+                          <button className="btn-secondary" onClick={() => setEditingCpId(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          padding: '10px 14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--acm-fg)' }}>
+                              {cp.name}
+                            </span>
+                            {cp.has_key && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: 'var(--acm-ok)',
+                                  border: '1px solid oklch(0.75 0.09 160 / 0.3)',
+                                  borderRadius: 4,
+                                  padding: '1px 6px',
+                                }}
+                              >
+                                Key set
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="mono"
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--acm-fg-4)',
+                              marginTop: 2,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {cp.base_url}
+                          </div>
+                          {cp.default_model && (
+                            <div style={{ fontSize: 11, color: 'var(--acm-fg-3)', marginTop: 2 }}>
+                              Default: <span className="mono">{cp.default_model}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            onClick={() => {
+                              setEditingCpId(cp.id);
+                              setEditCpForm({
+                                name: cp.name,
+                                base_url: cp.base_url,
+                                api_key: '',
+                                default_model: cp.default_model,
+                                suggested_models: cp.suggested_models.join(', '),
+                              });
+                            }}
+                            title="Edit"
+                            style={{
+                              padding: 6,
+                              color: 'var(--acm-fg-4)',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                          <button
+                            onClick={() => deleteCustomProvider.mutate(cp.id)}
+                            disabled={deleteCustomProvider.isPending}
+                            title="Delete"
+                            style={{
+                              padding: 6,
+                              color: 'var(--acm-fg-4)',
+                              background: 'none',
+                              border: 'none',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {/* Add form or add button */}
                 {showAddCustomProvider ? (
-                  <div className="p-4 rounded-lg border border-blue-500/30 bg-blue-500/5 space-y-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-white">New Custom Provider</span>
-                      <button onClick={() => setShowAddCustomProvider(false)} className="text-slate-500 hover:text-slate-300">
-                        <X size={16} />
+                  <div
+                    style={{
+                      border: '1px solid var(--acm-accent-soft, oklch(0.84 0.16 82 / 0.2))',
+                      borderRadius: 'var(--acm-radius)',
+                      padding: 16,
+                      background: 'var(--acm-accent-soft)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--acm-fg)' }}>
+                        New Custom Provider
+                      </span>
+                      <button
+                        onClick={() => setShowAddCustomProvider(false)}
+                        style={{ color: 'var(--acm-fg-4)', background: 'none', border: 'none', cursor: 'pointer' }}
+                      >
+                        <X size={15} />
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">Name <span className="text-red-400">*</span></label>
+                        <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                          Name <span style={{ color: 'var(--acm-err)' }}>*</span>
+                        </label>
                         <input
-                          value={cpForm.name}
-                          onChange={e => setCpForm(p => ({ ...p, name: e.target.value }))}
+                          className="acm-input"
                           placeholder="e.g. LM Studio"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={cpForm.name}
+                          onChange={(e) => setCpForm((p) => ({ ...p, name: e.target.value }))}
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">Base URL <span className="text-red-400">*</span></label>
+                        <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                          Base URL <span style={{ color: 'var(--acm-err)' }}>*</span>
+                        </label>
                         <input
-                          value={cpForm.base_url}
-                          onChange={e => setCpForm(p => ({ ...p, base_url: e.target.value }))}
+                          className="acm-input mono"
                           placeholder="http://localhost:1234/v1"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={cpForm.base_url}
+                          onChange={(e) => setCpForm((p) => ({ ...p, base_url: e.target.value }))}
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">Default Model</label>
+                        <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                          Default Model
+                        </label>
                         <input
-                          value={cpForm.default_model}
-                          onChange={e => setCpForm(p => ({ ...p, default_model: e.target.value }))}
+                          className="acm-input mono"
                           placeholder="e.g. llama-3.1-8b-instruct"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={cpForm.default_model}
+                          onChange={(e) => setCpForm((p) => ({ ...p, default_model: e.target.value }))}
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-slate-500 mb-1">API Key (optional)</label>
+                        <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                          API Key (optional)
+                        </label>
                         <input
                           type="password"
-                          value={cpForm.api_key}
-                          onChange={e => setCpForm(p => ({ ...p, api_key: e.target.value }))}
+                          className="acm-input"
                           placeholder="sk-... or leave blank for local"
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={cpForm.api_key}
+                          onChange={(e) => setCpForm((p) => ({ ...p, api_key: e.target.value }))}
                         />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs text-slate-500 mb-1">Suggested Models (comma-separated, optional)</label>
+                      <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                        Suggested Models (comma-separated, optional)
+                      </label>
                       <input
-                        value={cpForm.suggested_models}
-                        onChange={e => setCpForm(p => ({ ...p, suggested_models: e.target.value }))}
+                        className="acm-input mono"
                         placeholder="model-a, model-b, model-c"
-                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        value={cpForm.suggested_models}
+                        onChange={(e) => setCpForm((p) => ({ ...p, suggested_models: e.target.value }))}
                       />
                     </div>
-                    <div className="pt-1 text-xs text-slate-500">
-                      Any OpenAI-compatible endpoint works — LM Studio, Ollama's OpenAI API, Together AI, Groq, Perplexity, etc.
-                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>
+                      Any OpenAI-compatible endpoint works — LM Studio, Ollama, Together AI, Groq, Perplexity, etc.
+                    </p>
                     <button
+                      className="btn-primary"
                       onClick={handleAddCustomProvider}
                       disabled={!cpForm.name.trim() || !cpForm.base_url.trim() || addCustomProvider.isPending}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                     >
-                      {addCustomProvider.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                      {addCustomProvider.isPending ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Plus size={13} />
+                      )}
                       Add Provider
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => setShowAddCustomProvider(true)}
-                    className="flex items-center gap-2 px-4 py-2 border border-dashed border-slate-600 hover:border-blue-500/50 hover:bg-blue-500/5 text-slate-400 hover:text-blue-400 text-sm rounded-lg transition-colors w-full justify-center"
-                  >
-                    <Plus size={14} />
-                    Add Custom Provider
-                  </button>
+                  <AddProviderCard onClick={() => setShowAddCustomProvider(true)} />
                 )}
               </div>
             </ConfigSection>
-          </div>
 
-          {/* Default Model */}
-          <ConfigSection title={tc.model.title} icon={Bot}>
-            {isLoading ? (
-              <div className="space-y-3">
-                <div className="h-10 bg-slate-800 rounded animate-pulse" />
-                <div className="h-10 bg-slate-800 rounded animate-pulse" />
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {/* Current active indicator */}
-                <div className="flex items-center justify-between p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                  <div>
-                    <p className="text-xs text-blue-400">Active</p>
-                    <p className="text-sm font-mono text-white">{model?.model || 'Not configured'}</p>
-                  </div>
-                  <span className="text-xs text-slate-400">{model?.provider || ''}</span>
+            {/* ── Default Model ── */}
+            <ConfigSection
+              id="section-model"
+              title={tc.model.title}
+              subtitle="Active model used for all AI inference"
+              icon={Bot}
+            >
+              {isLoading ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ height: 40, background: 'var(--acm-elev)', borderRadius: 6 }} />
+                  <div style={{ height: 40, background: 'var(--acm-elev)', borderRadius: 6 }} />
                 </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {/* Current active indicator */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      background: 'var(--acm-accent-soft)',
+                      border: '1px solid oklch(0.84 0.16 82 / 0.2)',
+                      borderRadius: 'var(--acm-radius)',
+                    }}
+                  >
+                    <div>
+                      <div className="label" style={{ marginBottom: 4 }}>Active</div>
+                      <div className="mono" style={{ fontSize: 13, color: 'var(--acm-fg)' }}>
+                        {model?.model || 'Not configured'}
+                      </div>
+                    </div>
+                    {model?.provider && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--acm-fg-3)',
+                          padding: '2px 8px',
+                          border: '1px solid var(--acm-border)',
+                          borderRadius: 4,
+                        }}
+                      >
+                        {model.provider}
+                      </span>
+                    )}
+                  </div>
 
-                {/* Provider tabs */}
-                {configuredProviders.length > 0 && (
-                  <div>
-                    <p className="text-xs text-slate-500 mb-2">Switch provider &amp; model</p>
-                    <div className="space-y-3">
-                      {configuredProviders.map((prov) => {
-                        const isActive = activeProviderId === prov.id;
-                        const provDef = getProviderById(prov.id);
-                        const suggestedModels = provDef?.suggestedModels ?? [];
-                        const customSaved = (savedCustomModels[prov.id] ?? []).filter(m => !suggestedModels.includes(m));
+                  {/* Provider + model selector */}
+                  {configuredProviders.length > 0 && (
+                    <div>
+                      <div className="label" style={{ marginBottom: 10 }}>Switch provider & model</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {configuredProviders.map((prov) => {
+                          const isActive = activeProviderId === prov.id;
+                          const provDef = getProviderById(prov.id);
+                          const suggestedModels = provDef?.suggestedModels ?? [];
+                          const customSaved = (savedCustomModels[prov.id] ?? []).filter(
+                            (m) => !suggestedModels.includes(m)
+                          );
 
-                        return (
-                          <div key={prov.id} className={`rounded-lg border transition-colors ${
-                            isActive ? 'border-blue-500/40 bg-blue-500/5' : 'border-slate-700/50 bg-slate-800/30'
-                          }`}>
-                            <div className="px-3 py-2 flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-blue-400' : 'bg-slate-600'}`} />
-                                <span className={`text-sm font-medium ${isActive ? 'text-white' : 'text-slate-400'}`}>
+                          return (
+                            <div
+                              key={prov.id}
+                              style={{
+                                border: `1px solid ${isActive ? 'oklch(0.84 0.16 82 / 0.3)' : 'var(--acm-border)'}`,
+                                borderRadius: 'var(--acm-radius)',
+                                overflow: 'hidden',
+                                background: isActive ? 'var(--acm-accent-soft)' : 'var(--acm-elev)',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  padding: '8px 12px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  borderBottom: '1px solid var(--acm-border)',
+                                }}
+                              >
+                                <span
+                                  className="dot"
+                                  style={{
+                                    background: isActive ? 'var(--acm-accent)' : 'var(--acm-fg-4)',
+                                  }}
+                                />
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: isActive ? 'var(--acm-accent)' : 'var(--acm-fg-2)',
+                                    flex: 1,
+                                  }}
+                                >
                                   {prov.name}
                                 </span>
-                              </div>
-                              {isActive && (
-                                <span className="text-[10px] uppercase tracking-wider text-blue-400 font-semibold">Active</span>
-                              )}
-                            </div>
-                            {provDef?.cliDisclaimer && (
-                              <div className="mx-3 mb-2 flex items-start gap-1.5 p-2 bg-amber-500/5 border border-amber-500/20 rounded text-xs text-amber-300/80 leading-relaxed">
-                                <span className="mt-0.5 flex-shrink-0">⚠</span>
-                                {provDef.cliDisclaimer}
-                              </div>
-                            )}
-                            <div className="px-3 pb-2 flex flex-wrap gap-1.5">
-                              {suggestedModels.map((m) => {
-                                const isCurrent = model?.model === m && isActive;
-                                return (
-                                  <button
-                                    key={m}
-                                    onClick={() => handleSetModel(m, prov.id)}
-                                    disabled={setModelMut.isPending}
-                                    className={`px-2.5 py-1 rounded text-xs font-mono transition-colors ${
-                                      isCurrent
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-slate-700/60 text-slate-300 hover:bg-slate-600 hover:text-white'
-                                    } disabled:opacity-50`}
+                                {isActive && (
+                                  <span
+                                    style={{
+                                      fontSize: 10,
+                                      fontWeight: 700,
+                                      letterSpacing: '0.1em',
+                                      textTransform: 'uppercase',
+                                      color: 'var(--acm-accent)',
+                                    }}
                                   >
-                                    {m}
-                                  </button>
-                                );
-                              })}
-                              {customSaved.map((m) => {
-                                const isCurrent = model?.model === m && isActive;
-                                return (
-                                  <div key={m} className="relative group/cm flex items-center">
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+
+                              {provDef?.cliDisclaimer && (
+                                <div
+                                  style={{
+                                    margin: '8px 12px 0',
+                                    padding: '8px 10px',
+                                    background: 'oklch(0.84 0.16 82 / 0.05)',
+                                    border: '1px solid oklch(0.84 0.16 82 / 0.2)',
+                                    borderRadius: 6,
+                                    fontSize: 11,
+                                    color: 'var(--acm-warn)',
+                                    display: 'flex',
+                                    gap: 6,
+                                  }}
+                                >
+                                  <span style={{ flexShrink: 0 }}>⚠</span>
+                                  {provDef.cliDisclaimer}
+                                </div>
+                              )}
+
+                              <div
+                                style={{
+                                  padding: '8px 12px 10px',
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  gap: 6,
+                                }}
+                              >
+                                {suggestedModels.map((m) => {
+                                  const isCurrent = model?.model === m && isActive;
+                                  return (
                                     <button
+                                      key={m}
                                       onClick={() => handleSetModel(m, prov.id)}
                                       disabled={setModelMut.isPending}
-                                      className={`pl-2.5 pr-6 py-1 rounded text-xs font-mono transition-colors ${
-                                        isCurrent
-                                          ? 'bg-violet-600 text-white'
-                                          : 'bg-slate-700/60 text-violet-300 hover:bg-slate-600 hover:text-white border border-violet-700/40'
-                                      } disabled:opacity-50`}
+                                      className="mono"
+                                      style={{
+                                        padding: '3px 10px',
+                                        fontSize: 11,
+                                        borderRadius: 4,
+                                        border: `1px solid ${isCurrent ? 'transparent' : 'var(--acm-border-strong)'}`,
+                                        background: isCurrent ? 'var(--acm-accent)' : 'transparent',
+                                        color: isCurrent ? 'oklch(0.18 0.015 80)' : 'var(--acm-fg-2)',
+                                        cursor: 'pointer',
+                                        fontWeight: isCurrent ? 700 : 400,
+                                        transition: 'all 120ms ease',
+                                        opacity: setModelMut.isPending ? 0.5 : 1,
+                                      }}
                                     >
                                       {m}
                                     </button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); removeCustomModel(m, prov.id); }}
-                                      className="absolute right-1 text-slate-500 hover:text-red-400 transition-colors opacity-0 group-hover/cm:opacity-100"
-                                      title="Remove"
+                                  );
+                                })}
+                                {customSaved.map((m) => {
+                                  const isCurrent = model?.model === m && isActive;
+                                  return (
+                                    <div
+                                      key={m}
+                                      style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+                                      className="group/cm"
                                     >
-                                      ×
-                                    </button>
-                                  </div>
-                                );
-                              })}
+                                      <button
+                                        onClick={() => handleSetModel(m, prov.id)}
+                                        disabled={setModelMut.isPending}
+                                        className="mono"
+                                        style={{
+                                          padding: '3px 22px 3px 10px',
+                                          fontSize: 11,
+                                          borderRadius: 4,
+                                          border: `1px solid ${isCurrent ? 'transparent' : 'var(--acm-border-strong)'}`,
+                                          background: isCurrent ? 'var(--acm-accent)' : 'transparent',
+                                          color: isCurrent ? 'oklch(0.18 0.015 80)' : 'var(--acm-fg-3)',
+                                          cursor: 'pointer',
+                                          opacity: setModelMut.isPending ? 0.5 : 1,
+                                        }}
+                                      >
+                                        {m}
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          removeCustomModel(m, prov.id);
+                                        }}
+                                        style={{
+                                          position: 'absolute',
+                                          right: 4,
+                                          fontSize: 12,
+                                          color: 'var(--acm-fg-4)',
+                                          background: 'none',
+                                          border: 'none',
+                                          cursor: 'pointer',
+                                          lineHeight: 1,
+                                        }}
+                                        title="Remove"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Custom model */}
-                <div className="pt-3 border-t border-slate-800">
-                  <label className="block text-xs text-slate-500 mb-1.5">Custom model name</label>
-                  <div className="flex gap-2">
-                    <select
-                      value={customProvider}
-                      onChange={(e) => setCustomProvider(e.target.value)}
-                      className="px-2 py-2 bg-slate-900 border border-slate-600 rounded-lg text-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Provider</option>
-                      {configuredProviders.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={customModel}
-                      onChange={(e) => setCustomModel(e.target.value)}
-                      placeholder="e.g. gpt-4o-mini"
-                      className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                    <button
-                      onClick={handleSetCustomModel}
-                      disabled={!customModel.trim() || !customProvider || setModelMut.isPending}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
-                    >
-                      {setModelMut.isPending ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : (
-                        'Set'
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Model Parameters */}
-                {model?.model && (
-                  <div className="pt-3 border-t border-slate-800 space-y-3">
-                    <p className="text-xs text-slate-400 font-medium">Parameters for <span className="font-mono text-blue-400">{model.model}</span></p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <label className="text-xs text-slate-500">Temperature</label>
-                          <span className="text-xs text-slate-400 font-mono">{modelParams.temperature ?? 0.7}</span>
-                        </div>
-                        <input
-                          type="range" min="0" max="2" step="0.05"
-                          value={modelParams.temperature ?? 0.7}
-                          onChange={e => setModelParams(p => ({ ...p, temperature: parseFloat(e.target.value) }))}
-                          className="w-full accent-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <label className="text-xs text-slate-500">Top P</label>
-                          <span className="text-xs text-slate-400 font-mono">{modelParams.top_p ?? '—'}</span>
-                        </div>
-                        <input
-                          type="range" min="0" max="1" step="0.05"
-                          value={modelParams.top_p ?? 1}
-                          onChange={e => setModelParams(p => ({ ...p, top_p: parseFloat(e.target.value) }))}
-                          className="w-full accent-blue-500"
-                        />
+                          );
+                        })}
                       </div>
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 block mb-1">Max Tokens <span className="text-slate-600">(leave 0 for model default)</span></label>
+                  )}
+
+                  {/* Custom model name input */}
+                  <div>
+                    <Divider />
+                    <label className="label" style={{ display: 'block', marginBottom: 10 }}>
+                      Custom model name
+                    </label>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <select
+                        value={customProvider}
+                        onChange={(e) => setCustomProvider(e.target.value)}
+                        style={{
+                          padding: '7px 10px',
+                          background: 'var(--acm-elev)',
+                          border: '1px solid var(--acm-border)',
+                          borderRadius: 6,
+                          color: 'var(--acm-fg-2)',
+                          fontSize: 12,
+                          outline: 'none',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">Provider</option>
+                        {configuredProviders.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
                       <input
-                        type="number" min="0" step="256"
-                        value={modelParams.max_tokens ?? 0}
-                        onChange={e => setModelParams(p => ({ ...p, max_tokens: parseInt(e.target.value) || 0 }))}
-                        className="w-full px-3 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        type="text"
+                        className="acm-input mono"
+                        style={{ flex: 1 }}
+                        value={customModel}
+                        onChange={(e) => setCustomModel(e.target.value)}
+                        placeholder="e.g. gpt-4o-mini"
+                        onKeyDown={(e) => e.key === 'Enter' && handleSetCustomModel()}
                       />
+                      <button
+                        className="btn-secondary"
+                        onClick={handleSetCustomModel}
+                        disabled={!customModel.trim() || !customProvider || setModelMut.isPending}
+                      >
+                        {setModelMut.isPending ? <Loader2 size={13} className="animate-spin" /> : 'Set'}
+                      </button>
                     </div>
-                    <button
-                      onClick={handleSaveParams}
-                      disabled={paramsSaving}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded-lg transition-colors"
+                  </div>
+
+                  {/* Model parameters */}
+                  {model?.model && (
+                    <div>
+                      <Divider />
+                      <div className="label" style={{ marginBottom: 12 }}>
+                        Parameters for{' '}
+                        <span className="mono" style={{ color: 'var(--acm-accent)' }}>
+                          {model.model}
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
+                        <div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              marginBottom: 6,
+                            }}
+                          >
+                            <label className="label">Temperature</label>
+                            <span className="mono" style={{ fontSize: 11, color: 'var(--acm-accent)' }}>
+                              {modelParams.temperature ?? 0.7}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="2"
+                            step="0.05"
+                            value={modelParams.temperature ?? 0.7}
+                            onChange={(e) =>
+                              setModelParams((p) => ({ ...p, temperature: parseFloat(e.target.value) }))
+                            }
+                            style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
+                          />
+                        </div>
+                        <div>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              marginBottom: 6,
+                            }}
+                          >
+                            <label className="label">Top P</label>
+                            <span className="mono" style={{ fontSize: 11, color: 'var(--acm-accent)' }}>
+                              {modelParams.top_p ?? '—'}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={modelParams.top_p ?? 1}
+                            onChange={(e) =>
+                              setModelParams((p) => ({ ...p, top_p: parseFloat(e.target.value) }))
+                            }
+                            style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
+                          />
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 14 }}>
+                        <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                          Max Tokens{' '}
+                          <span style={{ color: 'var(--acm-fg-4)', fontWeight: 400 }}>
+                            (0 = model default)
+                          </span>
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="256"
+                          className="acm-input mono"
+                          value={modelParams.max_tokens ?? 0}
+                          onChange={(e) =>
+                            setModelParams((p) => ({ ...p, max_tokens: parseInt(e.target.value) || 0 }))
+                          }
+                        />
+                      </div>
+                      <button
+                        className="btn-primary"
+                        onClick={handleSaveParams}
+                        disabled={paramsSaving}
+                        style={{ width: '100%', justifyContent: 'center' }}
+                      >
+                        {paramsSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                        Save parameters
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </ConfigSection>
+
+            {/* ── Memory & RAG ── */}
+            <ConfigSection
+              id="section-memory"
+              title="Memory & RAG"
+              subtitle="vector-memory · long-term recall · auto-compaction"
+              icon={Brain}
+            >
+              {memoryStats?.status === 'unavailable' ? (
+                <p style={{ fontSize: 13, color: 'var(--acm-fg-4)' }}>
+                  RAG engine unavailable or not yet initialized.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  {/* System prompt textarea placeholder */}
+                  <div>
+                    <label className="label" style={{ display: 'block', marginBottom: 10 }}>
+                      System Prompt
+                    </label>
+                    <textarea
+                      rows={4}
+                      className="acm-input mono"
+                      style={{ resize: 'vertical', fontSize: 12, lineHeight: 1.6 }}
+                      placeholder="Optional system prompt injected before every conversation..."
+                    />
+                  </div>
+
+                  {/* Data stat tiles */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                    <StatTile
+                      label="Total documents"
+                      value={memoryStats?.total ?? 0}
+                      icon={Database}
+                    />
+                    <StatTile
+                      label="Storage"
+                      value={formatBytes(memoryStats?.size_bytes ?? 0)}
+                      icon={FolderOpen}
+                    />
+                    <StatTile
+                      label="Notes & facts"
+                      value={memoryStats?.by_type?.note ?? 0}
+                      icon={Lightbulb}
+                    />
+                  </div>
+
+                  {/* Memory type breakdown */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                    {[
+                      { key: 'note', label: 'Notes', Icon: Lightbulb, color: 'var(--acm-warn)' },
+                      { key: 'conversation', label: 'Conversations', Icon: MessageSquare, color: 'var(--acm-ok)' },
+                      { key: 'code_archive', label: 'Code archives', Icon: Code2, color: 'var(--acm-accent)' },
+                    ].map(({ key, label, Icon, color }) => {
+                      const count = memoryStats?.by_type?.[key] ?? 0;
+                      return (
+                        <div
+                          key={key}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            padding: '12px 14px',
+                            background: 'var(--acm-elev)',
+                            border: '1px solid var(--acm-border)',
+                            borderRadius: 'var(--acm-radius)',
+                          }}
+                        >
+                          <Icon size={16} style={{ color, flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>{label}</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--acm-fg)' }}>{count}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* RAG threshold slider */}
+                  <RagThresholdControl fetchAPI={fetchAPI} />
+
+                  {/* Auto-compaction */}
+                  <div>
+                    <Divider />
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        marginBottom: 6,
+                      }}
                     >
-                      {paramsSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                      Save parameters
+                      <ScrollText size={14} style={{ color: 'var(--acm-accent)' }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--acm-fg-2)' }}>
+                        Auto-compaction
+                      </span>
+                      {compactionSaving && (
+                        <Loader2 size={12} className="animate-spin" style={{ color: 'var(--acm-fg-4)', marginLeft: 'auto' }} />
+                      )}
+                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginBottom: 16, lineHeight: 1.6 }}>
+                      When a conversation gets long, older messages are summarized to free up context. Recent messages are always kept verbatim.
+                    </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {/* Compact after N messages */}
+                      <div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            marginBottom: 6,
+                          }}
+                        >
+                          <label className="label">Compact after</label>
+                          <span className="mono" style={{ fontSize: 11, color: 'var(--acm-accent)' }}>
+                            {compactThreshold} messages
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={5}
+                          max={100}
+                          step={5}
+                          value={compactThreshold}
+                          onChange={(e) => setCompactThreshold(Number(e.target.value))}
+                          onMouseUp={(e) =>
+                            saveCompactionSettings(
+                              Number((e.target as HTMLInputElement).value),
+                              compactKeepRecent
+                            )
+                          }
+                          onTouchEnd={(e) =>
+                            saveCompactionSettings(
+                              Number((e.target as HTMLInputElement).value),
+                              compactKeepRecent
+                            )
+                          }
+                          style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
+                        />
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            fontSize: 10,
+                            color: 'var(--acm-fg-4)',
+                            marginTop: 4,
+                          }}
+                        >
+                          <span>5 — very often</span>
+                          <span>100 — rarely</span>
+                        </div>
+                      </div>
+
+                      {/* Keep recent N intact */}
+                      <div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            marginBottom: 6,
+                          }}
+                        >
+                          <label className="label">Keep recent messages intact</label>
+                          <span className="mono" style={{ fontSize: 11, color: 'var(--acm-accent)' }}>
+                            {compactKeepRecent} messages
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={2}
+                          max={20}
+                          step={1}
+                          value={compactKeepRecent}
+                          onChange={(e) => setCompactKeepRecent(Number(e.target.value))}
+                          onMouseUp={(e) =>
+                            saveCompactionSettings(
+                              compactThreshold,
+                              Number((e.target as HTMLInputElement).value)
+                            )
+                          }
+                          onTouchEnd={(e) =>
+                            saveCompactionSettings(
+                              compactThreshold,
+                              Number((e.target as HTMLInputElement).value)
+                            )
+                          }
+                          style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
+                        />
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            fontSize: 10,
+                            color: 'var(--acm-fg-4)',
+                            marginTop: 4,
+                          }}
+                        >
+                          <span>2 — minimum</span>
+                          <span>20 — more recent context</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Danger zone — clear memory */}
+                  <div>
+                    <Divider />
+                    <button
+                      onClick={handleClearMemory}
+                      disabled={clearMemory.isPending || (memoryStats?.total ?? 0) === 0}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '7px 14px',
+                        background: 'oklch(0.68 0.13 22 / 0.08)',
+                        border: '1px solid oklch(0.68 0.13 22 / 0.35)',
+                        borderRadius: 'var(--acm-radius)',
+                        color: 'var(--acm-err)',
+                        fontSize: 13,
+                        cursor: 'pointer',
+                        opacity: clearMemory.isPending || (memoryStats?.total ?? 0) === 0 ? 0.4 : 1,
+                        transition: 'all 140ms ease',
+                      }}
+                    >
+                      <Trash2 size={14} />
+                      Clear all memory ({memoryStats?.total ?? 0} docs)
                     </button>
                   </div>
-                )}
-              </div>
-            )}
-          </ConfigSection>
+                </div>
+              )}
+            </ConfigSection>
 
-          {/* Telegram */}
-          <ConfigSection
-            title={tc.telegram.title}
-            subtitle={tc.telegram.subtitle}
-            icon={Send}
-          >
-            <div className="space-y-4">
-              <TelegramSetup value={telegramToken} onChange={setTelegramToken} />
-              <button
-                onClick={handleTelegramSave}
-                disabled={!telegramToken.trim() || saveSetup.isPending}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              >
-                {saveSetup.isPending ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Save size={16} />
-                )}
-                Save Telegram Token
-              </button>
-            </div>
-          </ConfigSection>
-
-          {/* Google Stitch */}
-          <ConfigSection
-            title="Google Stitch"
-            subtitle="AI-powered UI generation — creates HTML screens from text descriptions"
-            icon={Paintbrush}
-          >
-            <div className="space-y-4">
-              <div className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
-                providerStatus?.stitch_configured
-                  ? "bg-green-500/10 border-green-500/30 text-green-400"
-                  : "bg-amber-500/10 border-amber-500/30 text-amber-400"
-              )}>
-                {providerStatus?.stitch_configured
-                  ? <><CheckCircle size={14} /> API key configured</>
-                  : <><MinusCircle size={14} /> Not configured — get a key at stitch.withgoogle.com → Profile picture → Settings → API key → Create key</>
-                }
-              </div>
-              <div>
-                <label className="block text-xs text-slate-500 mb-1.5">
-                  {providerStatus?.stitch_configured ? 'Update API key' : 'API key'}
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={stitchKey}
-                    onChange={(e) => setStitchKey(e.target.value)}
-                    placeholder="Paste your Stitch API key..."
-                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            {/* ── Intent Router ── */}
+            <ConfigSection
+              id="section-router"
+              title="Local Intent Router"
+              subtitle="Hybrid local/cloud — bypasses LLM for simple intents"
+              icon={Zap}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                {/* Enable */}
+                <div style={{ padding: '10px 0' }}>
+                  <ToggleRow
+                    label="Enable Local Router"
+                    description="Classify intents locally using sentence-transformers"
+                    value={routerEnabled}
+                    onToggle={() => {
+                      setRouterEnabled(!routerEnabled);
+                      handleRouterToggle('enabled', !routerEnabled);
+                    }}
+                    disabled={routerLoading}
                   />
-                  <button
-                    onClick={handleStitchSave}
-                    disabled={!stitchKey.trim() || stitchSaving}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                </div>
+                <Divider />
+
+                {/* Observation mode */}
+                <div style={{ padding: '10px 0' }}>
+                  <ToggleRow
+                    label="Observation Mode"
+                    description="ON = classify only, log stats, never execute. OFF = fast-path active"
+                    value={routerObservation}
+                    onToggle={() => {
+                      setRouterObservation(!routerObservation);
+                      handleRouterToggle('observation_mode', !routerObservation);
+                    }}
+                    disabled={routerLoading || !routerEnabled}
+                  />
+                </div>
+                <Divider />
+
+                {/* Confidence threshold */}
+                <div style={{ padding: '10px 0' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      marginBottom: 10,
+                    }}
                   >
-                    {stitchSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save
-                  </button>
+                    <span style={{ fontSize: 13, color: 'var(--acm-fg-2)', fontWeight: 500 }}>
+                      Confidence Threshold
+                    </span>
+                    <span className="mono" style={{ fontSize: 13, color: 'var(--acm-accent)' }}>
+                      {routerThreshold.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.50"
+                    max="1.00"
+                    step="0.01"
+                    value={routerThreshold}
+                    onChange={(e) => setRouterThreshold(parseFloat(e.target.value))}
+                    onMouseUp={(e) =>
+                      handleThresholdChange(parseFloat((e.target as HTMLInputElement).value))
+                    }
+                    disabled={!routerEnabled}
+                    style={{
+                      width: '100%',
+                      accentColor: 'var(--acm-accent)',
+                      opacity: routerEnabled ? 1 : 0.4,
+                    }}
+                  />
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      fontSize: 10,
+                      color: 'var(--acm-fg-4)',
+                      marginTop: 4,
+                    }}
+                  >
+                    <span>0.50 — aggressive</span>
+                    <span>1.00 — conservative</span>
+                  </div>
+                </div>
+
+                {/* Stats */}
+                {routerStats && (
+                  <>
+                    <Divider />
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                      {[
+                        { label: 'Classified', value: String(routerStats.total_classified ?? 0) },
+                        { label: 'Fast-path', value: String(routerStats.fast_path_eligible ?? 0) },
+                        { label: 'Savings', value: `${routerStats.potential_savings_pct ?? 0}%` },
+                      ].map(({ label, value }) => (
+                        <div
+                          key={label}
+                          style={{
+                            background: 'var(--acm-elev)',
+                            border: '1px solid var(--acm-border)',
+                            borderRadius: 'var(--acm-radius)',
+                            padding: '12px 14px',
+                            textAlign: 'center',
+                          }}
+                        >
+                          <div
+                            style={{ fontSize: 20, fontWeight: 700, color: 'var(--acm-accent)' }}
+                          >
+                            {value}
+                          </div>
+                          <div className="label" style={{ marginTop: 4 }}>{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </ConfigSection>
+
+            {/* ── Telegram ── */}
+            <ConfigSection
+              id="section-telegram"
+              title={tc.telegram.title}
+              subtitle={tc.telegram.subtitle}
+              icon={Send}
+            >
+              {/* Integration row */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 0',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="dot dot-idle" />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--acm-fg-2)' }}>Telegram Bot</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>
+                      Receive and send messages via Telegram
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </ConfigSection>
 
-          {/* Google Services */}
-          <ConfigSection
-            title="Google Services"
-            subtitle="Gmail, Calendar, Drive, YouTube"
-            icon={Globe2}
-          >
-            <div className="space-y-4">
-              {/* Status badges */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
-                  googleStatus?.credentials_exist
-                    ? "bg-green-500/10 border-green-500/30 text-green-400"
-                    : "bg-slate-800 border-slate-700 text-slate-500"
-                )}>
-                  {googleStatus?.credentials_exist ? <CheckCircle size={14} /> : <MinusCircle size={14} />}
-                  Credentials
-                </div>
-                <div className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
-                  googleStatus?.token_exist
-                    ? "bg-green-500/10 border-green-500/30 text-green-400"
-                    : "bg-slate-800 border-slate-700 text-slate-500"
-                )}>
-                  {googleStatus?.token_exist ? <CheckCircle size={14} /> : <MinusCircle size={14} />}
-                  Authorized
-                </div>
+              <TelegramSetup value={telegramToken} onChange={setTelegramToken} />
+
+              <div style={{ marginTop: 16 }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleTelegramSave}
+                  disabled={!telegramToken.trim() || saveSetup.isPending}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  {saveSetup.isPending ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  Save Telegram Token
+                </button>
+              </div>
+            </ConfigSection>
+
+            {/* ── Google Services ── */}
+            <ConfigSection
+              id="section-google"
+              title="Google Services"
+              subtitle="Gmail · Calendar · Drive · YouTube"
+              icon={Globe2}
+            >
+              {/* Integration rows */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginBottom: 16 }}>
+                {[
+                  { label: 'Credentials', ok: !!googleStatus?.credentials_exist },
+                  { label: 'Authorized', ok: !!googleStatus?.token_exist },
+                ].map(({ label, ok }) => (
+                  <div
+                    key={label}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 0',
+                      borderBottom: '1px solid var(--acm-border)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span className={`dot ${ok ? 'dot-ok' : 'dot-idle'}`} />
+                      <span style={{ fontSize: 13, color: 'var(--acm-fg-2)' }}>{label}</span>
+                    </div>
+                    <span style={{ fontSize: 11, color: ok ? 'var(--acm-ok)' : 'var(--acm-fg-4)' }}>
+                      {ok ? 'Connected' : 'Not configured'}
+                    </span>
+                  </div>
+                ))}
               </div>
 
-              {/* Step 1: Upload credentials (only if not yet uploaded) */}
+              {/* Step 1 — credentials */}
               {!googleStatus?.credentials_exist && (
                 <>
-                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300 space-y-1">
-                    <p className="font-medium text-blue-200">Step 1 — Get credentials:</p>
-                    <ol className="list-decimal list-inside space-y-0.5 text-blue-300/80">
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      background: 'oklch(0.74 0.06 230 / 0.08)',
+                      border: '1px solid oklch(0.74 0.06 230 / 0.2)',
+                      borderRadius: 'var(--acm-radius)',
+                      marginBottom: 14,
+                    }}
+                  >
+                    <p style={{ fontWeight: 600, fontSize: 12, color: 'var(--acm-info)', marginBottom: 6 }}>
+                      Step 1 — Get credentials
+                    </p>
+                    <ol
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--acm-fg-3)',
+                        paddingLeft: 18,
+                        lineHeight: 1.8,
+                        margin: 0,
+                      }}
+                    >
                       <li>Google Cloud Console → APIs &amp; Services → Credentials</li>
                       <li>Create OAuth 2.0 credentials (Desktop application)</li>
                       <li>Enable: Gmail, Calendar, Drive, YouTube APIs</li>
                       <li>Download JSON and paste below</li>
                     </ol>
                   </div>
-                  <div>
-                    <label className="block text-xs text-slate-500 mb-1.5">Paste credentials.json content</label>
-                    <textarea
-                      value={googleCredJson}
-                      onChange={(e) => setGoogleCredJson(e.target.value)}
-                      placeholder={'{\n  "installed": {\n    "client_id": "...",\n    ...\n  }\n}'}
-                      rows={4}
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none"
-                      spellCheck={false}
-                    />
-                  </div>
+                  <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                    Paste credentials.json content
+                  </label>
+                  <textarea
+                    className="acm-input mono"
+                    value={googleCredJson}
+                    onChange={(e) => setGoogleCredJson(e.target.value)}
+                    placeholder={'{\n  "installed": {\n    "client_id": "...",\n    ...\n  }\n}'}
+                    rows={4}
+                    style={{ resize: 'none', fontSize: 11, marginBottom: 12 }}
+                    spellCheck={false}
+                  />
                   <button
+                    className="btn-primary"
                     onClick={async () => {
                       if (googleCredJson.trim()) {
                         await saveGoogleCreds.mutateAsync(googleCredJson.trim());
@@ -1074,499 +2217,517 @@ export default function ConfigPage() {
                       }
                     }}
                     disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm transition-colors"
+                    style={{ width: '100%', justifyContent: 'center' }}
                   >
-                    {saveGoogleCreds.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    {saveGoogleCreds.isPending ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Save size={13} />
+                    )}
                     Save Credentials
                   </button>
                 </>
               )}
 
-              {/* Step 2: Authorize (credentials uploaded but not yet authorized) */}
+              {/* Step 2 — authorize */}
               {googleStatus?.credentials_exist && !googleStatus?.token_exist && (
-                <div className="space-y-3">
-                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300">
-                    <p className="font-medium text-blue-200 mb-1">Step 2 — Authorize OpenACM</p>
-                    <p>A new tab will open with Google's login page. Sign in and click <strong>Allow</strong>. OpenACM will detect authorization automatically.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div
+                    style={{
+                      padding: '12px 14px',
+                      background: 'oklch(0.74 0.06 230 / 0.08)',
+                      border: '1px solid oklch(0.74 0.06 230 / 0.2)',
+                      borderRadius: 'var(--acm-radius)',
+                      fontSize: 11,
+                      color: 'var(--acm-fg-3)',
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    <p style={{ fontWeight: 600, fontSize: 12, color: 'var(--acm-info)', marginBottom: 4 }}>
+                      Step 2 — Authorize OpenACM
+                    </p>
+                    A new tab will open with Google's login page. Sign in and click{' '}
+                    <strong>Allow</strong>. OpenACM will detect authorization automatically.
                   </div>
-                  <div className="flex gap-2">
+                  <div style={{ display: 'flex', gap: 8 }}>
                     <button
+                      className="btn-primary"
                       onClick={() => startGoogleAuth.mutate()}
                       disabled={startGoogleAuth.isPending}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+                      style={{ flex: 1, justifyContent: 'center' }}
                     >
-                      {startGoogleAuth.isPending
-                        ? <Loader2 size={14} className="animate-spin" />
-                        : <Globe2 size={14} />}
+                      {startGoogleAuth.isPending ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Globe2 size={13} />
+                      )}
                       Connect with Google
                     </button>
                     <button
+                      className="btn-secondary"
                       onClick={() => deleteGoogleCreds.mutate()}
                       disabled={deleteGoogleCreds.isPending}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-red-900/40 hover:bg-red-800/50 text-red-400 border border-red-700/40 rounded-lg text-sm transition-colors"
                       title="Remove credentials"
+                      style={{ color: 'var(--acm-err)', borderColor: 'oklch(0.68 0.13 22 / 0.4)' }}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={13} />
                     </button>
                   </div>
                   {startGoogleAuth.isSuccess && (
-                    <p className="text-center text-xs text-slate-400 flex items-center justify-center gap-1.5">
-                      <Loader2 size={12} className="animate-spin" /> Waiting for authorization...
+                    <p
+                      style={{
+                        textAlign: 'center',
+                        fontSize: 11,
+                        color: 'var(--acm-fg-4)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                      }}
+                    >
+                      <Loader2 size={11} className="animate-spin" />
+                      Waiting for authorization...
                     </p>
                   )}
                 </div>
               )}
 
-              {/* Connected state */}
+              {/* Connected */}
               {googleStatus?.token_exist && (
-                <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg flex items-center gap-3">
-                  <CheckCircle size={18} className="text-green-400 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-green-400 text-sm font-medium">Connected</p>
-                    <p className="text-slate-500 text-xs">Gmail, Calendar, Drive and YouTube are active</p>
-                  </div>
-                  <button
-                    onClick={() => deleteGoogleCreds.mutate()}
-                    disabled={deleteGoogleCreds.isPending}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-900/40 hover:bg-red-800/50 text-red-400 border border-red-700/40 rounded-lg text-xs transition-colors"
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '12px 14px',
+                      background: 'oklch(0.75 0.09 160 / 0.07)',
+                      border: '1px solid oklch(0.75 0.09 160 / 0.25)',
+                      borderRadius: 'var(--acm-radius)',
+                    }}
                   >
-                    <Trash2 size={12} /> Disconnect
-                  </button>
-                </div>
-              )}
-
-              {/* Replace credentials when already connected */}
-              {googleStatus?.credentials_exist && (
-                <details className="group">
-                  <summary className="text-xs text-slate-500 cursor-pointer hover:text-slate-400">
-                    Replace credentials JSON
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    <textarea
-                      value={googleCredJson}
-                      onChange={(e) => setGoogleCredJson(e.target.value)}
-                      placeholder={'{\n  "installed": { "client_id": "...", ... }\n}'}
-                      rows={3}
-                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-slate-300 font-mono text-xs focus:outline-none focus:border-blue-500 resize-none"
-                      spellCheck={false}
-                    />
+                    <CheckCircle size={18} style={{ color: 'var(--acm-ok)', flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--acm-ok)', margin: 0 }}>
+                        Connected
+                      </p>
+                      <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', margin: '2px 0 0' }}>
+                        Gmail, Calendar, Drive and YouTube are active
+                      </p>
+                    </div>
                     <button
-                      onClick={async () => {
-                        if (googleCredJson.trim()) {
-                          await saveGoogleCreds.mutateAsync(googleCredJson.trim());
-                          setGoogleCredJson('');
-                        }
-                      }}
-                      disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs transition-colors"
+                      className="btn-secondary"
+                      onClick={() => deleteGoogleCreds.mutate()}
+                      disabled={deleteGoogleCreds.isPending}
+                      style={{ fontSize: 12, color: 'var(--acm-err)', borderColor: 'oklch(0.68 0.13 22 / 0.4)' }}
                     >
-                      {saveGoogleCreds.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
-                      Save
+                      <Trash2 size={12} />
+                      Disconnect
                     </button>
                   </div>
-                </details>
-              )}
-            </div>
-          </ConfigSection>
 
-          {/* Local Router */}
-          <ConfigSection title="Local Intent Router" subtitle="Hybrid local/cloud processing — bypasses the LLM for simple requests" icon={Zap}>
-            <div className="space-y-4">
-              {/* Enable/disable */}
-              <div className="flex items-center justify-between py-3 border-b border-slate-800">
-                <div>
-                  <span className="text-sm text-slate-300">Enable Local Router</span>
-                  <p className="text-xs text-slate-500 mt-0.5">Classify intents locally using sentence-transformers</p>
-                </div>
-                <button
-                  onClick={() => { setRouterEnabled(!routerEnabled); handleRouterToggle('enabled', !routerEnabled); }}
-                  disabled={routerLoading}
-                  className={cn('p-1 rounded transition-colors', routerEnabled ? 'text-violet-400' : 'text-slate-500')}
-                >
-                  {routerEnabled ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
-                </button>
-              </div>
-
-              {/* Observation mode */}
-              <div className="flex items-center justify-between py-3 border-b border-slate-800">
-                <div>
-                  <span className="text-sm text-slate-300">Observation Mode</span>
-                  <p className="text-xs text-slate-500 mt-0.5">ON = classify only, log stats, never execute. OFF = fast-path active</p>
-                </div>
-                <button
-                  onClick={() => { setRouterObservation(!routerObservation); handleRouterToggle('observation_mode', !routerObservation); }}
-                  disabled={routerLoading || !routerEnabled}
-                  className={cn('p-1 rounded transition-colors', routerObservation ? 'text-amber-400' : 'text-slate-500', !routerEnabled && 'opacity-40')}
-                >
-                  {routerObservation ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
-                </button>
-              </div>
-
-              {/* Confidence threshold */}
-              <div className="py-3 border-b border-slate-800">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-slate-300">Confidence Threshold</span>
-                  <span className="text-sm font-mono text-violet-400">{routerThreshold.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range" min="0.50" max="1.00" step="0.01"
-                  value={routerThreshold}
-                  onChange={e => setRouterThreshold(parseFloat(e.target.value))}
-                  onMouseUp={e => handleThresholdChange(parseFloat((e.target as HTMLInputElement).value))}
-                  disabled={!routerEnabled}
-                  className="w-full accent-violet-500 disabled:opacity-40"
-                />
-                <div className="flex justify-between text-xs text-slate-600 mt-1">
-                  <span>0.50 — aggressive</span>
-                  <span>1.00 — conservative</span>
-                </div>
-              </div>
-
-              {/* Live stats */}
-              {routerStats && (
-                <div className="grid grid-cols-3 gap-3 pt-2">
-                  {[
-                    { label: 'Classified', value: String(routerStats.total_classified ?? 0) },
-                    { label: 'Fast-path', value: String(routerStats.fast_path_eligible ?? 0) },
-                    { label: 'Savings', value: `${routerStats.potential_savings_pct ?? 0}%` },
-                  ].map(({ label, value }) => (
-                    <div key={label} className="bg-slate-800/50 rounded-lg p-3 text-center">
-                      <div className="text-lg font-bold text-violet-400">{value}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">{label}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </ConfigSection>
-
-          {/* Security */}
-          <ConfigSection title={tc.security.title} icon={Shield}>
-            <div className="space-y-4">
-              <InfoRow label="Authentication" value="Bearer Token" />
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-sm text-slate-300">Execution Mode</span>
-                  <p className="text-xs text-slate-500 mt-0.5">Controls when commands require approval</p>
-                </div>
-                <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium">
-                  {(['confirmation', 'auto', 'yolo'] as const).map((mode) => {
-                    const active = (config?.security?.execution_mode || 'confirmation') === mode;
-                    const labels: Record<string, string> = { confirmation: 'Confirm', auto: 'Auto', yolo: 'Yolo' };
-                    const colors: Record<string, string> = {
-                      confirmation: active ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
-                      auto: active ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
-                      yolo: active ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700',
-                    };
-                    return (
+                  {/* Replace credentials */}
+                  <details>
+                    <summary
+                      style={{
+                        fontSize: 11,
+                        color: 'var(--acm-fg-4)',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                      }}
+                    >
+                      Replace credentials JSON
+                    </summary>
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <textarea
+                        className="acm-input mono"
+                        value={googleCredJson}
+                        onChange={(e) => setGoogleCredJson(e.target.value)}
+                        placeholder={'{\n  "installed": { "client_id": "...", ... }\n}'}
+                        rows={3}
+                        style={{ resize: 'none', fontSize: 11 }}
+                        spellCheck={false}
+                      />
                       <button
-                        key={mode}
-                        onClick={() => updateExecutionMode(mode)}
-                        className={cn('px-3 py-1.5 transition-colors', colors[mode])}
+                        className="btn-secondary"
+                        onClick={async () => {
+                          if (googleCredJson.trim()) {
+                            await saveGoogleCreds.mutateAsync(googleCredJson.trim());
+                            setGoogleCredJson('');
+                          }
+                        }}
+                        disabled={!googleCredJson.trim() || saveGoogleCreds.isPending}
                       >
-                        {labels[mode]}
+                        {saveGoogleCreds.isPending ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                        Save
                       </button>
-                    );
-                  })}
+                    </div>
+                  </details>
                 </div>
-              </div>
-              <InfoRow
-                label="Whitelisted Commands"
-                value={String(config?.security?.whitelisted_commands?.length || 0)}
-              />
-              <InfoRow label="Encryption" value="TLS 1.3" />
+              )}
+            </ConfigSection>
 
-              <div className="pt-4 border-t border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-slate-300">Debug Mode</span>
-                    {isVerbose && (
-                      <span className="ml-2 text-xs bg-amber-500/15 text-amber-400 border border-amber-500/30 rounded px-1.5 py-0.5">
-                        VERBOSE
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => toggleDebugMode(!isVerbose)}
-                    className={cn(
-                      'p-1 rounded transition-colors',
-                      isVerbose ? 'text-amber-400' : 'text-slate-500'
-                    )}
-                  >
-                    {isVerbose ? <ToggleRight size={28} /> : <ToggleLeft size={28} />}
-                  </button>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  {isVerbose
-                    ? 'DEBUG level active — all internal logs visible in console and log file.'
-                    : 'Enable to show all DEBUG-level logs (LLM requests, tool internals, events).'}
-                </p>
-              </div>
-            </div>
-          </ConfigSection>
-
-          {/* Code Resurrection */}
-          <div className="lg:col-span-2">
+            {/* ── Google Stitch ── */}
             <ConfigSection
+              id="section-stitch"
+              title="Google Stitch"
+              subtitle="AI-powered UI generation — creates HTML screens from text descriptions"
+              icon={Paintbrush}
+            >
+              {/* Integration row */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 0',
+                  borderBottom: '1px solid var(--acm-border)',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span
+                    className={`dot ${providerStatus?.stitch_configured ? 'dot-ok' : 'dot-idle'}`}
+                  />
+                  <div>
+                    <div style={{ fontSize: 13, color: 'var(--acm-fg-2)' }}>Stitch API</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>
+                      stitch.withgoogle.com
+                    </div>
+                  </div>
+                </div>
+                <button className="btn-secondary" style={{ fontSize: 12 }}>
+                  {providerStatus?.stitch_configured ? 'Manage' : 'Connect'}
+                </button>
+              </div>
+
+              {!providerStatus?.stitch_configured && (
+                <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginBottom: 12, lineHeight: 1.6 }}>
+                  Get a key at <span className="mono">stitch.withgoogle.com</span> → Profile → Settings → API key → Create key
+                </p>
+              )}
+
+              <label className="label" style={{ display: 'block', marginBottom: 8 }}>
+                {providerStatus?.stitch_configured ? 'Update API key' : 'API key'}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="password"
+                  className="acm-input mono"
+                  style={{ flex: 1 }}
+                  value={stitchKey}
+                  onChange={(e) => setStitchKey(e.target.value)}
+                  placeholder="Paste your Stitch API key..."
+                  onKeyDown={(e) => e.key === 'Enter' && handleStitchSave()}
+                />
+                <button
+                  className="btn-primary"
+                  onClick={handleStitchSave}
+                  disabled={!stitchKey.trim() || stitchSaving}
+                >
+                  {stitchSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                  Save
+                </button>
+              </div>
+            </ConfigSection>
+
+            {/* ── Security ── */}
+            <ConfigSection
+              id="section-security"
+              title={tc.security.title}
+              subtitle="auth · execution modes · debug"
+              icon={Shield}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                <InfoRow label="Authentication" value="Bearer Token" />
+                <InfoRow
+                  label="Whitelisted Commands"
+                  value={String(config?.security?.whitelisted_commands?.length || 0)}
+                />
+                <InfoRow label="Encryption" value="TLS 1.3" />
+
+                {/* Execution mode */}
+                <Divider />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--acm-fg-2)' }}>
+                      Execution Mode
+                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginTop: 3 }}>
+                      Controls when commands require approval
+                    </p>
+                  </div>
+                  <div
+                    style={{
+                      display: 'flex',
+                      border: '1px solid var(--acm-border)',
+                      borderRadius: 'var(--acm-radius)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    {(['confirmation', 'auto', 'yolo'] as const).map((mode) => {
+                      const active = (config?.security?.execution_mode || 'confirmation') === mode;
+                      const labels: Record<string, string> = {
+                        confirmation: 'Confirm',
+                        auto: 'Auto',
+                        yolo: 'Yolo',
+                      };
+                      return (
+                        <button
+                          key={mode}
+                          onClick={() => updateExecutionMode(mode)}
+                          style={{
+                            padding: '6px 12px',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            border: 'none',
+                            borderRight: '1px solid var(--acm-border)',
+                            cursor: 'pointer',
+                            background: active
+                              ? mode === 'yolo'
+                                ? 'oklch(0.68 0.13 22 / 0.3)'
+                                : 'var(--acm-accent)'
+                              : 'var(--acm-elev)',
+                            color: active
+                              ? mode === 'yolo'
+                                ? 'var(--acm-err)'
+                                : 'oklch(0.18 0.015 80)'
+                              : 'var(--acm-fg-3)',
+                            transition: 'all 120ms ease',
+                          }}
+                        >
+                          {labels[mode]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Debug mode */}
+                <Divider />
+                <div style={{ paddingTop: 4 }}>
+                  <ToggleRow
+                    label="Debug Mode"
+                    description={
+                      isVerbose
+                        ? 'DEBUG level active — all internal logs visible in console and log file.'
+                        : 'Enable to show all DEBUG-level logs (LLM requests, tool internals, events).'
+                    }
+                    value={isVerbose}
+                    onToggle={() => toggleDebugMode(!isVerbose)}
+                    badge={
+                      isVerbose ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            letterSpacing: '0.1em',
+                            textTransform: 'uppercase',
+                            color: 'var(--acm-accent)',
+                            border: '1px solid oklch(0.84 0.16 82 / 0.3)',
+                            borderRadius: 4,
+                            padding: '1px 6px',
+                          }}
+                        >
+                          VERBOSE
+                        </span>
+                      ) : undefined
+                    }
+                  />
+                </div>
+              </div>
+            </ConfigSection>
+
+            {/* ── Code Resurrection ── */}
+            <ConfigSection
+              id="section-resurrection"
               title="Code Resurrection"
-              subtitle="Second Code Brain — indexes your old projects locally so OpenACM can reference your past solutions"
+              subtitle="Second Code Brain — index old projects for past-solution recall"
               icon={Archive}
             >
-              <div className="space-y-4">
-                {/* Stats bar */}
-                <div className="flex items-center gap-4 p-3 bg-slate-800/50 rounded-lg">
-                  <div className="flex items-center gap-2 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-violet-500 animate-pulse" />
-                    <span className="text-slate-400">Files indexed:</span>
-                    <span className="font-mono text-violet-400 font-semibold">{resurrectionIndexed.toLocaleString()}</span>
-                  </div>
-                  <span className="text-slate-700">·</span>
-                  <div className="text-xs text-slate-500">Indexing runs silently when OpenACM is idle</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {/* Stats */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 16,
+                    padding: '10px 14px',
+                    background: 'var(--acm-elev)',
+                    border: '1px solid var(--acm-border)',
+                    borderRadius: 'var(--acm-radius)',
+                  }}
+                >
+                  <span className="dot dot-accent acm-pulse" />
+                  <div style={{ fontSize: 13, color: 'var(--acm-fg-3)' }}>Files indexed:</div>
+                  <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--acm-accent)' }}>
+                    {resurrectionIndexed.toLocaleString()}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginLeft: 4 }}>
+                    · Indexing runs silently when OpenACM is idle
+                  </span>
                 </div>
 
                 {/* Privacy warning */}
-                <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs text-amber-300/90">
-                  <AlertTriangle size={13} className="mt-0.5 flex-shrink-0" />
-                  <div className="space-y-1">
-                    <p><strong>.env</strong>, <strong>.pem</strong> and <strong>.key</strong> files are skipped automatically. All other indexed code stays in your local database — but if a snippet gets retrieved during a conversation with a cloud LLM, it will be included in that prompt.</p>
-                    <p className="text-amber-400/70">If old code has hardcoded tokens or passwords inside regular source files, those lines could reach the cloud. Use a local model (Ollama) for sensitive repos.</p>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 10,
+                    padding: '12px 14px',
+                    background: 'oklch(0.84 0.16 82 / 0.05)',
+                    border: '1px solid oklch(0.84 0.16 82 / 0.2)',
+                    borderRadius: 'var(--acm-radius)',
+                  }}
+                >
+                  <AlertTriangle
+                    size={13}
+                    style={{ flexShrink: 0, marginTop: 2, color: 'var(--acm-warn)' }}
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--acm-fg-3)', lineHeight: 1.6 }}>
+                    <p style={{ margin: '0 0 4px' }}>
+                      <strong>.env</strong>, <strong>.pem</strong> and <strong>.key</strong> files are
+                      skipped automatically. All other indexed code stays local — but if a snippet gets
+                      retrieved during a cloud LLM conversation, it will be included in that prompt.
+                    </p>
+                    <p style={{ margin: 0, color: 'var(--acm-fg-4)' }}>
+                      If old code has hardcoded tokens inside regular source files, those lines could reach
+                      the cloud. Use a local model (Ollama) for sensitive repos.
+                    </p>
                   </div>
                 </div>
 
-                {/* Paths list */}
+                {/* Path list */}
                 {resurrectionPaths.length > 0 ? (
-                  <div className="space-y-1.5">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {resurrectionPaths.map((p) => (
-                      <div key={p} className="flex items-center justify-between px-3 py-2 bg-slate-800/40 border border-slate-700/40 rounded-lg">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FolderOpen size={14} className="text-violet-400 flex-shrink-0" />
-                          <span className="text-xs font-mono text-slate-300 truncate">{p}</span>
+                      <div
+                        key={p}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '8px 12px',
+                          background: 'var(--acm-elev)',
+                          border: '1px solid var(--acm-border)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <FolderOpen size={13} style={{ color: 'var(--acm-accent)', flexShrink: 0 }} />
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 12,
+                              color: 'var(--acm-fg-2)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {p}
+                          </span>
                         </div>
                         <button
                           onClick={() => handleRemoveResurrectionPath(p)}
                           disabled={resurrectionLoading}
-                          className="ml-3 p-1 text-slate-600 hover:text-red-400 transition-colors flex-shrink-0"
                           title="Remove"
+                          style={{
+                            marginLeft: 10,
+                            padding: 4,
+                            color: 'var(--acm-fg-4)',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            flexShrink: 0,
+                          }}
                         >
-                          <Trash2 size={13} />
+                          <Trash2 size={12} />
                         </button>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-6 text-slate-600 text-sm">
+                  <div
+                    style={{
+                      textAlign: 'center',
+                      padding: '24px 0',
+                      color: 'var(--acm-fg-4)',
+                      fontSize: 13,
+                    }}
+                  >
                     No paths configured yet. Add a root folder to start indexing.
                   </div>
                 )}
 
-                {/* Add path input */}
-                <div className="flex gap-2 pt-1">
+                {/* Add path */}
+                <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     type="text"
+                    className="acm-input mono"
+                    style={{ flex: 1 }}
                     value={newResurrectionPath}
                     onChange={(e) => setNewResurrectionPath(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAddResurrectionPath()}
                     placeholder="e.g. D:\UnityProjects or /home/user/repos"
-                    className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
                   />
                   <button
+                    className="btn-primary"
                     onClick={handleAddResurrectionPath}
                     disabled={!newResurrectionPath.trim() || resurrectionLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors"
                   >
-                    {resurrectionLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    {resurrectionLoading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
                     Add
                   </button>
                 </div>
               </div>
             </ConfigSection>
-          </div>
 
-          {/* JSON Config */}
-          <ConfigSection title={tc.fullConfig} icon={Terminal}>
-            <div className="space-y-4">
-              <div className="relative">
+            {/* ── Raw JSON Config ── */}
+            <ConfigSection
+              id="section-raw"
+              title={tc.fullConfig}
+              subtitle="raw · json · advanced"
+              icon={Terminal}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <textarea
+                  className="mono"
                   value={jsonConfig || (config ? JSON.stringify(config, null, 2) : '{}')}
                   onChange={(e) => setJsonConfig(e.target.value)}
-                  rows={12}
-                  className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-300 font-mono text-sm focus:outline-none focus:border-blue-500 resize-none"
+                  rows={14}
                   spellCheck={false}
+                  style={{
+                    width: '100%',
+                    background: 'oklch(0.13 0.006 255)',
+                    border: '1px solid var(--acm-border)',
+                    borderRadius: 'var(--acm-radius)',
+                    color: 'var(--acm-fg-2)',
+                    fontSize: 12,
+                    lineHeight: 1.6,
+                    padding: '12px 14px',
+                    resize: 'vertical',
+                    outline: 'none',
+                    boxSizing: 'border-box',
+                  }}
                 />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handleReloadConfig}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors"
-                >
-                  <RefreshCw size={16} />
-                  Reload
-                </button>
-                <button
-                  onClick={handleSaveConfig}
-                  disabled={isSaving}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
-                >
-                  {isSaving ? (
-                    <Loader2 size={16} className="animate-spin" />
-                  ) : (
-                    <Save size={16} />
-                  )}
-                  Save Changes
-                </button>
-              </div>
-            </div>
-          </ConfigSection>
-        </div>
-
-        {/* RAG Memory */}
-        <div className="mt-6">
-        <ConfigSection
-          title="RAG Memory"
-          subtitle="Vector memory engine — stores notes, conversation fragments, and archived code for long-term recall"
-          icon={Brain}
-        >
-          {memoryStats?.status === 'unavailable' ? (
-            <p className="text-sm text-slate-500">RAG engine unavailable or not yet initialized.</p>
-          ) : (
-            <div className="space-y-5">
-              {/* Summary row */}
-              <div className="flex flex-wrap gap-4">
-                <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg">
-                  <Database size={16} className="text-blue-400" />
-                  <span className="text-sm text-slate-300">
-                    <span className="font-semibold text-white">{memoryStats?.total ?? 0}</span> documents
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 px-4 py-2 bg-slate-800 rounded-lg">
-                  <FolderOpen size={16} className="text-slate-400" />
-                  <span className="text-sm text-slate-300">
-                    <span className="font-semibold text-white">{formatBytes(memoryStats?.size_bytes ?? 0)}</span> on disk
-                  </span>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn-secondary" onClick={handleReloadConfig}>
+                    <RefreshCw size={13} />
+                    Reload
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={handleSaveConfig}
+                    disabled={isSaving}
+                    style={{ flex: 1, justifyContent: 'center' }}
+                  >
+                    {isSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                    Save Changes
+                  </button>
                 </div>
               </div>
+            </ConfigSection>
 
-              {/* Breakdown by type */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {[
-                  { key: 'note', label: 'Notes & facts', Icon: Lightbulb, color: 'text-yellow-400' },
-                  { key: 'conversation', label: 'Conversations', Icon: MessageSquare, color: 'text-green-400' },
-                  { key: 'code_archive', label: 'Archived code', Icon: Code2, color: 'text-purple-400' },
-                ].map(({ key, label, Icon, color }) => {
-                  const count = memoryStats?.by_type?.[key] ?? 0;
-                  return (
-                    <div key={key} className="flex items-center gap-3 px-4 py-3 bg-slate-800/50 border border-slate-700/50 rounded-lg">
-                      <Icon size={18} className={color} />
-                      <div>
-                        <p className="text-xs text-slate-500">{label}</p>
-                        <p className="text-sm font-semibold text-white">{count}</p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Relevance threshold */}
-              <RagThresholdControl fetchAPI={fetchAPI} />
-
-              {/* Auto-compaction settings */}
-              <div className="space-y-4 pt-1 border-t border-slate-800">
-                <div className="flex items-center gap-2 pt-1">
-                  <ScrollText size={15} className="text-indigo-400" />
-                  <p className="text-sm font-medium text-slate-300">Auto-compaction</p>
-                  {compactionSaving && <Loader2 size={13} className="animate-spin text-slate-500 ml-auto" />}
-                </div>
-                <p className="text-xs text-slate-500 -mt-2">
-                  When a conversation gets long, older messages are summarized into a single paragraph to free up context. The most recent messages are always kept as-is so the LLM has the exact recent thread.
-                </p>
-
-                {/* Threshold */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-slate-400">Compact after</label>
-                    <span className="text-xs font-mono text-indigo-300">{compactThreshold} messages</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={5}
-                    max={100}
-                    step={5}
-                    value={compactThreshold}
-                    onChange={(e) => setCompactThreshold(Number(e.target.value))}
-                    onMouseUp={(e) => saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)}
-                    onTouchEnd={(e) => saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)}
-                    className="w-full accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-600">
-                    <span>5 — very often</span>
-                    <span>100 — rarely</span>
-                  </div>
-                </div>
-
-                {/* Keep recent */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs text-slate-400">Keep recent messages intact</label>
-                    <span className="text-xs font-mono text-indigo-300">{compactKeepRecent} messages</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={2}
-                    max={20}
-                    step={1}
-                    value={compactKeepRecent}
-                    onChange={(e) => setCompactKeepRecent(Number(e.target.value))}
-                    onMouseUp={(e) => saveCompactionSettings(compactThreshold, Number((e.target as HTMLInputElement).value))}
-                    onTouchEnd={(e) => saveCompactionSettings(compactThreshold, Number((e.target as HTMLInputElement).value))}
-                    className="w-full accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-600">
-                    <span>2 — minimum</span>
-                    <span>20 — more recent context</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Clear button */}
-              <div className="pt-2 border-t border-slate-800">
-                <button
-                  onClick={handleClearMemory}
-                  disabled={clearMemory.isPending || (memoryStats?.total ?? 0) === 0}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600/15 hover:bg-red-600/25 disabled:opacity-40 text-red-400 border border-red-600/30 rounded-lg text-sm transition-colors"
-                >
-                  <Trash2 size={15} />
-                  Clear all memory
-                </button>
-              </div>
-            </div>
-          )}
-        </ConfigSection>
-        </div>
-
-        {/* System Info Footer */}
-        <div className="mt-8 p-4 bg-slate-900 rounded-xl border border-slate-800">
-          <div className="flex flex-wrap items-center justify-between gap-4 text-sm text-slate-500">
-            <div className="flex items-center gap-4">
-              <span>OpenACM {appVersion || 'v0.1.0'}</span>
-              <span>·</span>
-              <span>Next.js 16</span>
-              <span>·</span>
-              <span>React 19</span>
-            </div>
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.push('/onboarding?force=true')}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600/15 hover:bg-blue-600/25 text-blue-400 border border-blue-600/30 transition-colors"
-              >
-                <Wand2 size={13} />
-                Setup Wizard
-              </button>
-              <div className="flex items-center gap-2">
-                <CheckCircle size={14} className="text-green-400" />
-                <span>System Online</span>
-              </div>
-            </div>
           </div>
         </div>
       </div>

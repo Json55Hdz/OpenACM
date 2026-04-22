@@ -68,9 +68,9 @@ interface Conversation {
 
 function RouterLearningIndicator() {
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-950/80 border border-violet-500/40 rounded-full text-violet-300 text-xs font-medium shadow-lg backdrop-blur-sm animate-pulse">
-      <Sparkles size={12} className="text-violet-400" />
-      <span>Aprendiendo...</span>
+    <div className="flex items-center gap-[7px] px-[10px] py-[4px] bg-[oklch(0.84_0.16_82/0.1)] border border-[var(--acm-accent)] rounded-full text-[var(--acm-accent)] text-[11px]">
+      <Sparkles size={11} className="acm-pulse" />
+      <span className="mono">Aprendiendo...</span>
     </div>
   );
 }
@@ -79,9 +79,9 @@ function MemoryRecallIndicator({ status, count }: {
   status: 'searching' | 'found' | 'empty' | 'saving' | 'saved';
   count: number;
 }) {
-  const isBusy   = status === 'searching' || status === 'saving';
-  const isGood   = status === 'found' || status === 'saved';
-  const isEmpty  = status === 'empty';
+  const isBusy  = status === 'searching' || status === 'saving';
+  const isGood  = status === 'found' || status === 'saved';
+  const isEmpty = status === 'empty';
 
   const label =
     status === 'searching' ? 'Searching memory...' :
@@ -92,17 +92,17 @@ function MemoryRecallIndicator({ status, count }: {
 
   return (
     <div className={cn(
-      'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg backdrop-blur-sm border transition-all duration-300',
-      isBusy  && 'bg-indigo-950/80 border-indigo-500/40 text-indigo-300',
-      isGood  && 'bg-indigo-950/80 border-indigo-400/50 text-indigo-200',
-      isEmpty && 'bg-slate-900/80 border-slate-700/40 text-slate-400',
+      'inline-flex items-center gap-[7px] px-[10px] py-[4px] border rounded-full text-[11px] transition-all duration-300',
+      isBusy  && 'border-[var(--acm-border-strong)] text-[var(--acm-fg-3)]',
+      isGood  && 'border-[var(--acm-accent)] text-[var(--acm-accent)] bg-[oklch(0.84_0.16_82/0.07)]',
+      isEmpty && 'border-[var(--acm-border)] text-[var(--acm-fg-4)]',
     )}>
-      <BrainCircuit size={12} className={cn(
-        isBusy  && 'animate-pulse text-indigo-400',
-        isGood  && 'text-indigo-300',
-        isEmpty && 'text-slate-500',
+      <BrainCircuit size={11} className={cn(
+        isBusy  && 'acm-pulse text-[var(--acm-fg-3)]',
+        isGood  && 'text-[var(--acm-accent)]',
+        isEmpty && 'text-[var(--acm-fg-4)]',
       )} />
-      <span>{label}</span>
+      <span className="mono">{label}</span>
     </div>
   );
 }
@@ -112,25 +112,22 @@ function SkillActiveIndicator({ names }: { names: string[] }) {
     .map((n) => n.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
     .join(', ');
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/80 border border-emerald-500/40 rounded-full text-emerald-300 text-xs font-medium shadow-lg backdrop-blur-sm">
-      <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-      </span>
-      <span>Skill: {label}</span>
+    <div className="inline-flex items-center gap-[7px] px-[10px] py-[4px] border border-[var(--acm-accent)] bg-[oklch(0.84_0.16_82/0.07)] rounded-full text-[var(--acm-accent)] text-[11px]">
+      <span className="dot dot-accent acm-pulse" />
+      <span className="mono">Skill: {label}</span>
     </div>
   );
 }
 
 function TypingIndicator({ label }: { label?: string | null }) {
   return (
-    <div className="flex items-center gap-2 px-4 py-3 bg-slate-800 rounded-2xl rounded-tl-sm w-fit max-w-xs">
-      <div className="flex items-center gap-1 flex-shrink-0">
-        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="flex items-center gap-3 pl-1 py-1">
+      <div className="flex items-center gap-[5px]">
+        <div className="w-[7px] h-[7px] rounded-full bg-[var(--acm-accent)] acm-pulse" style={{ animationDelay: '0ms' }} />
+        <div className="w-[7px] h-[7px] rounded-full bg-[var(--acm-accent)] acm-pulse" style={{ animationDelay: '220ms' }} />
+        <div className="w-[7px] h-[7px] rounded-full bg-[var(--acm-accent)] acm-pulse" style={{ animationDelay: '440ms' }} />
       </div>
-      {label && <span className="text-xs text-slate-300 truncate">{label}</span>}
+      {label && <span className="mono text-[11px] text-[var(--acm-fg-3)] truncate">{label}</span>}
     </div>
   );
 }
@@ -149,17 +146,17 @@ function ValidationBubble({
   const visibleSteps = steps.filter((s) => s.step !== '__done__');
 
   const stepIcon = (status: ValidationStep['status']) => {
-    if (status === 'running') return <Loader2 size={13} className="animate-spin text-blue-400 flex-shrink-0" />;
-    if (status === 'passed')  return <CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" />;
-    if (status === 'warning') return <AlertTriangle size={13} className="text-amber-400 flex-shrink-0" />;
-    return <XCircle size={13} className="text-red-400 flex-shrink-0" />;
+    if (status === 'running') return <Loader2 size={13} className="animate-spin text-[var(--acm-accent)] flex-shrink-0" />;
+    if (status === 'passed')  return <CheckCircle2 size={13} className="text-[var(--acm-ok)] flex-shrink-0" />;
+    if (status === 'warning') return <AlertTriangle size={13} className="text-[var(--acm-warn)] flex-shrink-0" />;
+    return <XCircle size={13} className="text-[var(--acm-err)] flex-shrink-0" />;
   };
 
   const headerColor = !done
-    ? 'text-blue-300 border-blue-600/30 bg-blue-950/40'
+    ? 'text-[var(--acm-fg-2)] border-[var(--acm-border-strong)] bg-[var(--acm-card)]'
     : passed
-      ? 'text-emerald-300 border-emerald-600/30 bg-emerald-950/40'
-      : 'text-red-300 border-red-600/30 bg-red-950/40';
+      ? 'text-[var(--acm-ok)] border-[var(--acm-border-strong)] bg-[var(--acm-card)]'
+      : 'text-[var(--acm-err)] border-[var(--acm-border-strong)] bg-[var(--acm-card)]';
 
   const headerLabel = !done
     ? 'Validando...'
@@ -169,25 +166,25 @@ function ValidationBubble({
 
   return (
     <div className="flex gap-3">
-      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-violet-700">
-        <FlaskConical size={15} className="text-white" />
+      <div className="w-7 h-7 border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[6px] flex items-center justify-center flex-shrink-0 text-[var(--acm-accent)]">
+        <FlaskConical size={14} />
       </div>
       <div className="flex flex-col max-w-[85%] items-start">
-        <span className="text-xs text-slate-500 mb-1">Validación automática</span>
-        <div className={cn('px-4 py-3 rounded-2xl rounded-tl-sm border w-full', headerColor)}>
+        <span className="mono text-[10px] text-[var(--acm-fg-4)] mb-1">Validación automática</span>
+        <div className={cn('px-[14px] py-[12px] rounded-[0_8px_8px_0] border-l-2 border-l-[var(--acm-accent)] border border-[var(--acm-border)] w-full', headerColor)}>
           <div className="flex items-center gap-2 mb-3">
-            {!done && <Loader2 size={14} className="animate-spin" />}
-            {done && passed && <CheckCircle2 size={14} className="text-emerald-400" />}
-            {done && !passed && <XCircle size={14} className="text-red-400" />}
-            <span className="font-medium text-sm">{`Tool: ${tool}`}</span>
-            <span className="text-xs opacity-70 ml-auto">{headerLabel}</span>
+            {!done && <Loader2 size={13} className="animate-spin" />}
+            {done && passed && <CheckCircle2 size={13} className="text-[var(--acm-ok)]" />}
+            {done && !passed && <XCircle size={13} className="text-[var(--acm-err)]" />}
+            <span className="mono text-[12px] font-medium">{`Tool: ${tool}`}</span>
+            <span className="mono text-[10px] text-[var(--acm-fg-4)] ml-auto">{headerLabel}</span>
           </div>
           <div className="space-y-1.5">
             {visibleSteps.map((s) => (
-              <div key={s.step} className="flex items-start gap-2 text-xs">
+              <div key={s.step} className="flex items-start gap-2 text-[11px]">
                 {stepIcon(s.status)}
-                <span className="font-medium w-28 flex-shrink-0 opacity-90">{s.step}</span>
-                <span className="opacity-60 truncate">{s.detail}</span>
+                <span className="mono font-medium w-28 flex-shrink-0 text-[var(--acm-fg-2)]">{s.step}</span>
+                <span className="mono text-[var(--acm-fg-4)] truncate">{s.detail}</span>
               </div>
             ))}
           </div>
@@ -231,17 +228,17 @@ function ToolConfirmationBubble({
 
   return (
     <div className="flex gap-3">
-      <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-orange-600">
-        <ShieldCheck size={16} className="text-white" />
+      <div className="w-7 h-7 border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[6px] flex items-center justify-center flex-shrink-0 text-[var(--acm-accent)]">
+        <ShieldCheck size={14} />
       </div>
       <div className="flex flex-col max-w-[85%] items-start">
-        <span className="text-xs text-slate-500 mb-1">Confirm</span>
-        <div className="px-4 py-3 rounded-2xl rounded-tl-sm border border-orange-600/40 bg-orange-950/30 text-orange-200 w-full">
-          <div className="flex items-center gap-2 mb-2">
-            <ShieldCheck size={14} className="text-orange-400" />
-            <span className="font-medium text-sm">Permission required — {tool}</span>
+        <span className="mono text-[10px] text-[var(--acm-fg-4)] mb-1">Confirm</span>
+        <div className="border border-[oklch(0.84_0.16_82/0.4)] bg-[oklch(0.84_0.16_82/0.04)] rounded-[6px] p-[12px] w-full">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck size={13} className="text-[var(--acm-accent)]" />
+            <span className="mono text-[12px] font-semibold text-[var(--acm-accent)]">PERMISSION REQUIRED — {tool}</span>
           </div>
-          <div className="text-xs font-mono bg-slate-900/60 rounded-lg px-3 py-2 mb-3 text-slate-300 break-all">
+          <div className="mono text-[11px] bg-[var(--acm-base)] border border-[var(--acm-border)] rounded-[4px] p-[10px_12px] mb-3 text-[var(--acm-fg-2)] break-all">
             {command}
           </div>
           {resolved === null ? (
@@ -249,40 +246,168 @@ function ToolConfirmationBubble({
               <button
                 disabled={loading}
                 onClick={() => resolve(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50"
+                className="btn-primary !py-[5px] !px-[10px] !text-[11px]"
               >
-                {loading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                {loading ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
                 Allow
               </button>
               <button
                 disabled={loading}
                 onClick={() => resolve(true, true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+                className="btn-secondary !py-[5px] !px-[10px] !text-[11px]"
               >
-                <Infinity size={12} />
+                <Infinity size={11} />
                 Always (session)
               </button>
               <button
                 disabled={loading}
                 onClick={() => resolve(false)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-red-700 hover:bg-red-600 text-white transition-colors disabled:opacity-50"
+                className="mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] transition-colors px-[10px] py-[5px]"
               >
-                <XCircle size={12} />
+                <XCircle size={11} className="inline mr-1" />
                 Deny
               </button>
             </div>
           ) : (
             <div className={cn(
-              'flex items-center gap-1.5 text-xs font-medium',
-              resolved === 'approved' ? 'text-emerald-400'
-              : resolved === 'session' ? 'text-amber-400'
-              : 'text-red-400',
+              'flex items-center gap-1.5 mono text-[11px] font-medium',
+              resolved === 'approved' ? 'text-[var(--acm-ok)]'
+              : resolved === 'session' ? 'text-[var(--acm-accent)]'
+              : 'text-[var(--acm-err)]',
             )}>
-              {resolved === 'approved' && <><CheckCircle2 size={12} /> Allowed</>}
-              {resolved === 'session' && <><Infinity size={12} /> Allowed this session</>}
-              {resolved === 'denied' && <><XCircle size={12} /> Denied</>}
+              {resolved === 'approved' && <><CheckCircle2 size={11} /> Allowed</>}
+              {resolved === 'session' && <><Infinity size={11} /> Allowed this session</>}
+              {resolved === 'denied' && <><XCircle size={11} /> Denied</>}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToolConfirmationModal({
+  confirmId,
+  tool,
+  command,
+  onClose,
+}: {
+  confirmId: string;
+  tool: string;
+  command: string;
+  onClose: () => void;
+}) {
+  const TIMEOUT = 5;
+  const [timeLeft, setTimeLeft] = useState(TIMEOUT);
+  const [loading, setLoading] = useState(false);
+  const token = useAuthStore((s) => s.token);
+  const doneRef = useRef(false);
+
+  const doResolve = async (approved: boolean, alwaysSession = false) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setLoading(true);
+    try {
+      await fetch('/api/tool/confirm', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ confirm_id: confirmId, approved, always_session: alwaysSession, command }),
+      });
+    } catch { /* best-effort */ }
+    onClose();
+  };
+
+  // Always-fresh ref so the interval closure calls the latest doResolve
+  const resolveRef = useRef(doResolve);
+  resolveRef.current = doResolve;
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((prev) => {
+        const next = prev - 1;
+        if (next <= 0) {
+          clearInterval(id);
+          resolveRef.current(false);
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div
+        className="w-[460px] max-w-[92vw] rounded-[10px] overflow-hidden border bg-[var(--acm-card)]"
+        style={{ borderColor: 'oklch(0.84 0.16 82 / 0.45)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-[10px] px-[18px] py-[12px] border-b border-[var(--acm-border)] bg-[oklch(0.84_0.16_82/0.05)]">
+          <ShieldCheck size={14} className="text-[var(--acm-accent)] flex-shrink-0" />
+          <span className="mono text-[12px] font-semibold text-[var(--acm-accent)] flex-1">PERMISSION REQUIRED</span>
+          <span className="mono text-[11px] text-[var(--acm-fg-4)] truncate max-w-[140px]">{tool}</span>
+          {/* Countdown ring */}
+          <div
+            className="w-[28px] h-[28px] rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors duration-300"
+            style={{ borderColor: timeLeft <= 2 ? 'var(--acm-err)' : 'var(--acm-accent)' }}
+          >
+            <span
+              className="mono text-[11px] font-bold transition-colors duration-300"
+              style={{ color: timeLeft <= 2 ? 'var(--acm-err)' : 'var(--acm-accent)' }}
+            >
+              {timeLeft}
+            </span>
+          </div>
+        </div>
+
+        {/* Command preview */}
+        <div className="px-[18px] py-[14px]">
+          <div className="mono text-[11px] bg-[var(--acm-base)] border border-[var(--acm-border)] rounded-[6px] px-[12px] py-[10px] text-[var(--acm-fg-2)] break-all leading-relaxed">
+            {command}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="px-[18px] pb-[16px] flex items-center gap-2">
+          <button
+            disabled={loading}
+            onClick={() => doResolve(true)}
+            className="btn-primary !py-[6px] !px-[14px] !text-[12px]"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+            Allow
+          </button>
+          <button
+            disabled={loading}
+            onClick={() => doResolve(true, true)}
+            className="btn-secondary !py-[6px] !px-[14px] !text-[12px]"
+          >
+            <Infinity size={12} />
+            Always (session)
+          </button>
+          <button
+            disabled={loading}
+            onClick={() => doResolve(false)}
+            className="mono text-[12px] text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] transition-colors px-[12px] py-[6px] ml-auto flex items-center gap-1"
+          >
+            <XCircle size={12} />
+            Deny
+          </button>
+        </div>
+
+        {/* Countdown progress bar */}
+        <div className="h-[3px] bg-[var(--acm-elev)]">
+          <div
+            className="h-full transition-all duration-1000 ease-linear"
+            style={{
+              width: `${(timeLeft / TIMEOUT) * 100}%`,
+              background: timeLeft <= 2 ? 'var(--acm-err)' : 'var(--acm-accent)',
+            }}
+          />
         </div>
       </div>
     </div>
@@ -316,28 +441,28 @@ function MessageContent({ content, token }: { content: string; token: string | n
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>,
-            h1: ({ children }) => <h1 className="text-xl font-bold text-white mt-4 mb-2 first:mt-0">{children}</h1>,
-            h2: ({ children }) => <h2 className="text-lg font-semibold text-white mt-3 mb-1.5 first:mt-0">{children}</h2>,
-            h3: ({ children }) => <h3 className="text-base font-semibold text-slate-200 mt-2 mb-1 first:mt-0">{children}</h3>,
-            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-            em: ({ children }) => <em className="italic text-slate-300">{children}</em>,
+            p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-[var(--acm-fg-2)]">{children}</p>,
+            h1: ({ children }) => <h1 className="text-xl font-bold text-[var(--acm-fg)] mt-4 mb-2 first:mt-0">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-lg font-semibold text-[var(--acm-fg)] mt-3 mb-1.5 first:mt-0">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-base font-semibold text-[var(--acm-fg-2)] mt-2 mb-1 first:mt-0">{children}</h3>,
+            strong: ({ children }) => <strong className="font-semibold text-[var(--acm-fg)]">{children}</strong>,
+            em: ({ children }) => <em className="italic text-[var(--acm-fg-3)]">{children}</em>,
             ul: ({ children }) => <ul className="list-disc list-inside space-y-1 my-2 pl-2">{children}</ul>,
             ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 my-2 pl-2">{children}</ol>,
-            li: ({ children }) => <li className="text-slate-200">{children}</li>,
+            li: ({ children }) => <li className="text-[var(--acm-fg-2)]">{children}</li>,
             code: ({ children, className }) => {
               const isBlock = className?.includes('language-');
               return isBlock
-                ? <code className="block bg-slate-950 text-green-300 rounded-lg px-4 py-3 my-2 text-sm font-mono overflow-x-auto whitespace-pre">{children}</code>
-                : <code className="bg-slate-800 text-blue-300 rounded px-1.5 py-0.5 text-sm font-mono">{children}</code>;
+                ? <code className="block bg-[oklch(0.13_0.005_255)] text-[var(--acm-ok)] rounded-[6px] px-4 py-3 my-2 text-[12px] mono overflow-x-auto whitespace-pre">{children}</code>
+                : <code className="bg-[var(--acm-elev)] text-[var(--acm-accent)] rounded-[4px] px-1.5 py-0.5 text-[12px] mono">{children}</code>;
             },
             pre: ({ children }) => <>{children}</>,
-            blockquote: ({ children }) => <blockquote className="border-l-2 border-blue-500 pl-3 my-2 text-slate-400 italic">{children}</blockquote>,
-            a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline underline-offset-2">{children}</a>,
-            hr: () => <hr className="border-slate-700 my-3" />,
-            table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-sm border-collapse w-full">{children}</table></div>,
-            th: ({ children }) => <th className="border border-slate-600 px-3 py-1.5 bg-slate-800 text-left font-semibold text-slate-200">{children}</th>,
-            td: ({ children }) => <td className="border border-slate-700 px-3 py-1.5 text-slate-300">{children}</td>,
+            blockquote: ({ children }) => <blockquote className="border-l-2 border-l-[var(--acm-accent)] pl-3 my-2 text-[var(--acm-fg-3)] italic">{children}</blockquote>,
+            a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--acm-accent)] hover:text-[var(--acm-accent-hi)] underline underline-offset-2">{children}</a>,
+            hr: () => <hr className="border-[var(--acm-border)] my-3" />,
+            table: ({ children }) => <div className="overflow-x-auto my-2"><table className="text-[12px] border-collapse w-full">{children}</table></div>,
+            th: ({ children }) => <th className="border border-[var(--acm-border-strong)] px-3 py-1.5 bg-[var(--acm-elev)] text-left font-semibold text-[var(--acm-fg-2)]">{children}</th>,
+            td: ({ children }) => <td className="border border-[var(--acm-border)] px-3 py-1.5 text-[var(--acm-fg-3)]">{children}</td>,
           }}
         >
           {cleanText}
@@ -350,23 +475,23 @@ function MessageContent({ content, token }: { content: string; token: string | n
             const previewUrl = `/api/media/${filename}${token ? `?token=${token}` : ''}`;
             const downloadUrl = `/api/media/${filename}?download=true${token ? `&token=${token}` : ''}`;
             return (
-              <div key={idx} className="rounded-lg overflow-hidden border border-slate-600">
+              <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
                 {isImage && (
                   <img
                     src={previewUrl}
                     alt={filename}
-                    className="max-w-xs max-h-64 object-contain bg-slate-900 block"
+                    className="max-w-xs max-h-64 object-contain bg-[var(--acm-base)] block"
                   />
                 )}
-                <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 text-xs">
-                  <Paperclip size={12} className="text-slate-400 flex-shrink-0" />
-                  <span className="truncate text-slate-300 flex-1">{filename}</span>
+                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-card)] text-[11px]">
+                  <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
+                  <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{filename}</span>
                   <a
                     href={downloadUrl}
                     download={filename}
-                    className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors flex-shrink-0"
+                    className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
                   >
-                    <Download size={11} />
+                    <Download size={10} />
                     Download
                   </a>
                 </div>
@@ -394,18 +519,18 @@ function TokenBadge({ usage }: { usage: MessageUsage }) {
     <div className="mt-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 text-[10px] text-slate-500 hover:text-slate-300 transition-colors group"
+        className="flex items-center gap-2 mono text-[10px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-3)] transition-colors group"
       >
         <span className="flex items-center gap-0.5">
-          <ArrowUp size={9} className="text-blue-400" />
+          <ArrowUp size={9} className="text-[var(--acm-accent)]" />
           {fmt(usage.prompt_tokens)}
         </span>
         <span className="flex items-center gap-0.5">
-          <ArrowDown size={9} className="text-purple-400" />
+          <ArrowDown size={9} className="text-[var(--acm-fg-3)]" />
           {fmt(usage.completion_tokens)}
         </span>
         {usage.cost > 0 && (
-          <span className="flex items-center gap-0.5 text-amber-500">
+          <span className="flex items-center gap-0.5 text-[var(--acm-accent)]">
             <DollarSign size={9} />
             {usage.cost < 0.001 ? '<$0.001' : `$${usage.cost.toFixed(4)}`}
           </span>
@@ -415,35 +540,35 @@ function TokenBadge({ usage }: { usage: MessageUsage }) {
       </button>
 
       {open && (
-        <div className="mt-1 bg-slate-900 border border-slate-700 rounded-lg p-3 text-[11px] space-y-1.5 text-slate-400 font-mono max-w-xs">
+        <div className="mt-1 bg-[var(--acm-card)] border border-[var(--acm-border)] rounded-[6px] p-3 text-[11px] space-y-1.5 text-[var(--acm-fg-4)] mono max-w-xs">
           <div className="flex justify-between">
-            <span className="text-slate-500">Model</span>
-            <span className="text-slate-200">{usage.model || '—'}</span>
+            <span className="text-[var(--acm-fg-4)]">Model</span>
+            <span className="text-[var(--acm-fg-2)]">{usage.model || '—'}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">Input tokens</span>
-            <span className="text-blue-400">{usage.prompt_tokens.toLocaleString()}</span>
+            <span className="text-[var(--acm-fg-4)]">Input tokens</span>
+            <span className="text-[var(--acm-accent)]">{usage.prompt_tokens.toLocaleString()}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-500">Output tokens</span>
-            <span className="text-purple-400">{usage.completion_tokens.toLocaleString()}</span>
+            <span className="text-[var(--acm-fg-4)]">Output tokens</span>
+            <span className="text-[var(--acm-fg-3)]">{usage.completion_tokens.toLocaleString()}</span>
           </div>
-          <div className="flex justify-between border-t border-slate-700 pt-1.5">
-            <span className="text-slate-500">Total tokens</span>
-            <span className="text-white">{usage.total_tokens.toLocaleString()}</span>
+          <div className="flex justify-between border-t border-[var(--acm-border)] pt-1.5">
+            <span className="text-[var(--acm-fg-4)]">Total tokens</span>
+            <span className="text-[var(--acm-fg)]">{usage.total_tokens.toLocaleString()}</span>
           </div>
           {usage.cost > 0 && (
             <div className="flex justify-between">
-              <span className="text-slate-500">Est. cost</span>
-              <span className="text-amber-400">
+              <span className="text-[var(--acm-fg-4)]">Est. cost</span>
+              <span className="text-[var(--acm-accent)]">
                 ${usage.cost < 0.000001 ? '< $0.000001' : usage.cost.toFixed(6)}
               </span>
             </div>
           )}
           {usage.requests > 1 && (
             <div className="flex justify-between">
-              <span className="text-slate-500">LLM calls</span>
-              <span>{usage.requests}</span>
+              <span className="text-[var(--acm-fg-4)]">LLM calls</span>
+              <span className="text-[var(--acm-fg-3)]">{usage.requests}</span>
             </div>
           )}
         </div>
@@ -453,35 +578,17 @@ function TokenBadge({ usage }: { usage: MessageUsage }) {
 }
 
 function CompactionNoteBubble({
-  summary,
   summarizedMessages,
 }: {
-  summary: string;
   summarizedMessages: number;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
   return (
-    <div className="flex items-start gap-3 px-2">
-      <div className="flex-1 border border-dashed border-slate-600/60 rounded-xl bg-slate-900/50 px-4 py-3">
-        <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
-          <ScrollText size={13} className="text-indigo-400 flex-shrink-0" />
-          <span className="font-medium text-indigo-300">Conversación compactada</span>
-          <span className="text-slate-600">·</span>
-          <span>{summarizedMessages} mensajes resumidos</span>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="ml-auto flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            {expanded ? 'Ocultar' : 'Ver resumen'}
-          </button>
-        </div>
-        {expanded && (
-          <div className="mt-2 text-xs text-slate-400 leading-relaxed border-t border-slate-700/50 pt-2">
-            {summary}
-          </div>
-        )}
+    <div className="flex items-center px-2">
+      <div className="flex items-center gap-[8px] px-[12px] py-[7px] border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[6px] text-[11px]">
+        <ScrollText size={11} className="text-[var(--acm-accent)] flex-shrink-0" />
+        <span className="mono font-medium text-[var(--acm-fg-3)]">Conversation compacted</span>
+        <span className="text-[var(--acm-border-strong)]">·</span>
+        <span className="mono text-[var(--acm-fg-4)]">{summarizedMessages} messages summarized</span>
       </div>
     </div>
   );
@@ -509,115 +616,206 @@ function MessageBubble({
     status: 'running' | 'completed' | 'error';
   };
 }) {
+  const [expanded, setExpanded] = useState(false);
   const isUser = role === 'user';
   const isError = role === 'error';
   const isSystem = role === 'system';
   const token = useAuthStore((s) => s.token);
-  
-  // System/tool messages have different styling
+
+  // System/tool messages — tool call card style
   if (isSystem && toolCall) {
+    const isRunning = toolCall.status === 'running';
+    const isDone    = toolCall.status === 'completed';
+    const isFailed  = toolCall.status === 'error';
+
+    const accentColor = isRunning ? 'var(--acm-accent)' : isDone ? 'var(--acm-ok)' : 'var(--acm-err)';
+    const stateLabel  = isRunning ? 'CALL' : isDone ? 'DONE' : 'ERR';
+
     return (
-      <div className="flex gap-3">
-        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-amber-600">
-          <Wrench size={16} className="text-white" />
-        </div>
-        
-        <div className="flex flex-col max-w-[85%] items-start">
-          {badge && (
-            <span className="text-xs text-slate-500 mb-1">{badge}</span>
+      <div
+        className="acm-card overflow-hidden max-w-[85%]"
+        style={{ borderLeft: `2px solid ${accentColor}` }}
+      >
+        {/* Card header — always clickable to expand */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center gap-[10px] px-[12px] py-[8px] hover:bg-[var(--acm-elev)] transition-colors"
+          style={{ borderBottom: expanded ? '1px solid var(--acm-border)' : undefined }}
+        >
+          {isRunning && <span className="dot dot-accent acm-pulse" />}
+          {isDone    && <span className="dot dot-ok" />}
+          {isFailed  && <span className="dot dot-err" />}
+
+          <Wrench size={12} style={{ color: accentColor }} />
+
+          <span
+            className="mono text-[10px] font-semibold uppercase tracking-wider flex-shrink-0"
+            style={{ color: accentColor }}
+          >
+            {stateLabel}
+          </span>
+
+          <span className="mono text-[12px] text-[var(--acm-fg-2)] font-medium flex-1 text-left truncate">
+            {toolCall.tool}
+          </span>
+
+          {toolCall.arguments && !expanded && (
+            <span className="mono text-[11px] text-[var(--acm-fg-4)] truncate max-w-[180px]">
+              {toolCall.arguments}
+            </span>
           )}
-          
-          <div className="px-4 py-3 rounded-2xl bg-amber-900/30 text-amber-200 border border-amber-600/30 rounded-tl-sm">
-            <div className="flex items-center gap-2 mb-2">
-              {toolCall.status === 'running' && <Loader2 size={14} className="animate-spin" />}
-              {toolCall.status === 'completed' && <span className="text-green-400">✓</span>}
-              {toolCall.status === 'error' && <span className="text-red-400">✗</span>}
-              <span className="font-medium">{toolCall.tool}</span>
-            </div>
-            
+
+          {expanded
+            ? <ChevronUp size={12} className="text-[var(--acm-fg-4)] flex-shrink-0" />
+            : <ChevronDown size={12} className="text-[var(--acm-fg-4)] flex-shrink-0" />
+          }
+        </button>
+
+        {expanded && (
+          <div className="bg-[oklch(0.13_0.005_255)] mono text-[11px]">
             {toolCall.arguments && (
-              <div className="text-xs text-amber-300/70 mb-2">
-                <span className="font-mono">{toolCall.arguments}</span>
+              <div className="px-[12px] py-[8px] border-b border-[var(--acm-border)]">
+                <div className="text-[var(--acm-accent)] text-[9px] uppercase tracking-widest mb-1">Arguments</div>
+                <pre className="text-[var(--acm-fg-3)] overflow-x-auto whitespace-pre-wrap">{toolCall.arguments}</pre>
               </div>
             )}
-            
-            {toolCall.result && (
-              <div className="text-sm text-slate-300 border-t border-amber-600/20 pt-2 mt-2">
-                {toolCall.result}
+
+            {toolCall.result ? (
+              <div className="px-[12px] py-[8px]">
+                <div className="text-[var(--acm-ok)] text-[9px] uppercase tracking-widest mb-1">Result</div>
+                <pre className="text-[var(--acm-fg-3)] overflow-x-auto whitespace-pre-wrap">{toolCall.result}</pre>
               </div>
-            )}
+            ) : isRunning ? (
+              <div className="px-[12px] py-[8px] flex items-center gap-2 text-[var(--acm-fg-4)]">
+                <Loader2 size={11} className="animate-spin text-[var(--acm-accent)]" />
+                <span>Running…</span>
+              </div>
+            ) : null}
           </div>
-        </div>
+        )}
       </div>
     );
   }
-  
+
+  // Error role — inline style
+  if (isError) {
+    return (
+      <div className="flex items-start gap-2 border-l-2 border-l-[var(--acm-err)] pl-3 py-1">
+        <span className="dot dot-err mt-1 flex-shrink-0" />
+        <p className="text-[12px] text-[var(--acm-fg-3)]">{content}</p>
+      </div>
+    );
+  }
+
+  // System message (no toolCall) — divider style
+  if (isSystem) {
+    return (
+      <div className="border-l-2 border-l-[var(--acm-border-strong)] pl-3 py-1 text-[12px] text-[var(--acm-fg-3)]">
+        {badge && <span className="mono text-[10px] text-[var(--acm-fg-4)] block mb-0.5">{badge}</span>}
+        <MessageContent content={content} token={token} />
+      </div>
+    );
+  }
+
   return (
     <div className={cn(
       "flex gap-3",
       isUser ? "flex-row-reverse" : ""
     )}>
-      <div className={cn(
-        "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
-        isUser ? "bg-blue-600" : isError ? "bg-red-600" : "bg-purple-600"
-      )}>
-        {isUser ? <User size={16} className="text-white" /> : <Bot size={16} className="text-white" />}
-      </div>
-      
+      {/* Avatar */}
+      {!isUser && (
+        <div className="w-7 h-7 border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[6px] flex items-center justify-center flex-shrink-0 text-[var(--acm-accent)] self-start mt-1">
+          <Bot size={14} />
+        </div>
+      )}
+
       <div className={cn(
         "flex flex-col max-w-[75%]",
         isUser ? "items-end" : "items-start"
       )}>
         {badge && (
-          <span className="text-xs text-slate-500 mb-1">{badge}</span>
+          <span className="mono text-[10px] text-[var(--acm-fg-4)] mb-1">{badge}</span>
         )}
-        
-        <div className={cn(
-          "px-4 py-3 rounded-2xl",
-          isUser
-            ? "bg-blue-600 text-white rounded-tr-sm"
-            : isError
-              ? "bg-red-500/20 text-red-200 border border-red-500/30 rounded-tl-sm"
-              : isSystem
-                ? "bg-slate-900/80 text-slate-300 border border-slate-600/50 rounded-tl-sm text-sm"
-                : "bg-slate-800 text-slate-200 border border-slate-700 rounded-tl-sm"
-        )}>
-          <MessageContent content={content} token={token} />
 
-          {attachments && attachments.length > 0 && (
-            <div className="mt-3 space-y-2">
-              {attachments.map((att, idx) => {
-                const fileId = att.id || att.name;
-                const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
-                const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
-                const previewUrl = `/api/media/${fileId}?token=${token}`;
-                return (
-                  <div key={idx} className="rounded-lg overflow-hidden border border-slate-600">
-                    {isMedia && (
-                      <img
-                        src={previewUrl}
-                        alt={att.name}
-                        className="max-w-xs max-h-48 object-contain bg-slate-900"
-                      />
-                    )}
-                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 text-xs">
-                      <Paperclip size={12} className="text-slate-400 flex-shrink-0" />
-                      <span className="truncate text-slate-300 flex-1">{att.name}</span>
-                      <a
-                        href={downloadUrl}
-                        download={att.name}
-                        className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors flex-shrink-0"
-                      >
-                        <Download size={11} />
-                        Download
-                      </a>
+        {isUser ? (
+          /* User bubble */
+          <div className="bg-[var(--acm-card)] border border-[var(--acm-border)] rounded-[8px] px-[14px] py-[12px] text-[var(--acm-fg)]">
+            <MessageContent content={content} token={token} />
+
+            {attachments && attachments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {attachments.map((att, idx) => {
+                  const fileId = att.id || att.name;
+                  const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
+                  const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
+                  const previewUrl = `/api/media/${fileId}?token=${token}`;
+                  return (
+                    <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
+                      {isMedia && (
+                        <img
+                          src={previewUrl}
+                          alt={att.name}
+                          className="max-w-xs max-h-48 object-contain bg-[var(--acm-base)]"
+                        />
+                      )}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-elev)] text-[11px]">
+                        <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
+                        <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{att.name}</span>
+                        <a
+                          href={downloadUrl}
+                          download={att.name}
+                          className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
+                        >
+                          <Download size={10} />
+                          Download
+                        </a>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Assistant bubble */
+          <div className="bg-[oklch(0.84_0.16_82/0.04)] border-l-2 border-l-[var(--acm-accent)] rounded-[0_8px_8px_0] px-[14px] py-[12px] text-[var(--acm-fg-2)]">
+            <MessageContent content={content} token={token} />
+
+            {attachments && attachments.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {attachments.map((att, idx) => {
+                  const fileId = att.id || att.name;
+                  const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
+                  const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
+                  const previewUrl = `/api/media/${fileId}?token=${token}`;
+                  return (
+                    <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
+                      {isMedia && (
+                        <img
+                          src={previewUrl}
+                          alt={att.name}
+                          className="max-w-xs max-h-48 object-contain bg-[var(--acm-base)]"
+                        />
+                      )}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-elev)] text-[11px]">
+                        <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
+                        <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{att.name}</span>
+                        <a
+                          href={downloadUrl}
+                          download={att.name}
+                          className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
+                        >
+                          <Download size={10} />
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {!isUser && !isError && usage && usage.total_tokens > 0 && (
           <TokenBadge usage={usage} />
@@ -673,16 +871,38 @@ export default function ChatPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
+  const [activeConfirmation, setActiveConfirmation] = useState<{
+    confirmId: string;
+    tool: string;
+    command: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  // Track which confirmation IDs have already been shown as a modal
+  const shownConfirmIdsRef = useRef<Set<string>>(new Set());
   // Track which conversation we last loaded history for
   const loadedKeyRef = useRef('');
   // Only show reconnecting overlay after first successful connection
   const hasConnectedRef = useRef(false);
   useEffect(() => { if (wsConnected) hasConnectedRef.current = true; }, [wsConnected]);
   const showReconnecting = hasConnectedRef.current && !wsConnected;
+
+  // Pop a modal for any new toolConfirmation message that hasn't been shown yet
+  useEffect(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.toolConfirmation) {
+        const { confirmId, tool, command } = msg.toolConfirmation;
+        if (!shownConfirmIdsRef.current.has(confirmId)) {
+          shownConfirmIdsRef.current.add(confirmId);
+          setActiveConfirmation({ confirmId, tool, command });
+        }
+        break;
+      }
+    }
+  }, [messages]);
 
   // Load conversation history when a new conversation is selected
   useEffect(() => {
@@ -728,7 +948,7 @@ export default function ChatPage() {
       }
     }
   }, [history, currentTarget.channel, currentTarget.user, setMessages]);
-  
+
   // Consume pending onboarding greeting — add it once history has been loaded
   // (or immediately if there's no history to load). Clear after showing.
   useEffect(() => {
@@ -742,7 +962,7 @@ export default function ChatPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaitingResponse]);
-  
+
   const executeCommand = async (command: string) => {
     if (command.startsWith('/compact')) setIsCompacting(true);
     try {
@@ -751,8 +971,7 @@ export default function ChatPage() {
         userId: currentTarget.user,
         channelId: currentTarget.channel,
       });
-      // Compact responses are shown via the memory.compacted WS event bubble — skip the text
-      if (result.text && !result.data?.compact) {
+      if (result.text) {
         addMessage({ content: result.text, role: 'system' });
       }
       // Handle special data payloads
@@ -810,14 +1029,14 @@ export default function ChatPage() {
       toast.error('Could not send message. Check your connection.');
     }
   };
-  
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
-  
+
   const uploadFile = async (file: File): Promise<{ id: string; name: string; type: string; previewUrl?: string } | null> => {
     const token = useAuthStore.getState().token;
     const formData = new FormData();
@@ -904,7 +1123,7 @@ export default function ChatPage() {
       toast.error('Could not access microphone');
     }
   };
-  
+
   const selectConversation = (conv: Conversation) => {
     const newKey = `${conv.channel_id}:${conv.user_id}`;
     if (loadedKeyRef.current !== newKey) {
@@ -938,7 +1157,7 @@ export default function ChatPage() {
       return [entry, ...(old ?? [])];
     });
   };
-  
+
   const handleDeleteConversation = async (conv: Conversation, e: React.MouseEvent) => {
     e.stopPropagation();
     const key = `${conv.channel_id}-${conv.user_id}`;
@@ -957,44 +1176,44 @@ export default function ChatPage() {
   };
 
   const conversationList: Conversation[] = conversations || [];
-  
+
   return (
     <AppLayout>
-      <div className="h-screen flex">
+      <div className="h-screen flex bg-[var(--acm-base)]">
         {/* Sidebar - Conversation List */}
         <div className={cn(
-          "fixed lg:static inset-y-0 left-0 w-80 bg-slate-900 border-r border-slate-800 z-30 transition-transform duration-300",
+          "fixed lg:static inset-y-0 left-0 w-72 bg-[var(--acm-base)] border-r border-[var(--acm-border)] z-30 transition-transform duration-300",
           isSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0 lg:w-0 lg:overflow-hidden lg:border-r-0"
         )}>
           <div className="flex flex-col h-full">
-            {/* Header */}
-            <div className="p-4 border-b border-slate-800">
+            {/* Sidebar header */}
+            <div className="px-[16px] py-[14px] border-b border-[var(--acm-border)]">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold text-white">Conversations</h2>
+                <span className="label text-[var(--acm-fg-3)]">Conversations</span>
                 <button
                   onClick={() => setIsSidebarOpen(false)}
-                  className="lg:hidden p-1 text-slate-400 hover:text-white"
+                  className="lg:hidden p-1 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
                 >
-                  <X size={20} />
+                  <X size={16} />
                 </button>
               </div>
               {systemInfo?.messages_encrypted && (
-                <div className="flex items-center gap-1.5 px-2.5 py-1.5 mb-3 rounded-lg bg-emerald-950/50 border border-emerald-700/30 text-emerald-400 text-xs">
-                  <ShieldCheck size={13} className="shrink-0" />
-                  <span>Messages encrypted at rest</span>
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 mb-3 rounded-[6px] border border-[var(--acm-border)] text-[var(--acm-ok)] text-[11px] mono">
+                  <ShieldCheck size={11} className="shrink-0" />
+                  <span>Encrypted at rest</span>
                 </div>
               )}
               <button
                 onClick={startNewConversation}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                className="btn-primary w-full justify-center !text-[12px] !py-[7px]"
               >
-                <Plus size={18} />
-                <span>New Conversation</span>
+                <Plus size={14} />
+                New Conversation
               </button>
             </div>
-            
-            {/* Conversation List */}
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+
+            {/* Conversation list */}
+            <div className="flex-1 overflow-y-auto acm-scroll p-[8px] space-y-[2px]">
               {conversationList.map((conv) => {
                 const convKey = `${conv.channel_id}-${conv.user_id}`;
                 const isActive = currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id;
@@ -1004,53 +1223,55 @@ export default function ChatPage() {
                   <div
                     key={convKey}
                     className={cn(
-                      "group relative w-full text-left p-3 rounded-lg transition-colors cursor-pointer",
+                      "group relative w-full text-left px-[10px] py-[9px] rounded-[6px] transition-colors cursor-pointer",
                       isActive
-                        ? "bg-blue-600/20 border border-blue-600/30"
-                        : "hover:bg-slate-800 border border-transparent"
+                        ? "border-l-2 border-l-[var(--acm-accent)] bg-[var(--acm-elev)] pl-[8px]"
+                        : "border-l-2 border-l-transparent hover:bg-[var(--acm-card)]"
                     )}
                     onClick={() => selectConversation(conv)}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center shrink-0">
-                        <MessageSquare size={18} className="text-slate-400" />
-                      </div>
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={13} className={cn(
+                        "flex-shrink-0",
+                        isActive ? "text-[var(--acm-accent)]" : "text-[var(--acm-fg-4)]"
+                      )} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-medium text-slate-200 truncate">
+                          <p className={cn(
+                            "text-[13px] font-medium truncate",
+                            isActive ? "text-[var(--acm-fg)]" : "text-[var(--acm-fg-2)]"
+                          )}>
                             {conv.title || `${conv.channel_id} - ${conv.user_id}`}
                           </p>
                           {conv.message_count === 0 && (
-                            <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 bg-blue-500/15 text-blue-400 rounded-full border border-blue-500/20">
+                            <span className="shrink-0 mono text-[10px] px-1.5 py-0.5 bg-[oklch(0.84_0.16_82/0.1)] text-[var(--acm-accent)] rounded-full border border-[oklch(0.84_0.16_82/0.3)]">
                               New
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-slate-500 truncate">
+                        <p className="mono text-[10px] text-[var(--acm-fg-4)] truncate mt-[1px]">
                           {conv.last_message || 'No messages yet'}
                         </p>
                       </div>
-                      {/* Message count — hidden when delete button is visible */}
                       {conv.message_count > 0 && (
-                        <span className="text-xs text-slate-500 group-hover:hidden">
+                        <span className="mono text-[10px] text-[var(--acm-fg-4)] group-hover:hidden">
                           {conv.message_count}
                         </span>
                       )}
-                      {/* Delete button — only for external channels (not web/console), shown on hover */}
                       {isDeletable && (
                         <button
                           onClick={(e) => handleDeleteConversation(conv, e)}
                           disabled={isDeleting}
                           className={cn(
-                            "hidden group-hover:flex items-center justify-center w-7 h-7 rounded-md transition-colors shrink-0",
-                            "text-slate-500 hover:text-red-400 hover:bg-red-500/10",
+                            "hidden group-hover:flex items-center justify-center w-6 h-6 rounded-[4px] transition-colors shrink-0",
+                            "text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] hover:bg-[oklch(0.68_0.13_22/0.1)]",
                             isDeleting && "!flex"
                           )}
                           title="Delete conversation"
                         >
                           {isDeleting
-                            ? <Loader2 size={14} className="animate-spin" />
-                            : <Trash2 size={14} />
+                            ? <Loader2 size={12} className="animate-spin" />
+                            : <Trash2 size={12} />
                           }
                         </button>
                       )}
@@ -1058,50 +1279,57 @@ export default function ChatPage() {
                   </div>
                 );
               })}
-              
+
               {conversationList.length === 0 && (
-                <div className="text-center py-8">
-                  <MessageSquare size={48} className="mx-auto text-slate-600 mb-2" />
-                  <p className="text-sm text-slate-500">No conversations yet</p>
+                <div className="text-center py-10">
+                  <MessageSquare size={32} className="mx-auto text-[var(--acm-border-strong)] mb-2" />
+                  <p className="mono text-[11px] text-[var(--acm-fg-4)]">No conversations yet</p>
                 </div>
               )}
             </div>
           </div>
         </div>
-        
+
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col min-w-0 bg-slate-950 relative">
-          {/* Reconnecting overlay — shown only after first connection, when backend drops */}
+        <div className="flex-1 flex flex-col min-w-0 bg-[var(--acm-base)] relative">
+          {/* Reconnecting overlay */}
           {showReconnecting && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-sm">
-              <Loader2 size={36} className="text-blue-400 animate-spin mb-4" />
-              <p className="text-slate-200 text-sm font-medium">Reconnecting to backend…</p>
-              <p className="text-slate-500 text-xs mt-1">Your conversation will resume automatically</p>
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[var(--acm-base)]/90 backdrop-blur-sm">
+              <Loader2 size={32} className="text-[var(--acm-accent)] animate-spin mb-4" />
+              <p className="text-[var(--acm-fg-2)] text-[13.5px] font-semibold">Reconnecting to backend…</p>
+              <p className="mono text-[10px] text-[var(--acm-fg-4)] mt-1">Your conversation will resume automatically</p>
             </div>
           )}
-          {/* Chat Header */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+
+          {/* Chat header bar */}
+          <div className="h-[52px] flex items-center justify-between px-[16px] border-b border-[var(--acm-border)] bg-[var(--acm-base)] flex-shrink-0">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setIsSidebarOpen(true)}
-                className="lg:hidden p-2 text-slate-400 hover:text-white"
+                className="lg:hidden p-1.5 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
               >
-                <MessageSquare size={20} />
+                <MessageSquare size={16} />
               </button>
               <div>
-                <h3 className="font-semibold text-white">{currentTarget.title}</h3>
-                <p className="text-xs text-slate-500">{currentTarget.channel} • {currentTarget.user}</p>
+                <h3 className="text-[13.5px] font-semibold text-[var(--acm-fg)] leading-tight">{currentTarget.title}</h3>
+                <p className="mono text-[10px] text-[var(--acm-fg-4)]">{currentTarget.channel} · {currentTarget.user}</p>
               </div>
             </div>
-            
-            <div className="flex items-center gap-2">
+
+            <div className="flex items-center gap-[8px]">
+              {/* WS status pill */}
+              <div className="inline-flex items-center gap-[7px] px-[10px] py-[4px] border border-[var(--acm-border)] rounded-full text-[11px]">
+                <span className={cn("dot", wsConnected ? "dot-ok acm-pulse" : "dot-err")} />
+                <span className="mono text-[var(--acm-fg-4)]">{wsConnected ? 'connected' : 'offline'}</span>
+              </div>
+
               <button
                 onClick={() => setShowToolLogs(!showToolLogs)}
                 className={cn(
-                  "px-3 py-1.5 text-sm rounded-lg transition-colors",
+                  "inline-flex items-center gap-[7px] px-[10px] py-[4px] border rounded-full text-[11px] mono transition-colors",
                   showToolLogs
-                    ? "bg-blue-600/20 text-blue-400 border border-blue-600/30"
-                    : "text-slate-400 hover:bg-slate-800"
+                    ? "border-[var(--acm-accent)] text-[var(--acm-accent)] bg-[oklch(0.84_0.16_82/0.07)]"
+                    : "border-[var(--acm-border)] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)]"
                 )}
               >
                 Tool Logs
@@ -1109,23 +1337,24 @@ export default function ChatPage() {
               <button
                 onClick={toggleTerminal}
                 className={cn(
-                  "px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-1.5",
+                  "inline-flex items-center gap-[7px] px-[10px] py-[4px] border rounded-full text-[11px] mono transition-colors",
                   isTerminalOpen
-                    ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/30"
-                    : "text-slate-400 hover:bg-slate-800"
+                    ? "border-[var(--acm-accent)] text-[var(--acm-accent)] bg-[oklch(0.84_0.16_82/0.07)]"
+                    : "border-[var(--acm-border)] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)]"
                 )}
               >
-                <SquareTerminal size={14} />
+                <SquareTerminal size={12} />
                 Terminal
               </button>
-              <button className="p-2 text-slate-400 hover:text-white">
-                <MoreVertical size={20} />
+              <button className="p-1.5 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors">
+                <MoreVertical size={16} />
               </button>
             </div>
           </div>
-          
-          {/* Messages Area */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-4 relative">
+
+          {/* Messages feed */}
+          <div className="flex-1 overflow-y-auto acm-scroll px-[20px] py-[16px] space-y-[16px] relative">
+            {/* Floating status badges */}
             {(isRouterLearning || activeSkillNames.length > 0 || memoryRecall) && (
               <div className="sticky top-2 z-10 flex justify-end gap-2 pointer-events-none">
                 {memoryRecall && <MemoryRecallIndicator status={memoryRecall.status} count={memoryRecall.count} />}
@@ -1133,27 +1362,28 @@ export default function ChatPage() {
                 {activeSkillNames.length > 0 && <SkillActiveIndicator names={activeSkillNames} />}
               </div>
             )}
+
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-center">
                 {isLoadingHistory ? (
                   <>
-                    <Loader2 size={32} className="text-slate-400 animate-spin mb-4" />
-                    <p className="text-sm text-slate-500">Loading conversation...</p>
+                    <Loader2 size={28} className="text-[var(--acm-accent)] animate-spin mb-4" />
+                    <p className="mono text-[11px] text-[var(--acm-fg-4)]">Loading conversation...</p>
                   </>
                 ) : (
                   <>
-                    <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-full flex items-center justify-center mb-4">
-                      <Plus size={28} className="text-blue-400" />
+                    <div className="w-14 h-14 border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[10px] flex items-center justify-center mb-5 text-[var(--acm-accent)]">
+                      <Plus size={24} />
                     </div>
                     <div className="mb-2 flex items-center gap-2">
-                      <span className="px-2 py-0.5 text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-full">
+                      <span className="mono text-[10px] px-[10px] py-[4px] border border-[oklch(0.84_0.16_82/0.3)] bg-[oklch(0.84_0.16_82/0.07)] text-[var(--acm-accent)] rounded-full">
                         New conversation
                       </span>
                     </div>
-                    <h3 className="text-lg font-medium text-slate-300 mb-2">
+                    <h3 className="text-[14px] font-semibold text-[var(--acm-fg-2)] mb-2">
                       Ready to start
                     </h3>
-                    <p className="text-sm text-slate-500 max-w-sm">
+                    <p className="mono text-[11px] text-[var(--acm-fg-4)] max-w-xs">
                       This is a fresh conversation. Type your first message below.
                     </p>
                   </>
@@ -1188,7 +1418,6 @@ export default function ChatPage() {
                     return (
                       <CompactionNoteBubble
                         key={msg.id}
-                        summary={msg.compactionNote.summary}
                         summarizedMessages={msg.compactionNote.summarizedMessages}
                       />
                     );
@@ -1207,55 +1436,55 @@ export default function ChatPage() {
                   );
                 })
             )}
-            
+
             {isWaitingResponse && <TypingIndicator label={thinkingLabel} />}
             <div ref={messagesEndRef} />
           </div>
-          
-          {/* Command Buttons */}
-          <div className="px-4 py-2 border-t border-slate-800 bg-slate-900/30 flex items-center gap-2 flex-wrap">
+
+          {/* Quick command strip */}
+          <div className="px-[16px] py-[8px] border-t border-[var(--acm-border)] bg-[var(--acm-base)] flex items-center gap-[6px] flex-wrap">
             <button
               onClick={startNewConversation}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)] transition-colors"
             >
-              <Plus size={13} />
+              <Plus size={11} />
               New
             </button>
             <button
               onClick={() => executeCommand('/help')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)] transition-colors"
             >
-              <HelpCircle size={13} />
+              <HelpCircle size={11} />
               Help
             </button>
             <button
               onClick={() => executeCommand('/model')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)] transition-colors"
             >
-              <Cpu size={13} />
+              <Cpu size={11} />
               {modelData?.model ? `Model: ${modelData.model}` : 'Model'}
             </button>
             <button
               onClick={() => executeCommand('/stats')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)] transition-colors"
             >
-              <BarChart3 size={13} />
+              <BarChart3 size={11} />
               Stats
             </button>
             <button
               onClick={() => executeCommand('/export')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-border-strong)] transition-colors"
             >
-              <Download size={13} />
+              <Download size={11} />
               Export
             </button>
             <button
               onClick={() => { addMessage({ content: '/compact', role: 'user' }); executeCommand('/compact'); }}
               disabled={isCompacting}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-950/60 text-indigo-300 hover:bg-indigo-900/60 hover:text-indigo-100 border-indigo-700/50"
+              className="inline-flex items-center gap-[5px] px-[10px] py-[4px] rounded-full border border-[var(--acm-border)] mono text-[11px] text-[var(--acm-fg-4)] hover:text-[var(--acm-accent)] hover:border-[oklch(0.84_0.16_82/0.4)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Summarize old messages to free up context window"
             >
-              {isCompacting ? <Loader2 size={13} className="animate-spin" /> : <ScrollText size={13} />}
+              {isCompacting ? <Loader2 size={11} className="animate-spin" /> : <ScrollText size={11} />}
               {isCompacting ? 'Compacting…' : 'Compact'}
             </button>
           </div>
@@ -1263,74 +1492,43 @@ export default function ChatPage() {
           {/* Terminal Panel */}
           <TerminalPanel />
 
-          {/* Input Area */}
-          <div className="p-4 border-t border-slate-800 bg-slate-900/50">
-            {/* Attachments preview */}
+          {/* Composer */}
+          <div className="border-t border-[var(--acm-border)] px-[24px] pt-[14px] pb-[18px] bg-[var(--acm-base)]">
+            {/* Attachment previews */}
             {currentAttachments.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 {currentAttachments.map((att) => (
                   <div
                     key={att.id}
-                    className="relative flex items-center gap-2 bg-slate-800 rounded-lg overflow-hidden text-sm text-slate-300"
+                    className="relative flex items-center gap-2 bg-[var(--acm-card)] border border-[var(--acm-border)] rounded-[6px] overflow-hidden text-[12px] text-[var(--acm-fg-3)]"
                   >
                     {att.previewUrl ? (
-                      // Image thumbnail
                       <div className="relative">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={att.previewUrl} alt={att.name} className="h-16 w-16 object-cover" />
+                        <img src={att.previewUrl} alt={att.name} className="h-14 w-14 object-cover" />
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 px-3 py-1.5">
-                        {att.type.startsWith('audio/') ? <Music size={14} className="text-violet-400" /> : <FileText size={14} className="text-blue-400" />}
-                        <span className="truncate max-w-[120px]">{att.name}</span>
+                        {att.type.startsWith('audio/') ? <Music size={13} className="text-[var(--acm-accent)]" /> : <FileText size={13} className="text-[var(--acm-fg-3)]" />}
+                        <span className="mono truncate max-w-[120px] text-[11px]">{att.name}</span>
                       </div>
                     )}
                     <button
                       onClick={() => removeAttachment(att.id)}
-                      className="absolute top-0.5 right-0.5 bg-slate-900/80 rounded-full p-0.5 text-slate-400 hover:text-red-400"
+                      className="absolute top-0.5 right-0.5 bg-[var(--acm-base)]/80 rounded-full p-0.5 text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] transition-colors"
                     >
-                      <X size={12} />
+                      <X size={11} />
                     </button>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="flex items-end gap-2">
-              {/* Attach file */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="p-3 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
-                title="Attach file (image, PDF, audio, text...)"
-              >
-                {isUploading ? <Loader2 size={20} className="animate-spin" /> : <Paperclip size={20} />}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.yaml,.yml,.xml,.html,.log"
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-
-              {/* Mic button */}
-              <button
-                onClick={handleMicClick}
-                disabled={isUploading}
-                className={cn(
-                  "p-3 rounded-lg transition-colors disabled:opacity-50",
-                  isRecording
-                    ? "bg-red-600 hover:bg-red-700 text-white animate-pulse"
-                    : "text-slate-400 hover:text-white hover:bg-slate-800"
-                )}
-                title={isRecording ? "Stop recording" : "Record voice message"}
-              >
-                {isRecording ? <MicOff size={20} /> : <Mic size={20} />}
-              </button>
-
-              <div className="flex-1 relative">
+            {/* Input card */}
+            <div className="border border-[var(--acm-border)] rounded-[8px] bg-[var(--acm-card)] px-[12px] pt-[8px] pb-[10px]">
+              {/* Prompt prefix row + textarea */}
+              <div className="flex items-start gap-[8px]">
+                <span className="mono text-[12px] text-[var(--acm-accent)] pt-[10px] select-none flex-shrink-0">›</span>
                 <textarea
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
@@ -1338,38 +1536,91 @@ export default function ChatPage() {
                   onPaste={handlePaste}
                   placeholder="Type a message, or paste an image..."
                   rows={1}
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 resize-none focus:outline-none focus:border-blue-500"
-                  style={{ minHeight: '48px', maxHeight: '120px' }}
+                  className="flex-1 bg-transparent text-[var(--acm-fg)] placeholder-[var(--acm-fg-4)] resize-none focus:outline-none text-[13.5px] leading-relaxed pt-[8px]"
+                  style={{ minHeight: '38px', maxHeight: '120px' }}
                 />
               </div>
 
-              {isWaitingResponse ? (
+              {/* Toolbar */}
+              <div className="flex items-center gap-[4px] mt-[6px] pt-[6px] border-t border-[var(--acm-border)]">
+                {/* Attach */}
                 <button
-                  onClick={() => cancelMessage?.()}
-                  className="p-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
-                  title="Cancel"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="flex items-center gap-[4px] px-[8px] py-[4px] rounded-[4px] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] text-[11.5px] transition-colors disabled:opacity-50"
+                  title="Attach file (image, PDF, audio, text...)"
                 >
-                  <X size={20} />
+                  {isUploading ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
+                  <span className="mono">Attach</span>
                 </button>
-              ) : (
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,audio/*,.pdf,.txt,.md,.csv,.json,.yaml,.yml,.xml,.html,.log"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+
+                {/* Voice */}
                 <button
-                  onClick={handleSend}
-                  disabled={(!inputValue.trim() && currentAttachments.length === 0) || isUploading}
-                  className="p-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                  onClick={handleMicClick}
+                  disabled={isUploading}
+                  className={cn(
+                    "flex items-center gap-[4px] px-[8px] py-[4px] rounded-[4px] text-[11.5px] transition-colors disabled:opacity-50 mono",
+                    isRecording
+                      ? "text-[var(--acm-err)] acm-pulse"
+                      : "text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)]"
+                  )}
+                  title={isRecording ? "Stop recording" : "Record voice message"}
                 >
-                  <Send size={20} />
+                  {isRecording ? <MicOff size={13} /> : <Mic size={13} />}
+                  <span>{isRecording ? 'Stop' : 'Voice'}</span>
                 </button>
-              )}
+
+                <div className="flex-1" />
+
+                {/* Send / Cancel */}
+                {isWaitingResponse ? (
+                  <button
+                    onClick={() => cancelMessage?.()}
+                    className="btn-secondary !py-[5px] !px-[12px] !text-[12px] border-[var(--acm-err)] text-[var(--acm-err)] hover:border-[var(--acm-err)] hover:text-[var(--acm-err)]"
+                    title="Cancel"
+                  >
+                    <X size={12} />
+                    Cancel
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    disabled={(!inputValue.trim() && currentAttachments.length === 0) || isUploading}
+                    className="btn-primary !py-[5px] !px-[12px] !text-[12px]"
+                  >
+                    <Send size={12} />
+                    Send
+                  </button>
+                )}
+              </div>
             </div>
 
-            <p className="text-xs text-slate-500 mt-2 text-center">
+            <p className="mono text-[10px] text-[var(--acm-fg-4)] mt-[8px] text-center">
               Enter to send · Shift+Enter new line · Paste images directly
-              <span className="mx-2 text-slate-700">·</span>
-              <span className="text-slate-600">All data stays local — nothing is shared with OpenACM servers</span>
+              <span className="mx-2 text-[var(--acm-border-strong)]">·</span>
+              <span>All data stays local</span>
             </p>
           </div>
         </div>
       </div>
+      {/* Tool confirmation modal (yolo mode safety gate) */}
+      {activeConfirmation && (
+        <ToolConfirmationModal
+          key={activeConfirmation.confirmId}
+          confirmId={activeConfirmation.confirmId}
+          tool={activeConfirmation.tool}
+          command={activeConfirmation.command}
+          onClose={() => setActiveConfirmation(null)}
+        />
+      )}
     </AppLayout>
   );
 }

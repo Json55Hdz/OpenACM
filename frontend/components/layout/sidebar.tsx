@@ -29,6 +29,7 @@ import { TamagotchiWidget } from '@/components/tamagotchi/tamagotchi-widget';
 import { translations } from '@/lib/translations';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { ACMMark, SignalStripe } from '@/components/ui/acm-mark';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -156,16 +157,16 @@ export function Sidebar() {
           href={href}
           onClick={() => setIsOpen(false)}
           className={cn(
-            "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
+            "flex items-center gap-3 px-[11px] py-[9px] rounded-[6px] text-[13px] transition-all duration-[140ms]",
             isActive
-              ? "bg-blue-600/20 text-blue-400 border border-blue-600/30"
-              : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+              ? "acm-active-pill font-semibold"
+              : "font-medium text-[var(--acm-fg-2)] nav-inactive"
           )}
         >
-          <Icon size={20} />
-          <span className="font-medium flex-1">{label}</span>
+          <Icon size={16} strokeWidth={isActive ? 2.2 : 1.8} />
+          <span className="flex-1">{label}</span>
           {badge !== undefined && badge > 0 && (
-            <span className="ml-auto text-xs font-bold bg-amber-500 text-black rounded-full px-1.5 py-0.5 min-w-[20px] text-center leading-tight">
+            <span className="mono text-[10px] font-bold bg-[var(--acm-accent)] text-[oklch(0.18_0.015_80)] rounded-full px-[5px] py-[1px] min-w-[18px] text-center leading-none">
               {badge > 99 ? '99+' : badge}
             </span>
           )}
@@ -174,6 +175,8 @@ export function Sidebar() {
     );
   };
 
+  const workspaceItems = coreNavItems.filter(i => !['/debug', '/config'].includes(i.href));
+  const systemItems = coreNavItems.filter(i => ['/debug', '/config'].includes(i.href));
   const mainPluginItems = pluginItems.filter((p) => !p.section || p.section === 'main');
   const bottomPluginItems = pluginItems.filter((p) => p.section === 'bottom');
 
@@ -182,36 +185,51 @@ export function Sidebar() {
       {/* Mobile menu button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-colors"
+        className="lg:hidden fixed top-4 left-4 z-50 p-2 bg-[var(--acm-card)] border border-[var(--acm-border)] rounded-[6px] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors"
       >
         {isOpen ? <X size={24} /> : <Menu size={24} />}
       </button>
 
       {/* Sidebar */}
       <nav className={cn(
-        "fixed left-0 top-0 h-screen w-64 bg-slate-900 border-r border-slate-800 flex flex-col z-40 transition-transform duration-300 ease-in-out",
+        "dot-grid fixed left-0 top-0 h-screen w-64 border-r flex flex-col z-40 transition-transform duration-300 ease-in-out",
+        "bg-[var(--acm-base)] border-[var(--acm-border)]",
         isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         {/* Header */}
-        <div className="py-5 px-3 border-b border-slate-800 flex flex-col items-center">
-          <img src="/static/logo-transparent.png" alt="OpenACM" width={110} height={110} className="rounded-xl" />
-          <span className="text-xs text-slate-500 mt-1">{version || 'v0.1.0'}</span>
+        <div className="min-h-[68px] px-5 py-[16px] border-b border-[var(--acm-border)] flex items-center gap-3">
+          <div className="w-10 h-10 border border-[var(--acm-border-strong)] rounded-[8px] flex items-center justify-center text-[var(--acm-accent)] flex-shrink-0">
+            <ACMMark size={24} />
+          </div>
+          <div className="flex flex-col leading-[1.2] min-w-0">
+            <span className="text-[14px] font-semibold text-[var(--acm-fg)]">OpenACM</span>
+            <span className="mono text-[9px] text-[var(--acm-fg-4)] tracking-wide">Autonomous · Open · Yours</span>
+          </div>
         </div>
 
         {/* Navigation */}
-        <ul className="flex-1 py-4 px-3 space-y-1 overflow-y-auto">
-          {/* Core items */}
-          {coreNavItems.map((item) =>
+        <ul className="flex-1 py-2 px-2 overflow-y-auto acm-scroll">
+          {/* Workspace section */}
+          <li>
+            <span className="label px-[10px] py-[6px] block">Workspace</span>
+          </li>
+          {workspaceItems.map((item) =>
+            renderNavItem(item.href, item.label, item.icon)
+          )}
+
+          {/* System section */}
+          <li>
+            <span className="label px-[10px] py-[6px] block pt-3">System</span>
+          </li>
+          {systemItems.map((item) =>
             renderNavItem(item.href, item.label, item.icon)
           )}
 
           {/* Plugin items (main section) */}
           {mainPluginItems.length > 0 && (
             <>
-              <li className="pt-2 pb-1">
-                <span className="px-4 text-[10px] font-semibold uppercase tracking-widest text-slate-600">
-                  Plugins
-                </span>
+              <li>
+                <span className="label px-[10px] py-[6px] block pt-3">Plugins</span>
               </li>
               {mainPluginItems.map((item) => {
                 const Icon = resolveIcon(item.icon);
@@ -230,25 +248,31 @@ export function Sidebar() {
         </ul>
 
         {/* Footer */}
-        <div className="p-4 border-t border-slate-800 space-y-2">
+        <div className="border-t border-[var(--acm-border)] p-[14px] space-y-[10px]">
           {/* Mini tamagotchi */}
-          <div className="flex flex-col items-center py-2">
-            <TamagotchiWidget size={56} showLabel />
+          <div className="flex items-center justify-center">
+            <TamagotchiWidget size={44} />
           </div>
 
-          <div className="flex items-center gap-2 px-4 py-2">
-            <span className={cn(
-              "w-2 h-2 rounded-full",
-              isOnline ? "bg-green-500 animate-pulse" : "bg-yellow-500"
-            )}></span>
-            <span className="text-sm text-slate-400">
-              {isOnline ? translations.dashboard.connected : translations.dashboard.connecting}
-            </span>
+          {/* Agent status card */}
+          <div className="flex items-center gap-[10px] px-[10px] py-[8px] border border-[var(--acm-border)] rounded-[6px] bg-[var(--acm-card)]">
+            <span className={cn("dot", isOnline ? "dot-ok acm-pulse" : "dot-warn")} />
+            <div className="flex-1 leading-[1.2] min-w-0">
+              <span className="block text-[11.5px] text-[var(--acm-fg-2)]">
+                {isOnline ? 'Agent online' : 'Connecting...'}
+              </span>
+              <span className="mono block text-[10px] text-[var(--acm-fg-4)]">
+                {version || 'v0.1.0'}
+              </span>
+            </div>
+            <SignalStripe active={isOnline ? 3 : 1} total={4} />
           </div>
+
+          {/* Restart button */}
           <button
             onClick={handleRestart}
             disabled={isRestarting}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-xs font-medium bg-red-900/30 hover:bg-red-800/40 text-red-400 border border-red-700/30 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 py-[7px] rounded-[6px] text-[12px] text-[var(--acm-fg-3)] border border-[var(--acm-border)] hover:border-[var(--acm-err)] hover:text-[var(--acm-err)] transition-colors duration-[140ms] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isRestarting
               ? <><Loader2 size={13} className="animate-spin" /> Restarting...</>

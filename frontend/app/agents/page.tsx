@@ -116,23 +116,42 @@ function AgentFormModal({
     setDroppedFiles((prev) => prev.filter((f) => f.name !== name));
 
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 rounded-2xl border border-slate-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-slate-800">
-          <h2 className="text-lg font-semibold text-white">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div
+        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto acm-scroll flex flex-col"
+        style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', borderRadius: '12px' }}
+      >
+        {/* Header */}
+        <div
+          className="flex items-center justify-between px-6 py-4 shrink-0"
+          style={{ borderBottom: '1px solid var(--acm-border)' }}
+        >
+          <h2 className="text-[15px] font-semibold" style={{ color: 'var(--acm-fg)' }}>
             {initial ? 'Edit Agent' : 'New Agent'}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
-            <X size={20} />
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded transition-colors"
+            style={{ color: 'var(--acm-fg-4)' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
+          >
+            <X size={16} />
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-5 overflow-y-auto acm-scroll">
 
-          {/* ── AI Generator ───────────────────────────────── */}
-          <div className="bg-slate-800/60 border border-violet-500/20 rounded-xl p-4 space-y-3">
-            <p className="text-xs font-semibold text-violet-300 flex items-center gap-1.5">
-              <Sparkles size={13} /> Generate with AI
+          {/* ── AI Generator ─────────────────────────────── */}
+          <div
+            className="rounded-xl p-4 space-y-3"
+            style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}
+          >
+            <p
+              className="text-[11px] font-semibold flex items-center gap-1.5 uppercase tracking-[0.1em]"
+              style={{ color: 'var(--acm-accent)' }}
+            >
+              <Sparkles size={12} /> Generate with AI
             </p>
 
             <textarea
@@ -140,7 +159,7 @@ function AgentFormModal({
               onChange={(e) => setGenDescription(e.target.value)}
               placeholder="Describe what your agent should do... e.g. 'A support bot for my clothing store that always responds in Spanish and redirects billing questions to support@mystore.com'"
               rows={3}
-              className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"
+              className="acm-input w-full resize-none text-[13px]"
             />
 
             {/* Drop zone */}
@@ -148,12 +167,11 @@ function AgentFormModal({
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
               onDrop={onDrop}
-              className={cn(
-                'relative border-2 border-dashed rounded-lg px-4 py-3 transition-colors',
-                isDragging
-                  ? 'border-violet-400 bg-violet-500/10'
-                  : 'border-slate-700 hover:border-slate-600'
-              )}
+              className="relative rounded-lg px-4 py-3 transition-colors cursor-pointer"
+              style={{
+                border: `2px dashed ${isDragging ? 'var(--acm-accent)' : 'var(--acm-border-strong)'}`,
+                background: isDragging ? 'var(--acm-accent-tint)' : 'transparent',
+              }}
             >
               <input
                 id="agent-file-input"
@@ -166,30 +184,37 @@ function AgentFormModal({
               {droppedFiles.length > 0 ? (
                 <div className="space-y-1.5">
                   {droppedFiles.map((f) => (
-                    <div key={f.name} className="flex items-center gap-2 text-sm text-slate-300">
-                      <FileText size={14} className="text-violet-400 shrink-0" />
-                      <span className="font-mono truncate flex-1 text-xs">{f.name}</span>
+                    <div key={f.name} className="flex items-center gap-2 text-[13px]" style={{ color: 'var(--acm-fg-2)' }}>
+                      <FileText size={13} className="shrink-0" style={{ color: 'var(--acm-accent)' }} />
+                      <span className="mono truncate flex-1 text-[11px]">{f.name}</span>
                       <button
                         onClick={(e) => { e.stopPropagation(); removeFile(f.name); }}
-                        className="text-slate-500 hover:text-red-400 shrink-0"
+                        className="shrink-0 transition-colors"
+                        style={{ color: 'var(--acm-fg-4)' }}
+                        onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-err)')}
+                        onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
                       >
-                        <X size={13} />
+                        <X size={12} />
                       </button>
                     </div>
                   ))}
                   <button
                     onClick={() => document.getElementById('agent-file-input')?.click()}
-                    className="flex items-center gap-1.5 text-xs text-violet-400 hover:text-violet-300 mt-1"
+                    className="flex items-center gap-1.5 text-[11px] transition-colors mt-1"
+                    style={{ color: 'var(--acm-accent-dim)' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-accent)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-accent-dim)')}
                   >
-                    <Upload size={12} /> Add more files
+                    <Upload size={11} /> Add more files
                   </button>
                 </div>
               ) : (
                 <div
-                  className="flex items-center justify-center gap-2 text-xs text-slate-500 cursor-pointer py-1"
+                  className="flex items-center justify-center gap-2 text-[11px] py-1"
+                  style={{ color: 'var(--acm-fg-4)' }}
                   onClick={() => document.getElementById('agent-file-input')?.click()}
                 >
-                  <Upload size={14} />
+                  <Upload size={13} />
                   Drop PDFs, TXTs or MDs for extra context (optional, multiple allowed)
                 </div>
               )}
@@ -198,107 +223,125 @@ function AgentFormModal({
             <button
               onClick={handleGenerate}
               disabled={generate.isPending || !genDescription.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors"
+              className="btn-primary text-[12px] px-3 py-1.5"
             >
               {generate.isPending
-                ? <><Loader2 size={13} className="animate-spin" /> Generating...</>
-                : <><Sparkles size={13} /> Generate rules</>}
+                ? <><Loader2 size={12} className="animate-spin" /> Generating...</>
+                : <><Sparkles size={12} /> Generate rules</>}
             </button>
           </div>
 
-          {/* ── Manual fields ─────────────────────────────── */}
+          {/* ── Name ──────────────────────────────────────── */}
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Name *</label>
+            <label className="label block mb-2">Name *</label>
             <input
               value={form.name}
               onChange={(e) => set('name', e.target.value)}
               placeholder="e.g. Support Bot, Sales Assistant..."
-              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="acm-input w-full"
             />
           </div>
 
+          {/* ── Description ───────────────────────────────── */}
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Description</label>
+            <label className="label block mb-2">Description</label>
             <input
               value={form.description}
               onChange={(e) => set('description', e.target.value)}
               placeholder="What does this agent do?"
-              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="acm-input w-full"
             />
           </div>
 
+          {/* ── System Prompt ──────────────────────────────── */}
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">
-              System Prompt (rules) *
-            </label>
+            <label className="label block mb-2">System Prompt (rules) *</label>
             <textarea
               value={form.system_prompt}
               onChange={(e) => set('system_prompt', e.target.value)}
               placeholder={`You are a friendly support assistant for Acme Corp.\n\nRules:\n- Always respond in Spanish\n- Never reveal internal pricing\n- If asked about refunds, direct to support@acme.com`}
               rows={8}
-              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y font-mono"
+              className="acm-input w-full mono resize-y text-[13px]"
             />
           </div>
 
+          {/* ── Tools Access ───────────────────────────────── */}
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1.5">Tools access</label>
+            <label className="label block mb-2">Tools access</label>
             <select
               value={form.allowed_tools}
               onChange={(e) => set('allowed_tools', e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full appearance-none text-[14px] outline-none py-2 px-0 transition-colors"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                borderBottom: '1px solid var(--acm-border)',
+                color: 'var(--acm-fg)',
+              }}
+              onFocus={e => (e.currentTarget.style.borderBottomColor = 'var(--acm-accent)')}
+              onBlur={e => (e.currentTarget.style.borderBottomColor = 'var(--acm-border)')}
             >
               {TOOLS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value} value={o.value} style={{ background: 'var(--acm-card)' }}>
                   {o.label}
                 </option>
               ))}
             </select>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
               "All tools" lets the agent run commands, search the web, etc.
               Choose "No tools" for pure text/FAQ bots.
             </p>
           </div>
 
+          {/* ── Advanced toggle ────────────────────────────── */}
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200"
+            className="flex items-center gap-1.5 text-[12px] transition-colors"
+            style={{ color: 'var(--acm-fg-4)' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg-2)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
           >
-            {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {showAdvanced ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             Advanced options
           </button>
 
           {showAdvanced && (
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                Telegram Bot Token (optional)
-              </label>
+              <label className="label block mb-2">Telegram Bot Token (optional)</label>
               <input
                 value={form.telegram_token}
                 onChange={(e) => set('telegram_token', e.target.value)}
                 placeholder="1234567890:ABCdef..."
-                className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                className="acm-input mono w-full"
               />
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
                 Connect this agent to its own Telegram bot (coming soon).
               </p>
             </div>
           )}
         </div>
 
-        <div className="flex justify-end gap-3 px-6 pb-6">
+        {/* Footer */}
+        <div
+          className="flex justify-end gap-2 px-6 py-4 shrink-0"
+          style={{ borderTop: '1px solid var(--acm-border)' }}
+        >
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-slate-400 hover:text-white border border-slate-700 rounded-lg transition-colors"
+            className="px-4 py-2 text-[13px] transition-colors rounded"
+            style={{ color: 'var(--acm-fg-3)' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-3)')}
           >
             Cancel
           </button>
           <button
             onClick={() => onSave(form)}
             disabled={isSaving || !form.name.trim() || !form.system_prompt.trim()}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            className="btn-primary"
           >
-            {isSaving && <Loader2 size={14} className="animate-spin" />}
+            {isSaving && <Loader2 size={13} className="animate-spin" />}
             {initial ? 'Save changes' : 'Create Agent'}
           </button>
         </div>
@@ -328,29 +371,39 @@ function TestPanel({ agent }: { agent: Agent }) {
   };
 
   return (
-    <div className="border-t border-slate-800 mt-4 pt-4">
-      <p className="text-xs font-medium text-slate-400 mb-3 flex items-center gap-1.5">
-        <Send size={12} /> Test this agent
+    <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--acm-border)' }}>
+      <p className="text-[11px] font-medium flex items-center gap-1.5 mb-3 uppercase tracking-[0.08em]" style={{ color: 'var(--acm-fg-4)' }}>
+        <Send size={11} /> Test this agent
       </p>
 
       {messages.length > 0 && (
-        <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+        <div className="space-y-2 mb-3 max-h-48 overflow-y-auto acm-scroll">
           {messages.map((m, i) => (
             <div
               key={i}
               className={cn(
-                'text-xs px-3 py-2 rounded-lg max-w-[90%]',
-                m.role === 'user'
-                  ? 'ml-auto bg-blue-600/20 text-blue-200 border border-blue-600/30'
-                  : 'bg-slate-800 text-slate-300'
+                'text-[12px] px-3 py-2 rounded-lg max-w-[90%]',
+                m.role === 'user' ? 'ml-auto' : ''
               )}
+              style={
+                m.role === 'user'
+                  ? {
+                      background: 'var(--acm-accent-tint)',
+                      borderLeft: '2px solid var(--acm-accent)',
+                      color: 'var(--acm-fg-2)',
+                    }
+                  : {
+                      background: 'var(--acm-elev)',
+                      color: 'var(--acm-fg-3)',
+                    }
+              }
             >
               {m.text}
             </div>
           ))}
           {test.isPending && (
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <Loader2 size={12} className="animate-spin" /> Thinking...
+            <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--acm-fg-4)' }}>
+              <Loader2 size={11} className="animate-spin" /> Thinking...
             </div>
           )}
         </div>
@@ -363,14 +416,14 @@ function TestPanel({ agent }: { agent: Agent }) {
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
           placeholder="Write a test message..."
           disabled={test.isPending}
-          className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+          className="acm-input flex-1 text-[13px] disabled:opacity-50"
         />
         <button
           onClick={send}
           disabled={test.isPending || !input.trim()}
-          className="p-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg transition-colors"
+          className="btn-primary px-2.5 py-2 disabled:opacity-50"
         >
-          <Send size={14} />
+          <Send size={13} />
         </button>
       </div>
     </div>
@@ -422,39 +475,39 @@ function AgentCard({
 
   return (
     <div
-      className={cn(
-        'bg-slate-900 rounded-xl border p-5 transition-all',
-        agent.is_active
-          ? 'border-slate-800 hover:border-slate-700'
-          : 'border-slate-800/40 opacity-60'
-      )}
+      className="acm-card p-5 flex flex-col gap-0"
+      style={{ opacity: agent.is_active ? 1 : 0.6 }}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-center gap-3">
+          {/* Icon box */}
           <div
-            className={cn(
-              'w-11 h-11 rounded-xl flex items-center justify-center',
-              agent.is_active ? 'bg-emerald-600/20' : 'bg-slate-800'
-            )}
+            className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: 'var(--acm-elev)' }}
           >
-            <Bot size={22} className={agent.is_active ? 'text-emerald-400' : 'text-slate-500'} />
+            <Bot size={20} style={{ color: agent.is_active ? 'var(--acm-accent)' : 'var(--acm-fg-4)' }} />
           </div>
-          <div>
-            <h3 className="font-semibold text-white">{agent.name}</h3>
+          <div className="min-w-0">
+            <h3 className="text-[14px] font-semibold truncate" style={{ color: 'var(--acm-fg)' }}>
+              {agent.name}
+            </h3>
             {agent.description && (
-              <p className="text-xs text-slate-500 mt-0.5">{agent.description}</p>
+              <p className="text-[12px] mt-0.5 truncate" style={{ color: 'var(--acm-fg-3)' }}>
+                {agent.description}
+              </p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1.5">
+
+        {/* Status indicator */}
+        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+          {agent.is_active
+            ? <span className="dot dot-ok acm-pulse" />
+            : <span className="dot dot-idle" />}
           <span
-            className={cn(
-              'text-xs px-2 py-0.5 rounded-full font-medium',
-              agent.is_active
-                ? 'bg-emerald-500/20 text-emerald-400'
-                : 'bg-slate-700 text-slate-400'
-            )}
+            className="mono text-[10px] uppercase tracking-[0.1em]"
+            style={{ color: agent.is_active ? 'var(--acm-ok)' : 'var(--acm-fg-4)' }}
           >
             {agent.is_active ? 'Active' : 'Inactive'}
           </span>
@@ -462,29 +515,52 @@ function AgentCard({
       </div>
 
       {/* System prompt preview */}
-      <p className="text-xs text-slate-500 line-clamp-2 mb-4 font-mono bg-slate-800/50 rounded-lg px-3 py-2">
+      <div
+        className="mono text-[11px] line-clamp-2 px-3 py-2 rounded-lg mb-4"
+        style={{ color: 'var(--acm-fg-4)', background: 'var(--acm-elev)' }}
+      >
         {agent.system_prompt}
-      </p>
+      </div>
 
-      {/* Tools badge */}
-      <div className="flex items-center gap-2 mb-4">
-        <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
+      {/* Badges row */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <span
+          className="mono text-[10px] px-[6px] py-[2px] rounded-[3px] uppercase tracking-[0.06em]"
+          style={{ color: 'var(--acm-fg-4)', border: '1px solid var(--acm-border)' }}
+        >
           Tools: {agent.allowed_tools === 'all' ? 'All' : agent.allowed_tools === 'none' ? 'None' : 'Custom'}
         </span>
+        {agent.telegram_token && (
+          <span
+            className="mono text-[10px] px-[6px] py-[2px] rounded-[3px] uppercase tracking-[0.06em]"
+            style={{ color: 'var(--acm-fg-4)', border: '1px solid var(--acm-border)' }}
+          >
+            Telegram
+          </span>
+        )}
       </div>
 
       {/* Webhook URL */}
       <div className="mb-4">
-        <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-          <Globe size={11} /> Webhook URL
+        <p
+          className="text-[11px] mb-1.5 flex items-center gap-1 uppercase tracking-[0.08em]"
+          style={{ color: 'var(--acm-fg-4)' }}
+        >
+          <Globe size={10} /> Webhook URL
         </p>
         <div className="flex items-center gap-2">
-          <code className="flex-1 text-xs text-slate-400 bg-slate-800 px-2 py-1.5 rounded-lg truncate font-mono">
+          <code
+            className="mono flex-1 text-[11px] px-2 py-1.5 rounded-lg truncate"
+            style={{ color: 'var(--acm-fg-3)', background: 'var(--acm-elev)' }}
+          >
             {webhookUrl}
           </code>
           <button
             onClick={() => { navigator.clipboard.writeText(webhookUrl); toast.success('Copied!'); }}
-            className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+            className="p-1.5 rounded-lg transition-colors shrink-0"
+            style={{ color: 'var(--acm-fg-4)', background: 'var(--acm-elev)' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
           >
             <Copy size={12} />
           </button>
@@ -493,23 +569,40 @@ function AgentCard({
 
       {/* Secret */}
       <div className="mb-4">
-        <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-          <Key size={11} /> X-Agent-Secret header
+        <p
+          className="text-[11px] mb-1.5 flex items-center gap-1 uppercase tracking-[0.08em]"
+          style={{ color: 'var(--acm-fg-4)' }}
+        >
+          <Key size={10} /> X-Agent-Secret header
         </p>
         {showSecret ? (
           <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs text-emerald-400 bg-slate-800 px-2 py-1.5 rounded-lg truncate font-mono">
+            <code
+              className="mono flex-1 text-[11px] px-2 py-1.5 rounded-lg truncate"
+              style={{ color: 'var(--acm-ok)', background: 'var(--acm-elev)' }}
+            >
               {secret}
             </code>
-            <button onClick={copySecret} className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded-lg">
-              {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            <button
+              onClick={copySecret}
+              className="p-1.5 rounded-lg transition-colors shrink-0"
+              style={{ color: 'var(--acm-fg-4)', background: 'var(--acm-elev)' }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
+            >
+              {copied
+                ? <Check size={12} style={{ color: 'var(--acm-ok)' }} />
+                : <Copy size={12} />}
             </button>
           </div>
         ) : (
           <button
             onClick={revealSecret}
             disabled={getSecret.isPending}
-            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+            className="flex items-center gap-1.5 text-[12px] transition-colors"
+            style={{ color: 'var(--acm-accent-dim)' }}
+            onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-accent)')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-accent-dim)')}
           >
             {getSecret.isPending ? <Loader2 size={11} className="animate-spin" /> : <Key size={11} />}
             Reveal secret
@@ -517,44 +610,52 @@ function AgentCard({
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-2 pt-3 border-t border-slate-800">
+      {/* Footer actions */}
+      <div
+        className="flex items-center gap-1.5 pt-3"
+        style={{ borderTop: '1px solid var(--acm-border)' }}
+      >
+        {/* Toggle: btn-secondary that changes text on hover */}
         <button
           onClick={() => onToggle(agent.id, !agent.is_active)}
-          title={agent.is_active ? 'Deactivate' : 'Activate'}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-            agent.is_active
-              ? 'bg-slate-800 text-slate-400 hover:bg-red-500/20 hover:text-red-400'
-              : 'bg-slate-800 text-slate-400 hover:bg-emerald-500/20 hover:text-emerald-400'
-          )}
+          className="btn-secondary text-[12px] px-3 py-1.5 group"
         >
-          {agent.is_active ? <PowerOff size={13} /> : <Power size={13} />}
-          {agent.is_active ? 'Deactivate' : 'Activate'}
+          {agent.is_active
+            ? <><PowerOff size={12} /><span className="group-hover:hidden">Deactivate</span><span className="hidden group-hover:inline">Pause</span></>
+            : <><Power size={12} /><span className="group-hover:hidden">Activate</span><span className="hidden group-hover:inline">Enable</span></>}
         </button>
 
+        {/* Edit ghost */}
         <button
           onClick={() => onEdit(agent)}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs font-medium transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] transition-colors"
+          style={{ color: 'var(--acm-fg-4)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
         >
-          <Edit2 size={13} /> Edit
+          <Edit2 size={12} /> Edit
         </button>
 
+        {/* Clone ghost */}
         <button
           onClick={() => setShowTest(!showTest)}
-          className={cn(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ml-auto',
-            showTest
-              ? 'bg-blue-600/20 text-blue-400'
-              : 'bg-slate-800 text-slate-400 hover:text-white'
-          )}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[12px] transition-colors ml-auto"
+          style={{
+            color: showTest ? 'var(--acm-accent)' : 'var(--acm-fg-4)',
+          }}
+          onMouseEnter={e => !showTest && (e.currentTarget.style.color = 'var(--acm-fg)')}
+          onMouseLeave={e => !showTest && (e.currentTarget.style.color = 'var(--acm-fg-4)')}
         >
-          <Send size={13} /> Test
+          <Send size={12} /> Test
         </button>
 
+        {/* Delete ghost */}
         <button
           onClick={() => onDelete(agent.id)}
-          className="p-1.5 text-slate-600 hover:text-red-400 bg-slate-800 rounded-lg transition-colors"
+          className="p-1.5 rounded transition-colors"
+          style={{ color: 'var(--acm-fg-4)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-err)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
         >
           <Trash2 size={13} />
         </button>
@@ -619,52 +720,61 @@ export default function AgentsPage() {
   };
 
   const isSaving = create.isPending || update.isPending;
+  const activeCount = agents.filter((a) => a.is_active).length;
 
   return (
     <AppLayout>
       <div className="p-6 lg:p-8">
-        {/* Header */}
-        <header className="mb-8 flex items-center justify-between">
+
+        {/* ── Page Header ──────────────────────────────────── */}
+        <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-              <Bot size={28} className="text-emerald-400" />
+            <span className="acm-breadcrumb">/ agents</span>
+            <h1 className="text-[22px] font-semibold tracking-[-0.01em]" style={{ color: 'var(--acm-fg)' }}>
               Autonomous Agents
             </h1>
-            <p className="text-slate-400 mt-1 text-sm">
-              Independent bots with their own rules — connect via webhook or Telegram.
+            <p className="text-[12px] mt-1" style={{ color: 'var(--acm-fg-3)' }}>
+              {agents.length} agents · {activeCount} active
             </p>
           </div>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors"
-          >
-            <Plus size={16} /> New Agent
+          <button onClick={openCreate} className="btn-primary">
+            <Plus size={14} /> New Agent
           </button>
         </header>
 
-        {/* Content */}
+        {/* ── Content ──────────────────────────────────────── */}
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
-            <Loader2 size={28} className="text-slate-400 animate-spin" />
+            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--acm-fg-4)' }} />
           </div>
         ) : agents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mb-5">
-              <Bot size={36} className="text-slate-500" />
+          /* Empty state */
+          <div
+            className="flex flex-col items-center justify-center py-24 text-center rounded-xl"
+            style={{ border: '1px dashed var(--acm-border)' }}
+          >
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center mb-5"
+              style={{ background: 'var(--acm-elev)' }}
+            >
+              <Bot size={30} style={{ color: 'var(--acm-fg-4)' }} />
             </div>
-            <h3 className="text-lg font-medium text-slate-300 mb-2">No agents yet</h3>
-            <p className="text-sm text-slate-500 max-w-sm mb-6">
+            <h3 className="text-[15px] font-medium mb-2" style={{ color: 'var(--acm-fg-2)' }}>
+              No agents yet
+            </h3>
+            <p className="text-[13px] max-w-sm mb-2" style={{ color: 'var(--acm-fg-4)' }}>
               Create an agent with its own rules and connect it to any service via webhook.
             </p>
-            <button
-              onClick={openCreate}
-              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-xl transition-colors"
-            >
-              <Plus size={16} /> Create your first agent
+            <p className="text-[12px] mb-6 flex items-center gap-1.5" style={{ color: 'var(--acm-accent-dim)' }}>
+              <Sparkles size={12} /> Try generating one with AI
+            </p>
+            <button onClick={openCreate} className="btn-primary">
+              <Plus size={14} /> Create your first agent
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
+          /* Agent grid */
+          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
             {agents.map((agent) => (
               <AgentCard
                 key={agent.id}
@@ -678,7 +788,7 @@ export default function AgentsPage() {
         )}
       </div>
 
-      {/* Create / Edit Modal */}
+      {/* ── Create / Edit Modal ───────────────────────────── */}
       {modal && (
         <AgentFormModal
           initial={editing}
@@ -688,21 +798,38 @@ export default function AgentsPage() {
         />
       )}
 
-      {/* One-time secret reveal after create */}
+      {/* ── One-time secret reveal after create ──────────── */}
       {pendingSecret && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 rounded-2xl border border-emerald-500/40 w-full max-w-md p-6">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div
+            className="w-full max-w-md p-6 rounded-2xl"
+            style={{
+              background: 'var(--acm-base)',
+              border: '1px solid var(--acm-border-strong)',
+            }}
+          >
             <div className="flex items-center gap-3 mb-4">
-              <Key size={22} className="text-emerald-400" />
-              <h2 className="text-lg font-semibold text-white">Save your secret key</h2>
+              <Key size={20} style={{ color: 'var(--acm-ok)' }} />
+              <h2 className="text-[16px] font-semibold" style={{ color: 'var(--acm-fg)' }}>
+                Save your secret key
+              </h2>
             </div>
-            <p className="text-sm text-slate-400 mb-4">
-              This is the <strong className="text-white">only time</strong> your webhook secret for{' '}
-              <strong className="text-white">{pendingSecret.name}</strong> will be shown.
-              Copy it now — you can always get it again from the agent card.
+            <p className="text-[13px] mb-4" style={{ color: 'var(--acm-fg-3)' }}>
+              This is the{' '}
+              <strong style={{ color: 'var(--acm-fg)' }}>only time</strong> your webhook
+              secret for{' '}
+              <strong style={{ color: 'var(--acm-fg)' }}>{pendingSecret.name}</strong> will
+              be shown. Copy it now — you can always retrieve it again from the agent card.
             </p>
-            <div className="flex items-center gap-2 bg-slate-800 rounded-xl px-4 py-3 mb-5">
-              <code className="flex-1 text-sm text-emerald-400 font-mono break-all">
+
+            <div
+              className="flex items-center gap-2 rounded-xl px-4 py-3 mb-5"
+              style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}
+            >
+              <code
+                className="mono flex-1 text-[13px] break-all"
+                style={{ color: 'var(--acm-ok)' }}
+              >
                 {pendingSecret.secret}
               </code>
               <button
@@ -710,18 +837,29 @@ export default function AgentsPage() {
                   navigator.clipboard.writeText(pendingSecret.secret);
                   toast.success('Copied!');
                 }}
-                className="p-1.5 text-slate-400 hover:text-white"
+                className="p-1.5 transition-colors shrink-0"
+                style={{ color: 'var(--acm-fg-4)' }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
               >
-                <Copy size={16} />
+                <Copy size={15} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 mb-5">
-              Use it as the <code className="text-slate-300 bg-slate-800 px-1 rounded">X-Agent-Secret</code> header
-              when calling the webhook endpoint.
+
+            <p className="text-[12px] mb-5" style={{ color: 'var(--acm-fg-4)' }}>
+              Use it as the{' '}
+              <code
+                className="mono px-1 rounded text-[11px]"
+                style={{ color: 'var(--acm-fg-3)', background: 'var(--acm-elev)' }}
+              >
+                X-Agent-Secret
+              </code>{' '}
+              header when calling the webhook endpoint.
             </p>
+
             <button
               onClick={() => setPendingSecret(null)}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-colors text-sm"
+              className="btn-primary w-full justify-center py-2.5"
             >
               Got it, I saved it
             </button>

@@ -1,2 +1,227 @@
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --acm-base:             oklch(0.155 0.006 255);
+  --acm-card:             oklch(0.195 0.006 255);
+  --acm-elev:             oklch(0.235 0.007 255);
+  --acm-border:           oklch(0.28  0.008 255);
+  --acm-border-strong:    oklch(0.34  0.01  255);
+  --acm-fg:               oklch(0.96  0.004 255);
+  --acm-fg-2:             oklch(0.78  0.006 255);
+  --acm-fg-3:             oklch(0.58  0.008 255);
+  --acm-fg-4:             oklch(0.42  0.008 255);
+  --acm-accent:           oklch(0.84  0.16  82);
+  --acm-accent-hi:        oklch(0.9   0.16  82);
+  --acm-accent-dim:       oklch(0.55  0.1   82);
+  --acm-accent-tint:      oklch(0.84  0.16  82 / 0.08);
+  --acm-accent-soft:      oklch(0.84  0.16  82 / 0.07);
+  --acm-ok:               oklch(0.75  0.09 160);
+  --acm-warn:             oklch(0.82  0.1   78);
+  --acm-err:              oklch(0.68  0.13  22);
+  --acm-info:             oklch(0.74  0.06 230);
+  --acm-radius:           8px;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Tailwind v4 color theme ───────────────────────────────────────────────── */
+@theme {
+  --color-acm-base:          var(--acm-base);
+  --color-acm-card:          var(--acm-card);
+  --color-acm-elev:          var(--acm-elev);
+  --color-acm-border:        var(--acm-border);
+  --color-acm-border-strong: var(--acm-border-strong);
+  --color-acm-fg:            var(--acm-fg);
+  --color-acm-fg-2:          var(--acm-fg-2);
+  --color-acm-fg-3:          var(--acm-fg-3);
+  --color-acm-fg-4:          var(--acm-fg-4);
+  --color-acm-accent:        var(--acm-accent);
+  --color-acm-accent-hi:     var(--acm-accent-hi);
+  --color-acm-accent-dim:    var(--acm-accent-dim);
+  --color-acm-ok:            var(--acm-ok);
+  --color-acm-warn:          var(--acm-warn);
+  --color-acm-err:           var(--acm-err);
+  --color-acm-info:          var(--acm-info);
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+html, body {
+  background: var(--acm-base);
+  color: var(--acm-fg);
+  font-family: 'Inter', system-ui, sans-serif;
+  margin: 0;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+}
+
+/* ── Typography ────────────────────────────────────────────────────────────── */
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+.label {
+  font-family: 'Inter', sans-serif;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--acm-fg-3);
+}
+
+/* ── Dot-grid (sidebar background) ────────────────────────────────────────── */
+.dot-grid {
+  background-image: radial-gradient(var(--acm-border) 1px, transparent 1px);
+  background-size: 14px 14px;
+  background-position: 0 0;
+}
+
+/* ── Card ──────────────────────────────────────────────────────────────────── */
+.acm-card {
+  background: var(--acm-card);
+  border: 1px solid var(--acm-border);
+  border-radius: var(--acm-radius);
+  transition: border-color 160ms ease;
+}
+.acm-card:hover { border-color: oklch(0.84 0.16 82 / 0.3); }
+
+/* ── Buttons ───────────────────────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--acm-accent);
+  color: oklch(0.18 0.015 80);
+  border: none;
+  border-radius: var(--acm-radius);
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 140ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-primary:hover:not(:disabled) { background: var(--acm-accent-hi); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--acm-fg);
+  border: 1px solid var(--acm-border-strong);
+  border-radius: var(--acm-radius);
+  padding: 7px 13px;
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-secondary:hover:not(:disabled) { border-color: var(--acm-accent); color: var(--acm-accent); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Input underline-only ──────────────────────────────────────────────────── */
+.acm-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--acm-border);
+  color: var(--acm-fg);
+  padding: 8px 0;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 160ms ease;
+  width: 100%;
+  font-family: inherit;
+}
+.acm-input::placeholder { color: oklch(0.42 0.006 255 / 0.5); }
+.acm-input:focus { border-bottom-color: var(--acm-accent); }
+.acm-input:focus::placeholder { color: var(--acm-fg-3); }
+
+/* ── Status dots ───────────────────────────────────────────────────────────── */
+.dot         { width: 6px; height: 6px; border-radius: 99px; display: inline-block; flex-shrink: 0; }
+.dot-ok      { background: var(--acm-ok);     box-shadow: 0 0 6px oklch(0.75 0.09 160 / 0.6); }
+.dot-warn    { background: var(--acm-warn);   }
+.dot-err     { background: var(--acm-err);    }
+.dot-idle    { background: var(--acm-fg-4);   }
+.dot-accent  { background: var(--acm-accent); box-shadow: 0 0 6px oklch(0.84 0.16 82 / 0.5); }
+
+/* ── Pulse animation ───────────────────────────────────────────────────────── */
+@keyframes acm-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+.acm-pulse { animation: acm-pulse 1.8s ease-in-out infinite; }
+
+/* ── Glowing caret ─────────────────────────────────────────────────────────── */
+@keyframes acm-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.acm-caret {
+  display: inline-block;
+  width: 7px; height: 1em;
+  background: var(--acm-accent);
+  box-shadow: 0 0 8px oklch(0.84 0.16 82 / 0.7);
+  vertical-align: text-bottom;
+  animation: acm-caret 1.05s steps(1) infinite;
+  margin-left: 2px;
+}
+
+/* ── Active nav pill with rotating gradient border ─────────────────────────── */
+@property --acm-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes acm-spin { to { --acm-angle: 360deg; } }
+
+.acm-active-pill {
+  position: relative;
+  background: var(--acm-accent);
+  color: oklch(0.18 0.015 80);
+  border-radius: 6px;
+}
+.acm-active-pill::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--acm-angle),
+    oklch(0.84 0.16 82 / 0),
+    oklch(0.84 0.16 82 / 0.9) 25%,
+    oklch(1 0 0 / 0.6) 35%,
+    oklch(0.84 0.16 82 / 0) 50%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: acm-spin 4s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+.acm-scroll::-webkit-scrollbar       { width: 3px; height: 3px; }
+.acm-scroll::-webkit-scrollbar-track { background: oklch(0.22 0.006 255); }
+.acm-scroll::-webkit-scrollbar-thumb { background: var(--acm-accent); border-radius: 3px; }
+
+/* ── Thin divider ──────────────────────────────────────────────────────────── */
+.acm-rule { height: 1px; background: var(--acm-border); width: 100%; }
+
+/* ── Page header breadcrumb ────────────────────────────────────────────────── */
+.acm-breadcrumb {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--acm-accent);
+  margin-bottom: 6px;
+  display: block;
+}
+
+/* ── Inactive nav item hover ───────────────────────────────────────────────── */
+.nav-inactive:hover {
+  background: oklch(0.28 0.008 255 / 0.4);
+  color: var(--acm-fg);
+}

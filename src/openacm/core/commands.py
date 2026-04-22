@@ -27,6 +27,8 @@ COMMANDS_HELP = (
     "- `/new` · `/clear` — Start a new conversation\n"
     "- `/reset` — Emergency reset: clears history + fixes broken tool state\n"
     "- `/compact` — Summarize old messages to free up context window\n"
+    "- `/workspace <path>` — Pin a working directory for this conversation\n"
+    "- `/workspace` — Show the current pinned workspace (or clear it with `/workspace clear`)\n"
     "- `/help` — Show this help\n"
     "- `/model` — Show current model\n"
     "- `/model <name>` — Switch to a different model (persisted)\n"
@@ -63,6 +65,8 @@ class CommandProcessor:
                 return await self._cmd_compact(user_id, channel_id)
             case "/export":
                 return await self._cmd_export(user_id, channel_id)
+            case "/workspace":
+                return await self._cmd_workspace(args.strip(), user_id, channel_id)
             case _:
                 return CommandResult(handled=False)
 
@@ -159,6 +163,14 @@ class CommandProcessor:
                 handled=True,
                 text=f"❌ Compaction failed: {e}",
             )
+        finally:
+            # Always reset the auto-compact baseline after a manual attempt so the
+            # countdown restarts from the current message count (not the old one).
+            # This prevents auto-compact from immediately re-firing after /compact.
+            post_msgs = await mem.get_messages(user_id, channel_id)
+            post_non_system = len([m for m in post_msgs if m.get("role") != "system"])
+            mem._compact_baseline[key] = post_non_system
+            mem._needs_compact.discard(key)
 
         new_msgs = await mem.get_messages(user_id, channel_id)
         new_count = len([m for m in new_msgs if m.get("role") != "system"])
@@ -169,6 +181,45 @@ class CommandProcessor:
             handled=True,
             text=header + body,
             data={"compact": True},
+        )
+
+    async def _cmd_workspace(self, path: str, user_id: str, channel_id: str) -> CommandResult:
+        """Pin, clear, or show the workspace for this conversation."""
+        from openacm.core.acm_context import _resolve_workspace
+        mem = self.brain.memory
+
+        # Show current
+        if not path:
+            current = mem.get_conversation_workspace(user_id, channel_id)
+            if current:
+                return CommandResult(
+                    handled=True,
+                    text=f"📁 Workspace for this conversation: `{current}`\nUse `/workspace clear` to revert to the default.",
+                )
+            return CommandResult(
+                handled=True,
+                text=f"📁 No workspace pinned for this conversation.\nDefault workspace: `{_resolve_workspace()}`\nUse `/workspace <path>` to pin one.",
+            )
+
+        # Clear
+        if path.lower() == "clear":
+            mem.clear_conversation_workspace(user_id, channel_id)
+            return CommandResult(
+                handled=True,
+                text=f"📁 Workspace pin removed. Back to default: `{_resolve_workspace()}`",
+            )
+
+        # Set — resolve to absolute path
+        from pathlib import Path
+        resolved = str(Path(path).resolve())
+        mem.set_conversation_workspace(user_id, channel_id, resolved)
+        # Bust the system-prompt cache so the new workspace appears on the next message
+        key = f"{channel_id}:{user_id}"
+        self.brain._system_prompt_hash.pop(key, None)
+        log.info("Conversation workspace set", user_id=user_id, channel_id=channel_id, path=resolved)
+        return CommandResult(
+            handled=True,
+            text=f"📁 Workspace set to `{resolved}` for this conversation.\nThe AI will use this path for all file operations from now on.",
         )
 
     async def _cmd_export(self, user_id: str, channel_id: str) -> CommandResult:

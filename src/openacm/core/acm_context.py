@@ -10,8 +10,23 @@ from contextvars import ContextVar
 # Set by Brain before calling llm_router.chat() so CLIProvider can find the PTY
 current_channel_id: ContextVar[str] = ContextVar('current_channel_id', default='web')
 
-# Base context describing what OpenACM is and what it can do
-# This context is ALWAYS injected, before any skill
+# Injected by brain.py on startup so both context functions use the real config value
+_workspace_path: str = ""
+
+def set_workspace(path: str) -> None:
+    """Called once by Brain.__init__ so context functions always use the real workspace."""
+    global _workspace_path
+    _workspace_path = path
+
+
+def _resolve_workspace() -> str:
+    """Return the configured workspace, falling back to env var then cwd/workspace."""
+    import os
+    from pathlib import Path
+    if _workspace_path:
+        return _workspace_path
+    return os.environ.get("OPENACM_WORKSPACE", str(Path(os.getcwd()) / "workspace"))
+
 
 OPENACM_BASE_CONTEXT = """# OpenACM — Tier-1 Autonomous Agent
 
@@ -46,14 +61,14 @@ Use raw strings r"C:\\..." or forward slashes "C:/...". Path().resolve() for abs
 
 
 def get_openacm_context() -> str:
-    """Get the base OpenACM context with dynamic OS info."""
+    """Full context — used on the first message of a new conversation."""
     import platform
     import os
-    from pathlib import Path
 
     os_name = platform.system()
     os_version = platform.version()
     cwd = os.getcwd()
+    workspace = _resolve_workspace()
 
     if os_name == "Windows":
         shell = "cmd.exe or PowerShell"
@@ -65,41 +80,49 @@ def get_openacm_context() -> str:
         shell = "bash (Linux)"
         path_style = "Unix paths (/home/...)"
 
-    workspace = os.environ.get("OPENACM_WORKSPACE", str(Path(cwd) / "workspace"))
-
     os_block = (
         f"\n## Host System\n"
         f"- OS: **{os_name}** ({os_version})\n"
         f"- Shell: {shell}\n"
         f"- Paths: {path_style}\n"
-        f"- Working directory: `{cwd}`\n"
-        f"- **Workspace (default save dir):** `{workspace}`\n"
+        f"- Server working directory: `{cwd}`\n"
+        f"- **WORKSPACE: `{workspace}`**\n"
         f"Use the correct commands and path separators for this OS.\n"
-        f"**ALWAYS save generated files to the workspace unless the user specifies another path.**\n"
-        f"You can also use the `$OPENACM_WORKSPACE` env var in shell commands (e.g. `run_command`).\n"
+        f"\n## ⚠️ File Creation Rules — ALWAYS FOLLOW\n"
+        f"1. **Save ALL generated files to the workspace: `{workspace}`** unless the user gives an explicit different path.\n"
+        f"2. **NEVER create files in the server working directory (`{cwd}`) or project root** — that is the application source code.\n"
+        f"3. When the user says 'save here' or 'put it in X', use the EXACT path they give. Do not invent paths.\n"
+        f"4. Before writing any file, confirm the destination is under `{workspace}` or the user-specified path.\n"
+        f"5. In shell commands use the env var: `$OPENACM_WORKSPACE` or the literal path `{workspace}`.\n"
     )
 
     return OPENACM_BASE_CONTEXT + os_block
 
 
-# Short version — used on follow-up messages (not the first message in a conversation)
-OPENACM_CONTEXT_SHORT = """# OpenACM — Autonomous Agent
-You are OpenACM. Use tools to execute, never just explain. NEVER say "I cannot".
-Non-interactive flags always (--yes/-y). background=true for long-running commands.
-File links as plain text: /api/media/file.pdf. You CAN create_tool at runtime.
-"""
-
-
 def get_short_context() -> str:
-    """Get short version of OpenACM context with OS info."""
+    """Compact context — used on every follow-up message. Must repeat the workspace rule."""
     import platform
     import os
+
     os_name = platform.system()
+    workspace = _resolve_workspace()
+    cwd = os.getcwd()
+
     if os_name == "Windows":
         shell = "cmd.exe/PowerShell"
     elif os_name == "Darwin":
         shell = "zsh (macOS)"
     else:
         shell = "bash (Linux)"
-    workspace = os.environ.get("OPENACM_WORKSPACE", "workspace")
-    return OPENACM_CONTEXT_SHORT + f"\nOS: {os_name} | Shell: {shell} | Workspace: {workspace}\n"
+
+    return (
+        f"# OpenACM — Autonomous Agent\n"
+        f"You are OpenACM. Use tools to execute, never just explain. NEVER say \"I cannot\".\n"
+        f"Non-interactive flags always (--yes/-y). background=true for long-running commands.\n"
+        f"File links as plain text: /api/media/file.pdf. You CAN create_tool at runtime.\n"
+        f"\n"
+        f"OS: {os_name} | Shell: {shell}\n"
+        f"⚠️ WORKSPACE: `{workspace}` — save ALL files here unless user specifies otherwise.\n"
+        f"NEVER write files to `{cwd}` (server root) or any path outside the workspace.\n"
+        f"If the user gives an explicit path, use that EXACT path — do not substitute or forget it.\n"
+    )

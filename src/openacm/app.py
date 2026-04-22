@@ -16,6 +16,7 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 from rich.text import Text
 
 from openacm.core.config import load_config, AppConfig
+from openacm.core.acm_context import set_workspace as _set_workspace
 from openacm.core.commands import CommandProcessor
 from openacm.core.events import EventBus
 from openacm.core.llm_router import LLMRouter
@@ -169,6 +170,7 @@ class OpenACM:
         workspace.mkdir(parents=True, exist_ok=True)
         os.environ["OPENACM_WORKSPACE"] = str(workspace)
         os.environ["OPENACM_PROJECT_ROOT"] = str(workspace.parent)
+        _set_workspace(str(workspace))
 
         # Event bus
         self.event_bus = EventBus()

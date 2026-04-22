@@ -82,6 +82,8 @@ interface ChatState {
   // forKey: if provided and different from currentTarget, add to savedMessages instead
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>, forKey?: string) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
+  // Update the most recent running tool call message for the given tool in-place
+  updateToolCall: (tool: string, result: string, status: 'completed' | 'error') => void;
   upsertValidationStep: (tool: string, step: ValidationStep, done?: boolean, passed?: boolean) => void;
   clearMessages: () => void;
   setTarget: (target: ChatTarget) => void;
@@ -162,6 +164,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearMessages: () => set({ messages: [] }),
+
+  updateToolCall: (tool, result, status) => {
+    set((state) => {
+      const idx = [...state.messages].findLastIndex(
+        (m) => m.toolCall?.tool === tool && m.toolCall.status === 'running',
+      );
+      if (idx === -1) return state; // no matching running call found, ignore
+      const updated = [...state.messages];
+      updated[idx] = {
+        ...updated[idx],
+        toolCall: { ...updated[idx].toolCall!, result, status },
+      };
+      return { messages: updated };
+    });
+  },
 
   upsertValidationStep: (tool, step, done = false, passed = false) => {
     set((state) => {

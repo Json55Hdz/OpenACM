@@ -70,6 +70,13 @@ class MemoryManager:
         self._compacting: set[str] = set()
         # Flag: compact needed before next LLM call (set by add_message, cleared by _compact)
         self._needs_compact: set[str] = set()
+        # Non-system message count at the time of the last compact attempt (success or fail).
+        # Auto-compact fires only when (current_count - baseline) >= threshold, so a manual
+        # compact resets the countdown regardless of whether the LLM produced a summary.
+        self._compact_baseline: dict[str, int] = {}
+        # Per-conversation workspace override — set by /workspace command, injected into
+        # every system prompt for that conversation so the AI never forgets the path.
+        self._conversation_workspace: dict[str, str] = {}
 
     def _key(self, user_id: str, channel_id: str) -> str:
         """Generate a unique key for a user/channel pair."""
@@ -205,11 +212,14 @@ class MemoryManager:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Flag compact as needed — brain.py will await it synchronously before next LLM call
+        # Flag compact as needed — brain.py will await it synchronously before next LLM call.
+        # Count messages added SINCE the last compact attempt so that a manual /compact
+        # (even a failed one) resets the countdown rather than re-triggering immediately.
         threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
         non_system = [m for m in self._cache[key] if m.get("role") != "system"]
+        baseline = self._compact_baseline.get(key, 0)
         if (
-            len(non_system) >= threshold
+            len(non_system) - baseline >= threshold
             and key not in self._compacting
             and self._llm_router is not None
         ):
@@ -271,6 +281,18 @@ class MemoryManager:
             messages.append({"role": role, "content": content})
 
         return messages
+
+    def set_conversation_workspace(self, user_id: str, channel_id: str, path: str) -> None:
+        """Pin a workspace path to this conversation (overrides the global default)."""
+        self._conversation_workspace[self._key(user_id, channel_id)] = path
+
+    def get_conversation_workspace(self, user_id: str, channel_id: str) -> str | None:
+        """Return the pinned workspace for this conversation, or None if not set."""
+        return self._conversation_workspace.get(self._key(user_id, channel_id))
+
+    def clear_conversation_workspace(self, user_id: str, channel_id: str) -> None:
+        """Remove the workspace pin — reverts to global default."""
+        self._conversation_workspace.pop(self._key(user_id, channel_id), None)
 
     def should_compact(self, user_id: str, channel_id: str) -> bool:
         """Return True if a compaction was scheduled and hasn't run yet."""
@@ -380,6 +402,11 @@ class MemoryManager:
             }
 
             self._cache[key] = system_msg + [summary_msg] + to_keep
+
+            # Reset the baseline to current non-system count so auto-compact
+            # doesn't re-fire until `threshold` *new* messages accumulate.
+            new_non_system = len([m for m in self._cache[key] if m.get("role") != "system"])
+            self._compact_baseline[key] = new_non_system
 
             log.info(
                 "Conversation compacted",

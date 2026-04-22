@@ -34,6 +34,7 @@ ALWAYS_INCLUDE_TOOLS = {
     "write_file",
     "edit_file",
     "web_search",
+    "list_tools",  # always visible so the AI can answer "what can you do?"
 }
 
 
@@ -206,8 +207,20 @@ class ToolRegistry:
             "event", "evento", "drive", "youtube", "google",
         ],
         "meta": [
-            "skill", "tool", "herramienta", "habilidad",
-            "create_skill", "create_tool",
+            # Tool/skill listing
+            "list tools", "list skills", "what tools", "what skills",
+            "listar tools", "listar skills", "listar herramientas",
+            "qué tools", "que tools", "qué herramientas", "que herramientas",
+            "qué habilidades", "que habilidades",
+            "what can you do", "what are your tools", "what are your skills",
+            "qué puedes hacer", "que puedes hacer",
+            "cuáles son", "cuales son",
+            "show tools", "show skills", "muéstrame", "muestrame",
+            "available tools", "herramientas disponibles",
+            # Skill/tool creation
+            "create_skill", "create_tool", "crear skill", "crear tool",
+            "nueva habilidad", "nuevo skill", "new skill",
+            "create a skill", "make a skill", "define a skill",
         ],
         "mcp": [
             "mcp", "model context protocol", "mcp server", "mcp tool",

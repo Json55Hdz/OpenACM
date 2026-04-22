@@ -676,7 +676,20 @@ class Brain:
         existing_messages = await self.memory.get_messages(user_id, channel_id)
         is_new_conversation = len(existing_messages) == 0
         openacm_context = get_openacm_context() if is_new_conversation else get_short_context()
-        system_prompt = f"{openacm_context}\n\n{system_prompt}"
+
+        # Per-conversation workspace override — prepended before everything else so it
+        # takes precedence over the global default in every message of this session.
+        conv_workspace = self.memory.get_conversation_workspace(user_id, channel_id)
+        if conv_workspace:
+            workspace_pin = (
+                f"# 📁 WORKSPACE FOR THIS CONVERSATION: `{conv_workspace}`\n"
+                f"ALL file operations MUST use `{conv_workspace}`. "
+                f"This overrides the global default. Do NOT use any other path unless "
+                f"the user explicitly says so in this message.\n\n"
+            )
+            system_prompt = f"{workspace_pin}{openacm_context}\n\n{system_prompt}"
+        else:
+            system_prompt = f"{openacm_context}\n\n{system_prompt}"
 
         if self.terminal_history:
             recent = [e for e in self.terminal_history[-5:] if e.get("command")]
@@ -1407,7 +1420,7 @@ class Brain:
                     EVENT_TOOL_RESULT,
                     {
                         "tool": tool_name,
-                        "result": result[:500],  # Truncate for event
+                        "result": result[:5000],  # Display cap — LLM gets separately compressed copy
                         "user_id": user_id,
                         "channel_id": channel_id,
                         "channel_type": channel_type,

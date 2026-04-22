@@ -125,20 +125,14 @@ function parsePayload(raw: string | undefined): Record<string, unknown> {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  pending: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30',
-  success: 'bg-green-500/15 text-green-400 border border-green-500/30',
-  error:   'bg-red-500/15 text-red-400 border border-red-500/30',
-  running: 'bg-blue-500/15 text-blue-400 border border-blue-500/30 animate-pulse',
-};
+// ─── Status dot helper ────────────────────────────────────
 
-const ACTION_STYLES: Record<ActionType, string> = {
-  run_skill:           'bg-purple-500/15 text-purple-400 border border-purple-500/30',
-  run_routine:         'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30',
-  analyze_patterns:    'bg-orange-500/15 text-orange-400 border border-orange-500/30',
-  custom_command:      'bg-slate-500/15 text-slate-400 border border-slate-500/30',
-  run_swarm_template:  'bg-amber-500/15 text-amber-400 border border-amber-500/30',
-};
+function StatusDot({ status }: { status: JobStatus }) {
+  if (status === 'success') return <span className="dot dot-ok" />;
+  if (status === 'error')   return <span className="dot dot-err" />;
+  if (status === 'running') return <span className="dot dot-accent acm-pulse" />;
+  return <span className="dot dot-idle" />;
+}
 
 // ─── Action Payload Editor ────────────────────────────────
 
@@ -155,10 +149,10 @@ function PayloadEditor({
     case 'run_skill':
       return (
         <div>
-          <label className="block text-xs text-slate-400 mb-1">{t.skillName}</label>
+          <label className="label block mb-2">{t.skillName}</label>
           <input
             type="text"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+            className="acm-input w-full"
             placeholder="e.g. daily_summary"
             value={String(payload.skill_name ?? '')}
             onChange={e => onChange({ ...payload, skill_name: e.target.value })}
@@ -168,10 +162,10 @@ function PayloadEditor({
     case 'run_routine':
       return (
         <div>
-          <label className="block text-xs text-slate-400 mb-1">{t.routineId}</label>
+          <label className="label block mb-2">{t.routineId}</label>
           <input
             type="number"
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+            className="acm-input w-full"
             placeholder="Routine ID"
             value={String(payload.routine_id ?? '')}
             onChange={e => onChange({ ...payload, routine_id: parseInt(e.target.value) || 0 })}
@@ -180,7 +174,7 @@ function PayloadEditor({
       );
     case 'analyze_patterns':
       return (
-        <p className="text-xs text-slate-500 italic">
+        <p className="text-[12px] text-[var(--acm-fg-4)] italic">
           No configuration needed — runs the pattern analyzer automatically.
         </p>
       );
@@ -188,10 +182,10 @@ function PayloadEditor({
       return (
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">{t.command}</label>
+            <label className="label block mb-2">{t.command}</label>
             <textarea
               rows={2}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+              className="mono w-full bg-[var(--acm-card)] border-b border-[var(--acm-border)] text-[var(--acm-fg)] outline-none focus:border-b-[var(--acm-accent)] px-0 py-2 text-[13px] resize-none"
               placeholder="e.g. python /path/to/script.py"
               value={String(payload.command ?? '')}
               onChange={e => onChange({ ...payload, command: e.target.value })}
@@ -200,11 +194,11 @@ function PayloadEditor({
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
-              className="rounded border-slate-600"
+              className="rounded border-[var(--acm-border)]"
               checked={payload.shell !== false}
               onChange={e => onChange({ ...payload, shell: e.target.checked })}
             />
-            <span className="text-xs text-slate-400">{t.shellMode}</span>
+            <span className="text-[12px] text-[var(--acm-fg-3)]">{t.shellMode}</span>
           </label>
         </div>
       );
@@ -212,28 +206,28 @@ function PayloadEditor({
       return (
         <div className="space-y-3">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Template ID</label>
+            <label className="label block mb-2">Template ID</label>
             <input
               type="number"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              className="acm-input w-full"
               placeholder="Swarm template ID (create one in the API)"
               value={String(payload.template_id ?? '')}
               onChange={e => onChange({ ...payload, template_id: parseInt(e.target.value) || 0 })}
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Goal Override (optional)</label>
+            <label className="label block mb-2">Goal Override (optional)</label>
             <textarea
               rows={2}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              className="w-full bg-[var(--acm-card)] border-b border-[var(--acm-border)] text-[var(--acm-fg)] outline-none focus:border-b-[var(--acm-accent)] px-0 py-2 text-[13px] resize-none"
               placeholder="Leave empty to use template goal. Use {date} placeholder."
               value={String(payload.goal_override ?? '')}
               onChange={e => onChange({ ...payload, goal_override: e.target.value })}
             />
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-[12px] text-[var(--acm-fg-4)]">
             Creates a new swarm instance from the template every time this job fires.
-            Use the <code className="bg-slate-800 px-1 rounded">/api/swarm-templates</code> endpoint to manage templates.
+            Use the <code className="mono bg-[var(--acm-elev)] px-1 rounded text-[var(--acm-fg-3)]">/api/swarm-templates</code> endpoint to manage templates.
           </p>
         </div>
       );
@@ -297,32 +291,40 @@ function JobModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div
+        className="w-full max-w-lg shadow-2xl flex flex-col"
+        style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', borderRadius: '12px' }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-slate-800">
-          <h2 className="text-lg font-semibold text-slate-100">
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid var(--acm-border)' }}>
+          <h2 className="text-[15px] font-semibold text-[var(--acm-fg)]">
             {job ? t.editJob : t.newJob}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 transition-colors">
-            <X size={20} />
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
+          >
+            <X size={16} />
           </button>
         </div>
 
         {/* Body */}
-        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto acm-scroll">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-sm text-red-400">
+            <div className="flex items-center gap-2 px-3 py-2 rounded text-[12px] text-[var(--acm-err)]"
+              style={{ background: 'color-mix(in srgb, var(--acm-err) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--acm-err) 30%, transparent)' }}>
+              <span className="dot dot-err shrink-0" />
               {error}
             </div>
           )}
 
           {/* Name */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">{t.jobName}</label>
+            <label className="label block mb-2">{t.jobName}</label>
             <input
               type="text"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              className="acm-input w-full"
               placeholder="e.g. Daily Analysis"
               value={form.name}
               onChange={e => setForm({ ...form, name: e.target.value })}
@@ -331,10 +333,10 @@ function JobModal({
 
           {/* Description */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">{t.description}</label>
+            <label className="label block mb-2">{t.description}</label>
             <input
               type="text"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              className="acm-input w-full"
               placeholder="Optional description"
               value={form.description}
               onChange={e => setForm({ ...form, description: e.target.value })}
@@ -343,25 +345,25 @@ function JobModal({
 
           {/* Cron Expression */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">
+            <label className="label block mb-2">
               {t.cronExpression}
-              <span className="ml-2 font-mono text-slate-500 text-xs">{t.cronHint}</span>
+              <span className="ml-2 mono text-[var(--acm-fg-4)] text-[10px] normal-case tracking-normal">{t.cronHint}</span>
             </label>
             <input
               type="text"
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+              className="acm-input mono w-full"
               placeholder="0 9 * * 1-5"
               value={form.cron_expr}
               onChange={e => setForm({ ...form, cron_expr: e.target.value })}
             />
-            <p className="mt-1 text-xs text-blue-400/80 italic">{describeCron(form.cron_expr)}</p>
+            <p className="mt-1.5 text-[11px] text-[var(--acm-accent)] italic opacity-80">{describeCron(form.cron_expr)}</p>
             {/* Presets */}
-            <div className="mt-2 flex flex-wrap gap-1">
+            <div className="mt-2 flex flex-wrap gap-1.5">
               {PRESETS.map(p => (
                 <button
                   key={p.expr}
                   onClick={() => setForm({ ...form, cron_expr: p.expr })}
-                  className="px-2 py-0.5 text-xs rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                  className="btn-secondary px-2 py-0.5 text-[11px]"
                 >
                   {p.label}
                 </button>
@@ -371,9 +373,9 @@ function JobModal({
 
           {/* Action Type */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">{t.actionType}</label>
+            <label className="label block mb-2">{t.actionType}</label>
             <select
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
+              className="bg-[var(--acm-card)] border-b border-[var(--acm-border)] text-[var(--acm-fg)] outline-none focus:border-b-[var(--acm-accent)] px-0 py-2 appearance-none w-full text-[14px]"
               value={form.action_type}
               onChange={e => setForm({ ...form, action_type: e.target.value as ActionType, action_payload: {} })}
             >
@@ -385,7 +387,7 @@ function JobModal({
 
           {/* Payload */}
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">{t.actionPayload}</label>
+            <label className="label block mb-2">{t.actionPayload}</label>
             <PayloadEditor
               actionType={form.action_type}
               payload={form.action_payload}
@@ -393,32 +395,33 @@ function JobModal({
             />
           </div>
 
-          {/* Enabled */}
+          {/* Enabled toggle */}
           <label className="flex items-center gap-3 cursor-pointer">
             <div
               onClick={() => setForm({ ...form, is_enabled: !form.is_enabled })}
-              className={`w-10 h-5 rounded-full transition-colors ${form.is_enabled ? 'bg-blue-600' : 'bg-slate-600'} relative`}
+              className={`w-9 h-[18px] rounded-full transition-colors relative shrink-0 ${form.is_enabled ? 'bg-[var(--acm-accent)]' : 'bg-[var(--acm-elev)]'}`}
+              style={{ border: '1px solid var(--acm-border)' }}
             >
-              <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.is_enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              <span className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white shadow transition-transform ${form.is_enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
             </div>
-            <span className="text-sm text-slate-300">{form.is_enabled ? t.enabled : 'Disabled'}</span>
+            <span className="text-[13px] text-[var(--acm-fg-2)]">{form.is_enabled ? t.enabled : 'Disabled'}</span>
           </label>
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 p-5 border-t border-slate-800">
+        <div className="flex justify-end gap-2 px-5 py-4" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            className="px-4 py-2 text-[13px] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors rounded"
           >
             {translations.common.cancel}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            className="btn-primary flex items-center gap-2 px-4 py-2 text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : null}
+            {saving && <Loader2 size={13} className="animate-spin" />}
             {saving ? 'Saving...' : translations.common.save}
           </button>
         </div>
@@ -460,87 +463,100 @@ function CronJobCard({
     ? String(payload.command ?? '').slice(0, 40)
     : '';
 
+  const status = job.last_status ?? 'pending';
+
   return (
-    <div className={`bg-slate-800/50 border ${job.is_enabled ? 'border-slate-700' : 'border-slate-700/50 opacity-60'} rounded-xl p-4 space-y-3`}>
+    <div className={`acm-card p-4 space-y-3 transition-opacity ${!job.is_enabled ? 'opacity-50' : ''}`}>
       {/* Top row */}
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 p-2 rounded-lg bg-slate-700/50">
-          <Clock size={16} className={job.is_enabled ? 'text-blue-400' : 'text-slate-500'} />
+        <div className="mt-0.5 p-2 rounded" style={{ background: 'var(--acm-elev)' }}>
+          <Clock size={15} className={job.is_enabled ? 'text-[var(--acm-accent)]' : 'text-[var(--acm-fg-4)]'} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-slate-100 truncate">{job.name}</h3>
-            <span className={`text-xs px-2 py-0.5 rounded-full ${ACTION_STYLES[job.action_type]}`}>
+            <h3 className="text-[14px] font-semibold text-[var(--acm-fg)] truncate">{job.name}</h3>
+            {/* Action type badge */}
+            <span className="mono text-[10px] text-[var(--acm-fg-4)] px-[6px] py-[2px] border border-[var(--acm-border)] rounded-[3px] tracking-[0.06em] uppercase">
               {t.actionTypes[job.action_type]}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_STYLES[job.last_status] ?? STATUS_STYLES.pending}`}>
-              {t.status[job.last_status] ?? job.last_status}
+            {/* Status */}
+            <span className="flex items-center gap-1.5">
+              <StatusDot status={status} />
+              <span className="mono text-[10px] text-[var(--acm-fg-3)] uppercase tracking-[0.08em]">
+                {t.status[status] ?? status}
+              </span>
             </span>
           </div>
           {job.description && (
-            <p className="text-xs text-slate-400 mt-0.5 truncate">{job.description}</p>
+            <p className="text-[12px] text-[var(--acm-fg-3)] mt-0.5 truncate">{job.description}</p>
           )}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <code className="text-xs font-mono bg-slate-900/60 px-2 py-0.5 rounded text-blue-300">
-              {job.cron_expr}
-            </code>
-            <span className="text-xs text-slate-500 italic">{describeCron(job.cron_expr)}</span>
+            <code className="mono text-[12px] text-[var(--acm-accent)] opacity-90">{job.cron_expr}</code>
+            <span className="text-[11px] text-[var(--acm-fg-4)] italic">{describeCron(job.cron_expr)}</span>
           </div>
           {payloadSummary && (
-            <p className="text-xs text-slate-500 mt-0.5 font-mono truncate">{payloadSummary}</p>
+            <p className="mono text-[11px] text-[var(--acm-fg-4)] mt-0.5 truncate">{payloadSummary}</p>
           )}
         </div>
         {/* Actions */}
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             onClick={() => onToggle(job.id)}
             title={job.is_enabled ? 'Disable' : 'Enable'}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+            className="p-1.5 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-accent)] transition-colors"
           >
-            {job.is_enabled ? <ToggleRight size={18} className="text-blue-400" /> : <ToggleLeft size={18} />}
+            {job.is_enabled
+              ? <ToggleRight size={18} className="text-[var(--acm-accent)]" />
+              : <ToggleLeft size={18} />}
           </button>
           <button
             onClick={handleTrigger}
             disabled={triggering}
             title={t.triggerNow}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-green-400 hover:bg-slate-700 transition-colors disabled:opacity-50"
+            className="p-1.5 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-accent)] transition-colors disabled:opacity-40"
           >
-            {triggering ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+            {triggering ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
           </button>
           <button
             onClick={() => onEdit(job)}
             title="Edit"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-slate-700 transition-colors"
+            className="p-1.5 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
           >
-            <Edit2 size={16} />
+            <Edit2 size={15} />
           </button>
           <button
             onClick={() => onDelete(job.id)}
             title="Delete"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+            className="p-1.5 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] transition-colors"
           >
-            <Trash2 size={16} />
+            <Trash2 size={15} />
           </button>
         </div>
       </div>
 
       {/* Stats row */}
-      <div className="flex items-center gap-4 text-xs text-slate-500 border-t border-slate-700/50 pt-2">
-        <span>{t.lastRun}: <span className="text-slate-400">{formatDate(job.last_run)}</span></span>
-        <span>{t.nextRun}: <span className="text-slate-400">{formatDate(job.next_run)}</span></span>
-        <span>{t.runCount}: <span className="text-slate-400">{job.run_count}</span></span>
+      <div
+        className="flex items-center gap-4 text-[11px] text-[var(--acm-fg-4)] pt-2"
+        style={{ borderTop: '1px solid var(--acm-border)' }}
+      >
+        <span>{t.lastRun}: <span className="mono text-[var(--acm-fg-3)]">{formatDate(job.last_run)}</span></span>
+        <span>{t.nextRun}: <span className="mono text-[var(--acm-fg-3)]">{formatDate(job.next_run)}</span></span>
+        <span>{t.runCount}: <span className="text-[var(--acm-fg-3)]">{job.run_count}</span></span>
         {job.last_output && (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="ml-auto flex items-center gap-1 text-slate-500 hover:text-slate-300 transition-colors"
+            className="ml-auto flex items-center gap-1 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-2)] transition-colors"
           >
-            Last output {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            Last output {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
           </button>
         )}
       </div>
 
       {expanded && job.last_output && (
-        <pre className="text-xs font-mono bg-slate-900/80 rounded-lg p-3 text-slate-300 max-h-32 overflow-auto whitespace-pre-wrap border border-slate-700/50">
+        <pre
+          className="mono text-[11px] text-[var(--acm-fg-3)] max-h-32 overflow-auto whitespace-pre-wrap rounded p-3 acm-scroll"
+          style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}
+        >
           {job.last_output}
         </pre>
       )}
@@ -554,39 +570,44 @@ function RunHistory({ runs, loading }: { runs: CronRun[]; loading: boolean }) {
   if (loading) {
     return (
       <div className="flex justify-center py-8">
-        <Loader2 size={20} className="animate-spin text-slate-500" />
+        <Loader2 size={18} className="animate-spin text-[var(--acm-fg-4)]" />
       </div>
     );
   }
   if (!runs.length) {
-    return <p className="text-center text-slate-500 text-sm py-6">No runs recorded yet.</p>;
+    return <p className="text-center text-[var(--acm-fg-4)] text-[13px] py-6">No runs recorded yet.</p>;
   }
   return (
-    <div className="space-y-1">
+    <div className="space-y-0">
       {runs.map(run => (
         <div
           key={run.id}
-          className="flex items-start gap-3 py-2 px-3 rounded-lg hover:bg-slate-800/50 transition-colors"
+          className="flex items-start gap-3 py-2.5 px-3 rounded transition-colors hover:bg-[var(--acm-elev)]"
+          style={{ borderLeft: '2px solid transparent' }}
+          onMouseEnter={e => (e.currentTarget.style.borderLeftColor = 'var(--acm-border-strong)')}
+          onMouseLeave={e => (e.currentTarget.style.borderLeftColor = 'transparent')}
         >
-          <div className="mt-0.5">
+          <div className="mt-0.5 shrink-0">
             {run.status === 'success' ? (
-              <CheckCircle size={14} className="text-green-400" />
+              <CheckCircle size={13} className="text-[var(--acm-ok)]" />
             ) : run.status === 'error' ? (
-              <XCircle size={14} className="text-red-400" />
+              <XCircle size={13} className="text-[var(--acm-err)]" />
             ) : (
-              <Loader2 size={14} className="animate-spin text-blue-400" />
+              <Loader2 size={13} className="animate-spin text-[var(--acm-accent)]" />
             )}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-medium text-slate-300">{run.job_name}</span>
+              <span className="text-[12px] font-medium text-[var(--acm-fg-2)]">{run.job_name}</span>
               {run.triggered_by === 'manual' && (
-                <span className="text-xs bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 px-1.5 py-0.5 rounded">manual</span>
+                <span className="mono text-[10px] text-[var(--acm-fg-4)] px-[5px] py-[1px] border border-[var(--acm-border)] rounded-[3px] uppercase tracking-[0.06em]">
+                  manual
+                </span>
               )}
             </div>
-            <p className="text-xs text-slate-500">{formatDate(run.started_at)}</p>
+            <p className="mono text-[11px] text-[var(--acm-fg-4)]">{formatDate(run.started_at)}</p>
             {(run.output || run.error) && (
-              <p className="text-xs font-mono text-slate-400 truncate mt-0.5">
+              <p className="mono text-[11px] text-[var(--acm-fg-3)] truncate mt-0.5">
                 {run.error || run.output}
               </p>
             )}
@@ -666,35 +687,35 @@ export default function CronPage() {
   function openEdit(job: CronJob) { setModalJob(job); setShowModal(true); }
   function openNew() { setModalJob(null); setShowModal(true); }
 
-
   const enabledCount = jobs.filter(j => j.is_enabled).length;
 
   return (
     <AppLayout>
-      <div className="p-6 max-w-4xl mx-auto space-y-6">
+      <div className="flex flex-col min-h-0 p-6 space-y-6">
 
         {/* Header */}
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
-              <Clock size={24} className="text-blue-400" />
-              {t.title}
-            </h1>
-            <p className="text-slate-400 text-sm mt-1">{t.subtitle}</p>
+            <span className="acm-breadcrumb">/ cron</span>
+            <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-[var(--acm-fg)]">{t.title}</h1>
+            <p className="text-[12px] text-[var(--acm-fg-3)] mt-1">
+              {jobs.length} jobs · {enabledCount} enabled
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button
               onClick={fetchJobs}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
               title="Refresh"
+              className="p-2 rounded text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
+              style={{ border: '1px solid var(--acm-border)' }}
             >
-              <RefreshCw size={16} />
+              <RefreshCw size={15} />
             </button>
             <button
               onClick={openNew}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+              className="btn-primary flex items-center gap-2 px-4 py-2 text-[13px]"
             >
-              <Plus size={16} />
+              <Plus size={14} />
               {t.newJob}
             </button>
           </div>
@@ -702,32 +723,34 @@ export default function CronPage() {
 
         {/* Stats bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <p className="text-xs text-slate-400">{t.totalJobs}</p>
-            <p className="text-2xl font-bold text-slate-100 mt-1">{jobs.length}</p>
+          <div className="acm-card p-4">
+            <span className="label block mb-2">{t.totalJobs}</span>
+            <span className="text-[24px] font-semibold text-[var(--acm-fg)]">{jobs.length}</span>
           </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <p className="text-xs text-slate-400">{t.enabledJobs}</p>
-            <p className="text-2xl font-bold text-green-400 mt-1">{enabledCount}</p>
+          <div className="acm-card p-4">
+            <span className="label block mb-2">{t.enabledJobs}</span>
+            <span className="text-[24px] font-semibold text-[var(--acm-fg)]">{enabledCount}</span>
           </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <p className="text-xs text-slate-400">Scheduler</p>
+          <div className="acm-card p-4">
+            <span className="label block mb-2">Scheduler</span>
             <div className="flex items-center gap-2 mt-1">
-              <span className={`w-2 h-2 rounded-full ${status?.running ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
-              <p className="text-sm font-semibold text-slate-200">
+              {status?.running
+                ? <span className="dot dot-ok acm-pulse" />
+                : <span className="dot dot-err" />}
+              <span className="text-[13px] font-medium text-[var(--acm-fg-2)]">
                 {status?.running ? t.schedulerRunning : t.schedulerStopped}
-              </p>
+              </span>
             </div>
           </div>
-          <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            <p className="text-xs text-slate-400">{t.nextExecution}</p>
+          <div className="acm-card p-4">
+            <span className="label block mb-2">{t.nextExecution}</span>
             {status?.next_job_name ? (
               <>
-                <p className="text-xs font-medium text-blue-300 mt-1 truncate">{status.next_job_name}</p>
-                <p className="text-xs text-slate-500">{formatDate(status.next_job_at)}</p>
+                <p className="text-[12px] font-medium text-[var(--acm-accent)] mt-1 truncate">{status.next_job_name}</p>
+                <p className="mono text-[11px] text-[var(--acm-fg-4)]">{formatDate(status.next_job_at)}</p>
               </>
             ) : (
-              <p className="text-sm text-slate-500 mt-1">—</p>
+              <p className="text-[13px] text-[var(--acm-fg-4)] mt-1">—</p>
             )}
           </div>
         </div>
@@ -735,23 +758,26 @@ export default function CronPage() {
         {/* Job list */}
         {loading ? (
           <div className="flex justify-center py-12">
-            <Loader2 size={24} className="animate-spin text-slate-500" />
+            <Loader2 size={22} className="animate-spin text-[var(--acm-fg-4)]" />
           </div>
         ) : jobs.length === 0 ? (
-          <div className="text-center py-16 border border-dashed border-slate-700 rounded-2xl">
-            <Activity size={40} className="mx-auto text-slate-600 mb-3" />
-            <p className="text-slate-400 font-medium">{t.noJobs}</p>
-            <p className="text-slate-500 text-sm mt-1">{t.noJobsDesc}</p>
+          <div
+            className="text-center py-16 rounded-xl"
+            style={{ border: '1px dashed var(--acm-border)' }}
+          >
+            <Activity size={36} className="mx-auto text-[var(--acm-fg-4)] mb-3" />
+            <p className="text-[var(--acm-fg-3)] font-medium text-[14px]">{t.noJobs}</p>
+            <p className="text-[var(--acm-fg-4)] text-[12px] mt-1">{t.noJobsDesc}</p>
             <button
               onClick={openNew}
-              className="mt-4 flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors mx-auto"
+              className="btn-primary mt-4 inline-flex items-center gap-2 px-4 py-2 text-[13px]"
             >
-              <Plus size={14} />
+              <Plus size={13} />
               {t.newJob}
             </button>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2">
             {jobs.map(job => (
               <CronJobCard
                 key={job.id}
@@ -766,19 +792,21 @@ export default function CronPage() {
         )}
 
         {/* Run history */}
-        <div className="border border-slate-700 rounded-xl overflow-hidden">
+        <div className="rounded-xl overflow-hidden" style={{ border: '1px solid var(--acm-border)' }}>
           <button
             onClick={() => setShowHistory(!showHistory)}
-            className="w-full flex items-center justify-between px-5 py-4 text-sm font-medium text-slate-300 hover:bg-slate-800/50 transition-colors"
+            className="w-full flex items-center justify-between px-5 py-3.5 text-[13px] font-medium text-[var(--acm-fg-2)] hover:bg-[var(--acm-elev)] transition-colors"
           >
             <span className="flex items-center gap-2">
-              <Terminal size={16} className="text-slate-400" />
+              <Terminal size={14} className="text-[var(--acm-fg-4)]" />
               {t.history}
             </span>
-            {showHistory ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+            {showHistory
+              ? <ChevronUp size={14} className="text-[var(--acm-fg-4)]" />
+              : <ChevronDown size={14} className="text-[var(--acm-fg-4)]" />}
           </button>
           {showHistory && (
-            <div className="px-4 pb-4 border-t border-slate-700">
+            <div className="px-2 pb-2 acm-scroll" style={{ borderTop: '1px solid var(--acm-border)' }}>
               <RunHistory runs={runs} loading={runsLoading} />
             </div>
           )}
