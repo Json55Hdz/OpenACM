@@ -340,7 +340,7 @@ class SwarmManager:
             result = await self.llm_router.chat(
                 messages=[{"role": "user", "content": plan_prompt}],
                 temperature=0.4,
-                max_tokens=8192,
+                max_tokens=16384,
                 model_override=swarm.get("global_model") or None,
             )
             plan_text = result.get("content", "")
@@ -360,7 +360,40 @@ class SwarmManager:
                     model_override=swarm.get("global_model") or None,
                 )
                 plan_text = result2.get("content", "")
-            plan = self._parse_plan(plan_text)
+            try:
+                plan = self._parse_plan(plan_text)
+            except ValueError:
+                # Parse failed (truncated response) — retry with a compact no-context prompt
+                log.warning(
+                    "Swarm plan parse failed, retrying with compact prompt",
+                    swarm_id=swarm_id,
+                )
+                compact_prompt = (
+                    f"Goal: {swarm.get('goal', '')}\n\n"
+                    "Reply with ONLY a raw JSON object — no markdown fences, no prose:\n"
+                    '{"workers":[{"name":"...","role":"orchestrator|worker","description":"...","system_prompt":"...","model":null,"allowed_tools":"all"}],'
+                    '"tasks":[{"title":"...","description":"...","worker":"<name>","depends_on":[]}]}\n\n'
+                    "Rules: 1 orchestrator + 2-4 workers. Keep system_prompts under 80 words each."
+                )
+                retry_result = await self.llm_router.chat(
+                    messages=[{"role": "user", "content": compact_prompt}],
+                    temperature=0.2,
+                    max_tokens=4096,
+                    model_override=swarm.get("global_model") or None,
+                )
+                retry_text = retry_result.get("content", "")
+                try:
+                    plan = self._parse_plan(retry_text)
+                except ValueError:
+                    log.error("Compact retry also failed, using minimal fallback", swarm_id=swarm_id)
+                    plan = {
+                        "workers": [{"name": "General Worker", "role": "worker",
+                                     "description": "General purpose worker",
+                                     "system_prompt": "You are a helpful AI assistant. Complete the given task.",
+                                     "model": None, "allowed_tools": "all"}],
+                        "tasks": [{"title": "Main Task", "description": swarm.get("goal", "Complete the project goal."),
+                                   "worker": "General Worker", "depends_on": []}],
+                    }
         except Exception as e:
             err_str = str(e)
             log.error("Swarm planning LLM call failed", swarm_id=swarm_id, error=err_str)
@@ -1360,11 +1393,13 @@ class SwarmManager:
 
     # ~200k chars ≈ ~50k tokens — safe for all providers including Gemini 1M limit
     _MAX_CONTEXT_CHARS = 200_000
+    # Planning only needs enough context to understand the project — workers get the full context
+    _MAX_PLAN_CONTEXT_CHARS = 30_000
 
     def _build_plan_prompt(self, swarm: dict) -> str:
         ctx = swarm.get("shared_context", "") or ""
-        if len(ctx) > self._MAX_CONTEXT_CHARS:
-            ctx = ctx[: self._MAX_CONTEXT_CHARS] + "\n\n[...context truncated for planning...]"
+        if len(ctx) > self._MAX_PLAN_CONTEXT_CHARS:
+            ctx = ctx[: self._MAX_PLAN_CONTEXT_CHARS] + "\n\n[...context truncated for planning — workers receive full context...]"
         ctx_section = f"\n\n**Provided context files:**\n{ctx}" if ctx else ""
 
         answers = (swarm.get("clarification_answers") or "").strip()
@@ -1711,27 +1746,7 @@ Rules:
                 pass
 
         log.error("Failed to parse swarm plan", text=text[:500])
-        # Return minimal fallback plan
-        return {
-            "workers": [
-                {
-                    "name": "General Worker",
-                    "role": "worker",
-                    "description": "General purpose worker",
-                    "system_prompt": "You are a helpful AI assistant. Complete the given task.",
-                    "model": None,
-                    "allowed_tools": "all",
-                }
-            ],
-            "tasks": [
-                {
-                    "title": "Main Task",
-                    "description": "Complete the project goal.",
-                    "worker": "General Worker",
-                    "depends_on": [],
-                }
-            ],
-        }
+        raise ValueError("Could not extract valid JSON from swarm plan response")
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
