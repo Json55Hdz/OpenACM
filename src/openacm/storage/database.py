@@ -166,7 +166,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 13
+    _SCHEMA_VERSION = 15
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -651,6 +651,26 @@ class Database:
                 log.info("Migration 13: added retry_history_json to swarm_tasks")
             except Exception:
                 pass  # column already exists
+
+        if current < 14:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE swarms ADD COLUMN working_path TEXT DEFAULT ''"
+                )
+                log.info("Migration 14: added working_path to swarms")
+            except Exception:
+                pass  # column already exists
+
+        if current < 15:
+            for col_sql, label in [
+                ("ALTER TABLE swarms ADD COLUMN clarification_questions TEXT DEFAULT ''", "clarification_questions"),
+                ("ALTER TABLE swarms ADD COLUMN clarification_answers TEXT DEFAULT ''", "clarification_answers"),
+            ]:
+                try:
+                    await self._db.execute(col_sql)
+                    log.info(f"Migration 15: added {label} to swarms")
+                except Exception:
+                    pass  # column already exists
 
         # Save new version
         await self._db.execute(
@@ -1858,7 +1878,8 @@ class Database:
         if not self._db:
             return False
         allowed = {"name", "goal", "status", "global_model", "workspace_path",
-                   "shared_context", "context_files"}
+                   "shared_context", "context_files", "working_path",
+                   "clarification_questions", "clarification_answers"}
         updates, params = [], []
         for key, val in kwargs.items():
             if key in allowed:
@@ -1887,6 +1908,27 @@ class Database:
             return
         await self._db.execute("DELETE FROM swarm_tasks WHERE swarm_id = ?", (swarm_id,))
         await self._db.execute("DELETE FROM swarm_workers WHERE swarm_id = ?", (swarm_id,))
+        await self._db.commit()
+
+    async def clear_swarm_messages(self, swarm_id: int) -> None:
+        """Delete all activity messages for a swarm."""
+        if not self._db:
+            return
+        await self._db.execute("DELETE FROM swarm_messages WHERE swarm_id = ?", (swarm_id,))
+        await self._db.commit()
+
+    async def reset_swarm_tasks(self, swarm_id: int) -> None:
+        """Reset all tasks for a swarm back to pending with cleared results (keeps task definitions)."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "UPDATE swarm_tasks SET status = 'pending', result = NULL, retry_history_json = '[]' WHERE swarm_id = ?",
+            (swarm_id,),
+        )
+        await self._db.execute(
+            "UPDATE swarm_workers SET status = 'idle' WHERE swarm_id = ?",
+            (swarm_id,),
+        )
         await self._db.commit()
 
     # ─── Swarm Workers ────────────────────────────────────────────────────────

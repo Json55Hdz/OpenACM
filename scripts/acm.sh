@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 CMD="${1:-help}"
@@ -30,13 +30,13 @@ get_pid() {
 
 case "$CMD" in
     install)
-        exec ./setup.sh
+        exec scripts/setup.sh
         ;;
     update)
-        exec ./update.sh
+        exec scripts/update.sh
         ;;
     start)
-        exec ./run.sh
+        exec scripts/run.sh
         ;;
     stop)
         PID=$(get_pid)

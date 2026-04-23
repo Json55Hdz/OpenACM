@@ -3,10 +3,16 @@
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/stores/auth-store';
-import { useAuth } from '@/hooks/use-websocket';
+import { useAuth, useWebSocket } from '@/hooks/use-websocket';
 import { useConfigStatus } from '@/hooks/use-setup';
 import { toast } from 'sonner';
 import { translations } from '@/lib/translations';
+
+// Single global WS instance — lives at the app root so it survives all page navigations.
+function GlobalWebSocket() {
+  useWebSocket();
+  return null;
+}
 
 const t = translations.auth;
 
@@ -134,5 +140,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <GlobalWebSocket />
+      {children}
+    </>
+  );
 }

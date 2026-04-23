@@ -408,7 +408,7 @@ export function useWebSocket() {
   }, []);
 
   // Single effect — runs once. Does NOT close WS on unmount so the connection
-  // survives navigation between pages (app-layout keeps this hook alive).
+  // survives navigation between pages (AuthGate keeps this hook alive at app root).
   useEffect(() => {
     const unsubscribe = authStore.subscribe((state) => {
       if (state.token) {

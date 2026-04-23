@@ -899,20 +899,36 @@ class Brain:
                             "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",
                         })
                 else:
-                    try:
-                        from markitdown import MarkItDown
-                        md_text = (MarkItDown().convert(str(file_path)).text_content or "").strip()
-                    except Exception:
-                        md_text = ""
-                    if md_text:
+                    # For known text formats, decode the already-read bytes directly.
+                    # MarkItDown is unreliable for plain text (can return empty for .md).
+                    _text_exts = {
+                        '.md', '.txt', '.csv', '.json', '.yaml', '.yml', '.toml',
+                        '.xml', '.html', '.htm', '.py', '.js', '.ts', '.tsx',
+                        '.css', '.sh', '.bat', '.ps1', '.ini', '.cfg', '.conf',
+                        '.log', '.sql', '.rst', '.tex',
+                    }
+                    file_text = ""
+                    if ext in _text_exts:
+                        try:
+                            file_text = raw_bytes.decode("utf-8", errors="replace").strip()
+                        except Exception:
+                            pass
+                    if not file_text:
+                        # Fallback to MarkItDown for office/binary formats
+                        try:
+                            from markitdown import MarkItDown
+                            file_text = (MarkItDown().convert(str(file_path)).text_content or "").strip()
+                        except Exception:
+                            pass
+                    if file_text:
                         structured_content.append({
                             "type": "text",
-                            "text": f"[{file_path.name}]:\n{truncate(md_text, TRUNCATE_FILE_CONTEXT_CHARS)}",
+                            "text": f"[{file_path.name}]:\n{truncate(file_text, TRUNCATE_FILE_CONTEXT_CHARS)}",
                         })
                     else:
                         structured_content.append({
                             "type": "text",
-                            "text": f"[File attached: {file_path.name} ({ext})]",
+                            "text": f"[File attached: {file_path.name} ({ext}) — binary format, content not extractable]",
                         })
             except Exception as e:
                 log.error("Failed to load attachment", error=str(e), file_id=att_id)

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 echo -e "\033[1;36m==========================================\033[0m"
@@ -63,8 +63,8 @@ echo ""
 read -p "Restart OpenACM now? (S/n): " choice
 if [[ "$choice" == "" || "$choice" =~ ^[sSyY] ]]; then
     echo ""
-    exec ./run.sh
+    exec scripts/run.sh
 else
-    echo -e "\033[1;36mRun ./run.sh or './acm start' to launch.\033[0m"
+    echo -e "\033[1;36mRun 'openacm start' to launch.\033[0m"
     echo ""
 fi

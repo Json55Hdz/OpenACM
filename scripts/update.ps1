@@ -3,8 +3,8 @@ Write-Host "  OpenACM - Update" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-$SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $SCRIPT_DIR
+$REPO_ROOT = Split-Path -Parent $PSScriptRoot
+Set-Location $REPO_ROOT
 
 # ── 1. Git pull ─────────────────────────────────────────────────────────────
 if (!(Get-Command "git" -ErrorAction SilentlyContinue)) {
@@ -34,7 +34,7 @@ if (Get-Command "uv" -ErrorAction SilentlyContinue) {
 } elseif (Test-Path ".venv\Scripts\pip.exe") {
     .venv\Scripts\pip.exe install -e . -q
 } else {
-    Write-Host "[ERROR] No virtual environment found. Run setup.bat first." -ForegroundColor Red
+    Write-Host "[ERROR] No virtual environment found. Run 'openacm install' first." -ForegroundColor Red
     pause
     exit 1
 }
@@ -53,11 +53,11 @@ if (!(Get-Command "node" -ErrorAction SilentlyContinue)) {
     npm run build
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] Frontend build failed." -ForegroundColor Red
-        Set-Location $SCRIPT_DIR
+        Set-Location $REPO_ROOT
         pause
         exit 1
     }
-    Set-Location $SCRIPT_DIR
+    Set-Location $REPO_ROOT
 
     if (!(Test-Path "src\openacm\web\static")) {
         New-Item -ItemType Directory -Force -Path "src\openacm\web\static" | Out-Null
@@ -76,9 +76,9 @@ $choice = Read-Host "Restart OpenACM now? (Y/n)"
 if ($choice -eq "" -or $choice -match "^[yY]") {
     Write-Host ""
     Write-Host "Launching OpenACM..." -ForegroundColor Green
-    exit 0   # update.bat will call run.bat
+    Write-Host ""
+    powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\run.ps1"
 } else {
-    Write-Host "Run 'run.bat' or 'acm start' to launch." -ForegroundColor Cyan
+    Write-Host "Run 'openacm start' to launch." -ForegroundColor Cyan
     Read-Host "Press Enter to close"
-    exit 1
 }

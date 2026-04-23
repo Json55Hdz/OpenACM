@@ -15,7 +15,7 @@ const cmd = process.argv[2] || 'help';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function isInstalled() {
-  return fs.existsSync(path.join(INSTALL_DIR, IS_WIN ? 'run.bat' : 'run.sh'));
+  return fs.existsSync(path.join(INSTALL_DIR, 'pyproject.toml'));
 }
 
 function commandExists(name) {
@@ -68,34 +68,46 @@ const commands = {
       cwd: os.homedir(),
     });
     if (!IS_WIN) {
-      sh('chmod +x setup.sh run.sh update.sh acm.sh 2>/dev/null || true');
+      sh('chmod +x scripts/setup.sh scripts/run.sh scripts/update.sh scripts/acm.sh 2>/dev/null || true');
     }
-    sh(IS_WIN ? 'setup.bat' : './setup.sh');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1'
+      : 'bash scripts/setup.sh');
   },
 
   start() {
     ensureInstalled();
-    sh(IS_WIN ? 'run.bat' : './run.sh');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\run.ps1'
+      : 'bash scripts/run.sh');
   },
 
   stop() {
     ensureInstalled();
-    sh(IS_WIN ? 'acm stop' : './acm.sh stop');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\acm.ps1 stop'
+      : 'bash scripts/acm.sh stop');
   },
 
   status() {
     ensureInstalled();
-    sh(IS_WIN ? 'acm status' : './acm.sh status');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\acm.ps1 status'
+      : 'bash scripts/acm.sh status');
   },
 
   update() {
     ensureInstalled();
-    sh(IS_WIN ? 'update.bat' : './update.sh');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\update.ps1'
+      : 'bash scripts/update.sh');
   },
 
   repair() {
     ensureInstalled();
-    sh(IS_WIN ? 'acm repair' : './acm.sh repair');
+    sh(IS_WIN
+      ? 'powershell -ExecutionPolicy Bypass -File scripts\\acm.ps1 repair'
+      : 'bash scripts/acm.sh repair');
   },
 
   uninstall() {

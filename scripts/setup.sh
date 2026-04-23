@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 echo -e "\033[1;36m==========================================\033[0m"
@@ -147,9 +147,9 @@ if [[ "$choice" == "" || "$choice" =~ ^[sSyY] ]]; then
     echo ""
     echo -e "\033[1;32mIniciando OpenACM...\033[0m"
     echo ""
-    exec ./run.sh
+    exec scripts/run.sh
 else
     echo ""
-    echo -e "\033[1;36mPara iniciar más tarde, ejecuta: ./run.sh\033[0m"
+    echo -e "\033[1;36mPara iniciar más tarde, ejecuta: openacm start\033[0m"
     echo ""
 fi

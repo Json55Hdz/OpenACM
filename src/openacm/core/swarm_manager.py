@@ -101,6 +101,7 @@ class SwarmManager:
         goal: str,
         file_contents: list[dict[str, str]] | None = None,
         global_model: str | None = None,
+        working_path: str = "",
     ) -> dict[str, Any]:
         """
         Create a new draft swarm.
@@ -132,11 +133,192 @@ class SwarmManager:
             workspace_path=str(swarm_dir),
             shared_context=shared_context,
             context_files=json.dumps(context_files),
+            working_path=working_path,
         )
 
         swarm = await self.db.get_swarm(swarm_id)
         await self._emit_swarm_event(swarm_id, "created")
         return swarm
+
+    async def check_reuse_compatibility(
+        self,
+        swarm_id: int,
+        new_goal: str,
+    ) -> dict:
+        """
+        Ask the LLM whether the existing worker team is suitable for a new goal.
+        Returns {"compatible": bool, "reason": str, "suggestion": str}.
+        """
+        swarm = await self.db.get_swarm(swarm_id)
+        if not swarm:
+            raise ValueError(f"Swarm {swarm_id} not found")
+
+        workers = await self.db.get_swarm_workers(swarm_id)
+        if not workers:
+            return {"compatible": True, "reason": "No workers yet — any goal is fine.", "suggestion": ""}
+
+        worker_summary = "\n".join(
+            f"- {w['name']} ({w['role']}): {w['description']}"
+            for w in workers
+        )
+
+        prompt = (
+            f"An existing AI agent swarm was designed for this original goal:\n"
+            f"{swarm['goal']}\n\n"
+            f"Its worker team:\n{worker_summary}\n\n"
+            f"The user wants to reuse this exact team (same workers, same system prompts) "
+            f"for a new goal:\n{new_goal}\n\n"
+            "Assess whether the existing team is well-suited for the new goal.\n\n"
+            "Consider INCOMPATIBLE if the new goal requires fundamentally different skills "
+            "(e.g., the team was built for coding but now the goal is graphic design), "
+            "references very different domains, or would produce clearly worse results "
+            "than a purpose-built team. Minor goal variations are fine — only flag truly "
+            "mismatched cases.\n\n"
+            "Respond with ONLY a JSON object, no prose:\n"
+            '{"compatible": true/false, "reason": "one sentence", '
+            '"suggestion": "what the user should do instead if incompatible, empty string if compatible"}'
+        )
+
+        try:
+            result = await self.llm_router.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=256,
+                model_override=swarm.get("global_model") or None,
+            )
+            content = (result.get("content") or "").strip()
+            import re as _re
+            match = _re.search(r"\{.*\}", content, _re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                return {
+                    "compatible": bool(parsed.get("compatible", True)),
+                    "reason": str(parsed.get("reason", "")),
+                    "suggestion": str(parsed.get("suggestion", "")),
+                }
+        except Exception as exc:
+            log.warning("Reuse compatibility check failed — assuming compatible",
+                        swarm_id=swarm_id, error=str(exc))
+
+        return {"compatible": True, "reason": "", "suggestion": ""}
+
+    async def reset_swarm(
+        self,
+        swarm_id: int,
+        goal: str | None = None,
+        file_contents: list[dict[str, str]] | None = None,
+        working_path: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Reset a swarm for re-use without re-planning.
+
+        Keeps all workers and task definitions intact — only resets task results
+        back to pending so the same team runs again with new context/files.
+        """
+        swarm = await self.db.get_swarm(swarm_id)
+        if not swarm:
+            raise ValueError(f"Swarm {swarm_id} not found")
+
+        if swarm["status"] == "running":
+            await self.stop_swarm(swarm_id)
+
+        # Reset tasks to pending + workers to idle + clear activity feed
+        await self.db.reset_swarm_tasks(swarm_id)
+        await self.db.clear_swarm_messages(swarm_id)
+
+        updates: dict = {"status": "planned"}
+        if goal is not None:
+            updates["goal"] = goal
+        if working_path is not None:
+            updates["working_path"] = working_path
+
+        # Replace context files if new ones were uploaded
+        if file_contents is not None:
+            swarm_dir = Path(swarm["workspace_path"])
+            context_dir = swarm_dir / "context"
+            import shutil as _shutil
+            if context_dir.exists():
+                _shutil.rmtree(context_dir)
+            context_dir.mkdir(parents=True, exist_ok=True)
+
+            parts: list[str] = []
+            ctx_files: list[str] = []
+            for f in file_contents:
+                fname = f.get("filename", "file")
+                content = f.get("content", "")
+                (context_dir / fname).write_text(content, encoding="utf-8", errors="replace")
+                ctx_files.append(fname)
+                parts.append(f"### {fname}\n{content}")
+            updates["shared_context"] = "\n\n".join(parts)
+            updates["context_files"] = json.dumps(ctx_files)
+
+        await self.db.update_swarm(swarm_id, **updates)
+        await self._emit_swarm_event(swarm_id, "planned")
+        return await self.db.get_swarm(swarm_id)
+
+    async def clarify_swarm(self, swarm_id: int) -> list[str]:
+        """
+        Review the swarm's goal + context and generate clarifying questions.
+        Sets status to 'clarifying', stores questions in DB, returns question list.
+        Call this right after create_swarm, before plan_swarm.
+        """
+        swarm = await self.db.get_swarm(swarm_id)
+        if not swarm:
+            raise ValueError(f"Swarm {swarm_id} not found")
+
+        await self.db.update_swarm(swarm_id, status="clarifying")
+        await self._emit_swarm_event(swarm_id, "clarifying")
+
+        ctx = (swarm.get("shared_context") or "").strip()
+        if len(ctx) > self._MAX_CONTEXT_CHARS:
+            ctx = ctx[: self._MAX_CONTEXT_CHARS] + "\n[...truncated...]"
+        ctx_section = f"\n\nPROVIDED CONTEXT AND DOCUMENTS:\n{ctx}" if ctx else "\n\nNo context files were provided."
+
+        prompt = (
+            f"You are about to coordinate a team of AI agents to accomplish the following goal.\n\n"
+            f"GOAL:\n{swarm['goal']}"
+            f"{ctx_section}\n\n"
+            "---\n\n"
+            "Before designing the team and task plan, review everything carefully and list "
+            "the clarifying questions you need answered to do this work precisely.\n\n"
+            "Ask about:\n"
+            "- Information that is missing but critical to complete the goal correctly\n"
+            "- Ambiguities in requirements that would change the approach\n"
+            "- Technical constraints, standards, or preferences to follow\n"
+            "- Expected output format, quality bar, or deliverable details\n"
+            "- External tools, APIs, or access that may be needed\n"
+            "- Whether specific reference materials or additional documents would help\n\n"
+            "Only include questions that genuinely matter for doing this precisely. "
+            "Aim for 3–7 focused questions. Skip trivial or obvious ones.\n\n"
+            "Respond with ONLY a JSON array of question strings — no prose, no markdown wrapper:\n"
+            '["Question 1?", "Question 2?", ...]'
+        )
+
+        questions: list[str] = []
+        try:
+            result = await self.llm_router.chat(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1024,
+                model_override=swarm.get("global_model") or None,
+            )
+            content = (result.get("content") or "").strip()
+            import re as _re
+            match = _re.search(r"\[.*?\]", content, _re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, list):
+                    questions = [str(q).strip() for q in parsed if str(q).strip()]
+        except Exception as exc:
+            log.warning("Clarification LLM call failed — proceeding without questions",
+                        swarm_id=swarm_id, error=str(exc))
+
+        await self.db.update_swarm(swarm_id, clarification_questions=json.dumps(questions))
+        await self._emit(swarm_id, "swarm:clarifying", {
+            "swarm_id": swarm_id,
+            "question_count": len(questions),
+        })
+        return questions
 
     async def plan_swarm(self, swarm_id: int) -> dict[str, Any]:
         """
@@ -783,6 +965,17 @@ class SwarmManager:
                 self._llm_semaphores[swarm_id] = asyncio.Semaphore(2)
             llm_sem = self._llm_semaphores[swarm_id]
 
+            # Pin workspace for this task channel: use swarm's working_path if set,
+            # otherwise fall back to the global default workspace.
+            swarm_record = await self.db.get_swarm(swarm_id)
+            task_working_path = (swarm_record or {}).get("working_path", "").strip()
+            if not task_working_path:
+                from openacm.core.acm_context import _resolve_workspace
+                task_working_path = _resolve_workspace()
+            brain.memory.set_conversation_workspace(
+                f"swarm_{swarm_id}", channel_id, task_working_path
+            )
+
             # 10-minute hard timeout per task — prevents infinite hangs
             try:
                 async with llm_sem:
@@ -1174,8 +1367,14 @@ class SwarmManager:
             ctx = ctx[: self._MAX_CONTEXT_CHARS] + "\n\n[...context truncated for planning...]"
         ctx_section = f"\n\n**Provided context files:**\n{ctx}" if ctx else ""
 
+        answers = (swarm.get("clarification_answers") or "").strip()
+        answers_section = (
+            f"\n\n**Clarification Q&A — use these answers to make the plan precise:**\n{answers}"
+            if answers else ""
+        )
+
         return f"""You are a project planning AI. Design an optimal team of AI worker agents
-to accomplish the following goal.{ctx_section}
+to accomplish the following goal.{ctx_section}{answers_section}
 
 **Goal:** {swarm["goal"]}
 

@@ -1,3 +1,6 @@
+$REPO_ROOT = Split-Path -Parent $PSScriptRoot
+Set-Location $REPO_ROOT
+
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "  OpenACM Tier-1 Autonomous Agent Setup" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -187,11 +190,10 @@ if ($choice -eq "" -or $choice -match "^[yY]") {
     Write-Host ""
     Write-Host "Launching OpenACM..." -ForegroundColor Green
     Write-Host ""
-    exit 0  # setup.bat will launch run.bat
+    powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\run.ps1"
 } else {
     Write-Host ""
-    Write-Host "To start later, double-click 'run.bat'" -ForegroundColor Cyan
+    Write-Host "To start later, run: openacm start" -ForegroundColor Cyan
     Write-Host ""
     Read-Host "Press Enter to close"
-    exit 1  # setup.bat will just close
 }

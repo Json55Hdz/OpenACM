@@ -44,6 +44,7 @@ def register_routes(app: FastAPI) -> None:
         name = str(form.get("name", "New Swarm"))
         goal = str(form.get("goal", ""))
         global_model = str(form.get("global_model", "")) or None
+        working_path = str(form.get("working_path", "")).strip() or ""
 
         if not goal.strip():
             raise HTTPException(400, "goal is required")
@@ -64,6 +65,7 @@ def register_routes(app: FastAPI) -> None:
             goal=goal,
             file_contents=file_contents or None,
             global_model=global_model,
+            working_path=working_path,
         )
         return swarm
 
@@ -86,6 +88,98 @@ def register_routes(app: FastAPI) -> None:
         if not ok:
             raise HTTPException(404, "Swarm not found")
         return {"ok": True}
+
+    @app.post("/api/swarms/{swarm_id}/clarify")
+    async def clarify_swarm(swarm_id: int):
+        """Run the clarification phase: LLM reviews context and generates questions for the user."""
+        if not _state.swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        swarm = await _state.database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+        try:
+            questions = await _state.swarm_manager.clarify_swarm(swarm_id)
+        except Exception as exc:
+            raise HTTPException(500, detail=str(exc)) from exc
+        return {"questions": questions, "swarm_id": swarm_id}
+
+    @app.post("/api/swarms/{swarm_id}/clarify/answer")
+    async def submit_clarification(swarm_id: int, request: Request):
+        """Submit user answers to clarification questions, then trigger planning.
+
+        Accepts multipart form data so additional context files can be uploaded alongside answers.
+        Form fields: answers (JSON string of [{question, answer}]), files (optional).
+        """
+        if not _state.swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        swarm = await _state.database.get_swarm(swarm_id)
+        if not swarm:
+            raise HTTPException(404, "Swarm not found")
+
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            answers_raw = str(form.get("answers", "[]"))
+            file_contents: list[dict] = []
+            for field_name, field_value in form.multi_items():
+                if hasattr(field_value, "read"):
+                    raw = await field_value.read()
+                    try:
+                        content = raw.decode("utf-8", errors="replace")
+                    except Exception:
+                        content = "(binary — skipped)"
+                    file_contents.append({"filename": field_value.filename or field_name, "content": content})
+        else:
+            body = {}
+            try:
+                body = await request.json()
+            except Exception:
+                pass
+            answers_raw = json.dumps(body.get("answers", []))
+            file_contents = []
+
+        # Parse [{question, answer}] pairs and format them into readable text
+        try:
+            pairs = json.loads(answers_raw)
+        except Exception:
+            pairs = []
+
+        formatted_answers = "\n\n".join(
+            f"Q: {p.get('question', '?')}\nA: {p.get('answer', '(no answer given)')}"
+            for p in pairs
+            if p.get("answer", "").strip()
+        )
+
+        # If extra files were uploaded, append their content to shared_context
+        if file_contents:
+            existing_ctx = (swarm.get("shared_context") or "").strip()
+            existing_files = json.loads(swarm.get("context_files") or "[]")
+            swarm_dir = Path(swarm["workspace_path"])
+            context_dir = swarm_dir / "context"
+            context_dir.mkdir(parents=True, exist_ok=True)
+            new_parts: list[str] = []
+            for f in file_contents:
+                fname = f["filename"]
+                (context_dir / fname).write_text(f["content"], encoding="utf-8", errors="replace")
+                existing_files.append(fname)
+                new_parts.append(f"### {fname}\n{f['content']}")
+            new_ctx = (existing_ctx + "\n\n" + "\n\n".join(new_parts)).strip()
+            await _state.database.update_swarm(
+                swarm_id,
+                shared_context=new_ctx,
+                context_files=json.dumps(existing_files),
+            )
+
+        await _state.database.update_swarm(swarm_id, clarification_answers=formatted_answers)
+
+        # Now plan — the answers are injected into the plan prompt automatically
+        try:
+            result = await _state.swarm_manager.plan_swarm(swarm_id)
+        except Exception as exc:
+            raise HTTPException(500, detail=str(exc)) from exc
+        workers = await _state.database.get_swarm_workers(swarm_id)
+        tasks = await _state.database.get_swarm_tasks(swarm_id)
+        return {**result, "workers": workers, "tasks": tasks}
 
     @app.post("/api/swarms/{swarm_id}/plan")
     async def plan_swarm(swarm_id: int):
@@ -251,6 +345,66 @@ def register_routes(app: FastAPI) -> None:
         if _state.swarm_manager:
             await _state.swarm_manager._emit_swarm_event(swarm_id, "completed", {"manual": True})
         return {"ok": True, "status": "completed"}
+
+    @app.post("/api/swarms/{swarm_id}/check-reuse")
+    async def check_reuse(swarm_id: int, request: Request):
+        """Check whether the existing worker team is suitable for a new goal before resetting."""
+        if not _state.swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        new_goal = (body.get("goal") or "").strip()
+        if not new_goal:
+            return {"compatible": True, "reason": "", "suggestion": ""}
+        try:
+            result = await _state.swarm_manager.check_reuse_compatibility(swarm_id, new_goal)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return result
+
+    @app.post("/api/swarms/{swarm_id}/reset")
+    async def reset_swarm(swarm_id: int, request: Request):
+        """Reset a swarm for re-use: keeps workers/task definitions, resets results to pending.
+        Accepts multipart form data so new context files can be uploaded alongside goal changes."""
+        if not _state.swarm_manager:
+            raise HTTPException(503, "Swarm manager not initialized")
+
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            goal = str(form.get("goal", "")).strip() or None
+            working_path = str(form.get("working_path", "")).strip() or None
+            file_contents: list[dict] | None = []
+            for field_name, field_value in form.multi_items():
+                if hasattr(field_value, "read"):
+                    raw = await field_value.read()
+                    try:
+                        content = raw.decode("utf-8", errors="replace")
+                    except Exception:
+                        content = "(binary file — skipped)"
+                    file_contents.append({"filename": field_value.filename or field_name, "content": content})
+            if not file_contents:
+                file_contents = None
+        else:
+            body = {}
+            try:
+                body = await request.json()
+            except Exception:
+                pass
+            goal = (body.get("goal") or "").strip() or None
+            working_path = (body.get("working_path") or "").strip() or None
+            file_contents = None
+
+        try:
+            updated = await _state.swarm_manager.reset_swarm(
+                swarm_id, goal=goal, file_contents=file_contents, working_path=working_path,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return updated
 
     @app.post("/api/swarms/{swarm_id}/message")
     async def post_swarm_message(swarm_id: int, request: Request):

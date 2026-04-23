@@ -6,7 +6,7 @@ import {
   Plus, Trash2, Play, Pause, Clock, CheckCircle2, AlertCircle,
   Loader2, Users, ListTodo, FileText, X, Upload, ChevronRight,
   ArrowLeft, MessageSquare, ChevronDown, ChevronUp, Edit2, Check, Cpu, Bot,
-  Send, User, Radio, ArrowRight, Sparkles, XCircle, Activity, HelpCircle,
+  Send, User, Radio, ArrowRight, Sparkles, XCircle, Activity, HelpCircle, FolderOpen, RotateCcw,
 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
@@ -22,7 +22,7 @@ interface Swarm {
   id: number;
   name: string;
   goal: string;
-  status: 'draft' | 'planning' | 'planned' | 'running' | 'paused' | 'idle' | 'completed' | 'failed';
+  status: 'draft' | 'clarifying' | 'planning' | 'planned' | 'running' | 'paused' | 'idle' | 'completed' | 'failed';
   global_model: string | null;
   worker_count: number;
   task_count: number;
@@ -65,6 +65,8 @@ interface SwarmMessage {
 interface SwarmDetail extends Swarm {
   shared_context: string;
   context_files: string;
+  clarification_questions: string;
+  clarification_answers: string;
   workers: Worker[];
   tasks: Task[];
 }
@@ -79,14 +81,15 @@ const WORKER_DOT: Record<string, string> = {
 };
 
 const SWARM_DOT: Record<string, string> = {
-  running:   'dot-accent acm-pulse',
-  completed: 'dot-ok',
-  failed:    'dot-err',
-  paused:    'dot-warn',
-  draft:     'dot-idle',
-  planning:  'dot-accent acm-pulse',
-  planned:   'dot-warn',
-  idle:      'dot-idle',
+  running:    'dot-accent acm-pulse',
+  completed:  'dot-ok',
+  failed:     'dot-err',
+  paused:     'dot-warn',
+  draft:      'dot-idle',
+  clarifying: 'dot-warn acm-pulse',
+  planning:   'dot-accent acm-pulse',
+  planned:    'dot-warn',
+  idle:       'dot-idle',
 };
 
 const TASK_DOT: Record<string, string> = {
@@ -105,6 +108,7 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [name, setName] = useState('');
   const [goal, setGoal] = useState('');
   const [globalModel, setGlobalModel] = useState('');
+  const [workingPath, setWorkingPath] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [step, setStep] = useState<'form' | 'planning'>('form');
@@ -126,6 +130,7 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
       fd.append('name', name || 'New Swarm');
       fd.append('goal', goal);
       if (globalModel) fd.append('global_model', globalModel);
+      if (workingPath) fd.append('working_path', workingPath);
       for (const f of files) fd.append('files', f);
 
       const headers: Record<string, string> = {};
@@ -134,8 +139,8 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
       if (!createRes.ok) throw new Error(`HTTP ${createRes.status}`);
       const swarm: Swarm = await createRes.json();
 
-      const planned = await fetchAPI(`/api/swarms/${swarm.id}/plan`, { method: 'POST', body: JSON.stringify({}) });
-      onCreated(planned.id);
+      await fetchAPI(`/api/swarms/${swarm.id}/clarify`, { method: 'POST', body: JSON.stringify({}) });
+      onCreated(swarm.id);
     } catch (e: any) {
       setError(e.message || 'Failed to create swarm');
       setStep('form');
@@ -155,9 +160,9 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
         {step === 'planning' ? (
           <div className="p-10 flex flex-col items-center gap-4">
             <Loader2 size={36} className="animate-spin text-[var(--acm-accent)]" />
-            <p className="text-[var(--acm-fg)] text-[14px] font-medium">Planning your swarm team…</p>
+            <p className="text-[var(--acm-fg)] text-[14px] font-medium">Reviewing your goal and context…</p>
             <p className="text-[var(--acm-fg-4)] text-[12px] text-center">
-              The AI is designing the optimal team of workers for your goal.
+              The AI is reading your documents and preparing clarifying questions before planning.
             </p>
           </div>
         ) : (
@@ -198,6 +203,36 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
               />
               <p className="text-[11px] text-[var(--acm-fg-4)] mt-1.5">
                 Workers without a specific model will use this. Per-worker models can be set later.
+              </p>
+            </div>
+            <div>
+              <label className="label block mb-2">Working Path (optional)</label>
+              <div className="flex gap-2">
+                <input
+                  value={workingPath}
+                  onChange={e => setWorkingPath(e.target.value)}
+                  placeholder="Leave blank to use the default workspace"
+                  className="acm-input flex-1 min-w-0"
+                />
+                <button
+                  type="button"
+                  title="Browse folder"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch('/api/system/pick-folder', {
+                        headers: token ? { Authorization: `Bearer ${token}` } : {},
+                      });
+                      const data = await res.json();
+                      if (data.path) setWorkingPath(data.path);
+                    } catch {}
+                  }}
+                  className="shrink-0 px-3 h-9 border border-[var(--acm-border)] rounded-lg bg-[var(--acm-elev)] hover:border-[var(--acm-accent)] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors flex items-center"
+                >
+                  <FolderOpen size={15} />
+                </button>
+              </div>
+              <p className="text-[11px] text-[var(--acm-fg-4)] mt-1.5">
+                Directory where workers will create and edit files. Leave blank to use the default workspace.
               </p>
             </div>
             <div>
@@ -697,6 +732,18 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
   const [activeTab, setActiveTab] = useState<'workers' | 'tasks' | 'messages' | 'context'>('workers');
   const [userMsg, setUserMsg] = useState('');
   const [sending, setSending] = useState(false);
+  const [showReuseForm, setShowReuseForm] = useState(false);
+  const [reuseGoal, setReuseGoal] = useState('');
+  const [reuseFiles, setReuseFiles] = useState<File[]>([]);
+  const [reuseLoading, setReuseLoading] = useState(false);
+  const [reuseError, setReuseError] = useState('');
+  const [reuseWarning, setReuseWarning] = useState<{ reason: string; suggestion: string } | null>(null);
+  const reuseFileRef = useRef<HTMLInputElement>(null);
+  const [clarifyAnswers, setClarifyAnswers] = useState<Record<number, string>>({});
+  const [clarifyFiles, setClarifyFiles] = useState<File[]>([]);
+  const [clarifySubmitting, setClarifySubmitting] = useState(false);
+  const [clarifyError, setClarifyError] = useState('');
+  const clarifyFileRef = useRef<HTMLInputElement>(null);
   const msgEndRef = useRef<HTMLDivElement>(null);
   const prevMsgCountRef = useRef(0);
   const [unseenQuestions, setUnseenQuestions] = useState(0);
@@ -792,6 +839,7 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
   const canStart = ['planned', 'paused', 'idle'].includes(swarm.status);
   const canStop = swarm.status === 'running';
   const canComplete = ['idle', 'paused', 'planned'].includes(swarm.status);
+  const canReuse = !['running', 'planning', 'clarifying'].includes(swarm.status);
 
   // Progress bar segments
   const totalTasks = tasks.length;
@@ -859,6 +907,15 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
               Finalizar
             </button>
           )}
+          {canReuse && (
+            <button
+              onClick={() => { setReuseGoal(swarm.goal); setShowReuseForm(f => !f); setReuseError(''); }}
+              className="btn-secondary flex items-center gap-2 px-4 py-2 text-[13px]"
+              title="Reuse this swarm with a new goal"
+            >
+              <RotateCcw size={14} /> Reuse
+            </button>
+          )}
           <button
             onClick={() => { if (confirm('Delete this swarm and all its data?')) deleteMutation.mutate(); }}
             className="p-2 text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] transition-colors rounded-lg hover:bg-[oklch(0.5_0.18_25/0.08)]"
@@ -867,6 +924,284 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
           </button>
         </div>
       </div>
+
+      {/* Clarification panel — shown while waiting for user answers before planning */}
+      {swarm.status === 'clarifying' && (() => {
+        let questions: string[] = [];
+        try { questions = JSON.parse(swarm.clarification_questions || '[]'); } catch {}
+        const handleSubmit = async () => {
+          setClarifySubmitting(true);
+          setClarifyError('');
+          try {
+            const pairs = questions.map((q, i) => ({ question: q, answer: clarifyAnswers[i] || '' }));
+            const fd = new FormData();
+            fd.append('answers', JSON.stringify(pairs));
+            for (const f of clarifyFiles) fd.append('files', f);
+            const headers: Record<string, string> = {};
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(`/api/swarms/${swarmId}/clarify/answer`, { method: 'POST', body: fd, headers });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            setClarifyAnswers({});
+            setClarifyFiles([]);
+            refetch();
+            qc.invalidateQueries({ queryKey: ['swarms'] });
+          } catch (e: any) {
+            setClarifyError(e.message || 'Failed to submit answers');
+          } finally {
+            setClarifySubmitting(false);
+          }
+        };
+
+        return (
+          <div className="mb-6 border border-[var(--acm-warn)] rounded-xl overflow-hidden">
+            <div className="px-4 py-3 bg-[oklch(0.84_0.16_82/0.06)] border-b border-[var(--acm-warn)] flex items-center gap-2">
+              <HelpCircle size={15} className="text-[var(--acm-warn)] shrink-0" />
+              <p className="text-[13px] font-medium text-[var(--acm-fg)]">
+                Before planning the team, the AI needs a few clarifications
+              </p>
+            </div>
+            <div className="p-4 space-y-4">
+              {clarifySubmitting ? (
+                <div className="flex items-center gap-3 py-6 justify-center">
+                  <Loader2 size={20} className="animate-spin text-[var(--acm-accent)]" />
+                  <span className="text-[13px] text-[var(--acm-fg-3)]">Planning the team with your answers…</span>
+                </div>
+              ) : (
+                <>
+                  {questions.length === 0 ? (
+                    <p className="text-[13px] text-[var(--acm-fg-3)] italic">No questions generated — you can proceed directly to planning.</p>
+                  ) : (
+                    questions.map((q, i) => (
+                      <div key={i}>
+                        <label className="block text-[12px] font-medium text-[var(--acm-fg-2)] mb-1">
+                          {i + 1}. {q}
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={clarifyAnswers[i] || ''}
+                          onChange={e => setClarifyAnswers(prev => ({ ...prev, [i]: e.target.value }))}
+                          className="acm-input w-full resize-none text-[13px]"
+                          placeholder="Your answer…"
+                        />
+                      </div>
+                    ))
+                  )}
+
+                  {/* Extra files */}
+                  <div>
+                    <input
+                      ref={clarifyFileRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={e => setClarifyFiles(prev => [...prev, ...Array.from(e.target.files || [])])}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => clarifyFileRef.current?.click()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] border border-[var(--acm-border)] rounded-lg bg-[var(--acm-elev)] hover:border-[var(--acm-accent)] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors"
+                    >
+                      <Upload size={12} /> Attach additional documents
+                    </button>
+                    {clarifyFiles.length > 0 && (
+                      <ul className="mt-2 space-y-0.5">
+                        {clarifyFiles.map((f, i) => (
+                          <li key={i} className="flex items-center gap-1.5 text-[11px] text-[var(--acm-fg-3)]">
+                            <FileText size={10} className="shrink-0" />
+                            {f.name}
+                            <button onClick={() => setClarifyFiles(p => p.filter((_, j) => j !== i))} className="ml-auto text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]">
+                              <X size={10} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  {clarifyError && <p className="text-[var(--acm-err)] text-[12px]">{clarifyError}</p>}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      onClick={handleSubmit}
+                      className="btn-primary flex items-center gap-2 px-5 py-2 text-[13px]"
+                    >
+                      <Sparkles size={14} /> Submit answers & Plan the team
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Reuse form */}
+      {showReuseForm && (
+        <div className="mb-5 p-4 border border-[var(--acm-border)] rounded-xl bg-[var(--acm-card)]">
+          {reuseLoading ? (
+            <div className="flex items-center gap-3 py-4 justify-center">
+              <Loader2 size={20} className="animate-spin text-[var(--acm-accent)]" />
+              <span className="text-[13px] text-[var(--acm-fg-3)]">
+                {reuseWarning === null ? 'Checking compatibility…' : 'Resetting swarm…'}
+              </span>
+            </div>
+          ) : reuseWarning ? (
+            /* ── Incompatibility warning ── */
+            <>
+              <div className="mb-4 p-3 rounded-lg border border-[var(--acm-warn)] bg-[oklch(0.84_0.16_82/0.06)] flex gap-3">
+                <AlertCircle size={16} className="text-[var(--acm-warn)] shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[13px] font-medium text-[var(--acm-fg)] mb-1">
+                    This goal doesn't match the current team
+                  </p>
+                  <p className="text-[12px] text-[var(--acm-fg-3)]">{reuseWarning.reason}</p>
+                  {reuseWarning.suggestion && (
+                    <p className="text-[12px] text-[var(--acm-fg-3)] mt-1 italic">{reuseWarning.suggestion}</p>
+                  )}
+                </div>
+              </div>
+              {reuseError && <p className="text-[var(--acm-err)] text-[12px] mb-2">{reuseError}</p>}
+              <div className="flex gap-2 justify-end flex-wrap">
+                <button
+                  onClick={() => { setShowReuseForm(false); setReuseFiles([]); setReuseError(''); setReuseWarning(null); }}
+                  className="btn-secondary px-4 py-1.5 text-[13px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    // Force proceed despite warning
+                    setReuseError('');
+                    setReuseLoading(true);
+                    try {
+                      const fd = new FormData();
+                      if (reuseGoal.trim()) fd.append('goal', reuseGoal.trim());
+                      for (const f of reuseFiles) fd.append('files', f);
+                      const headers: Record<string, string> = {};
+                      if (token) headers['Authorization'] = `Bearer ${token}`;
+                      const res = await fetch(`/api/swarms/${swarmId}/reset`, { method: 'POST', body: fd, headers });
+                      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                      await fetchAPI(`/api/swarms/${swarmId}/start`, { method: 'POST', body: JSON.stringify({}) });
+                      setShowReuseForm(false); setReuseFiles([]); setReuseWarning(null);
+                      refetch(); qc.invalidateQueries({ queryKey: ['swarms'] });
+                    } catch (e: any) {
+                      setReuseError(e.message || 'Failed to reset swarm');
+                    } finally { setReuseLoading(false); }
+                  }}
+                  className="btn-secondary px-4 py-1.5 text-[13px] border-[var(--acm-warn)] text-[var(--acm-warn)]"
+                >
+                  Continue anyway
+                </button>
+                <button
+                  onClick={() => { setShowReuseForm(false); setReuseWarning(null); }}
+                  className="btn-primary px-4 py-1.5 text-[13px]"
+                >
+                  <Plus size={13} className="inline mr-1" /> Create new swarm
+                </button>
+              </div>
+            </>
+          ) : (
+            /* ── Normal reuse form ── */
+            <>
+              <p className="text-[12px] text-[var(--acm-fg-3)] mb-3 font-medium">
+                Workers and task definitions are kept — only results are cleared.
+                Optionally update the goal or swap out the context files.
+              </p>
+              <textarea
+                value={reuseGoal}
+                onChange={e => { setReuseGoal(e.target.value); setReuseWarning(null); }}
+                rows={3}
+                className="acm-input w-full resize-none text-[13px] mb-3"
+                placeholder="Goal (leave unchanged to keep the current one)"
+                autoFocus
+              />
+
+              {/* File upload */}
+              <input
+                ref={reuseFileRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={e => setReuseFiles(prev => [...prev, ...Array.from(e.target.files || [])])}
+              />
+              <div className="flex items-center gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => reuseFileRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] border border-[var(--acm-border)] rounded-lg bg-[var(--acm-elev)] hover:border-[var(--acm-accent)] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors"
+                >
+                  <Upload size={12} /> Attach new context files
+                </button>
+                {reuseFiles.length > 0 && (
+                  <span className="text-[11px] text-[var(--acm-fg-4)]">
+                    {reuseFiles.length} file{reuseFiles.length > 1 ? 's' : ''} selected
+                    <button onClick={() => setReuseFiles([])} className="ml-1.5 text-[var(--acm-err)] hover:underline">clear</button>
+                  </span>
+                )}
+              </div>
+              {reuseFiles.length > 0 && (
+                <ul className="mb-3 space-y-0.5">
+                  {reuseFiles.map((f, i) => (
+                    <li key={i} className="flex items-center gap-1.5 text-[11px] text-[var(--acm-fg-3)]">
+                      <FileText size={10} className="shrink-0" />
+                      {f.name}
+                      <button onClick={() => setReuseFiles(p => p.filter((_, j) => j !== i))} className="ml-auto text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]">
+                        <X size={10} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {reuseError && <p className="text-[var(--acm-err)] text-[12px] mb-2">{reuseError}</p>}
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => { setShowReuseForm(false); setReuseFiles([]); setReuseError(''); setReuseWarning(null); }}
+                  className="btn-secondary px-4 py-1.5 text-[13px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setReuseError('');
+                    setReuseLoading(true);
+                    try {
+                      const effectiveGoal = reuseGoal.trim() || swarm.goal;
+                      // Only check compatibility when the goal actually changed
+                      if (reuseGoal.trim() && reuseGoal.trim() !== swarm.goal) {
+                        const check = await fetchAPI(`/api/swarms/${swarmId}/check-reuse`, {
+                          method: 'POST',
+                          body: JSON.stringify({ goal: effectiveGoal }),
+                        });
+                        if (!check.compatible) {
+                          setReuseWarning({ reason: check.reason, suggestion: check.suggestion });
+                          setReuseLoading(false);
+                          return;
+                        }
+                      }
+                      const fd = new FormData();
+                      if (reuseGoal.trim()) fd.append('goal', reuseGoal.trim());
+                      for (const f of reuseFiles) fd.append('files', f);
+                      const headers: Record<string, string> = {};
+                      if (token) headers['Authorization'] = `Bearer ${token}`;
+                      const res = await fetch(`/api/swarms/${swarmId}/reset`, { method: 'POST', body: fd, headers });
+                      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                      await fetchAPI(`/api/swarms/${swarmId}/start`, { method: 'POST', body: JSON.stringify({}) });
+                      setShowReuseForm(false); setReuseFiles([]); setReuseWarning(null);
+                      refetch(); qc.invalidateQueries({ queryKey: ['swarms'] });
+                    } catch (e: any) {
+                      setReuseError(e.message || 'Failed to reset swarm');
+                    } finally { setReuseLoading(false); }
+                  }}
+                  className="btn-primary flex items-center gap-2 px-4 py-1.5 text-[13px]"
+                >
+                  <RotateCcw size={13} /> Re-run
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Progress bar */}
       {totalTasks > 0 && (
@@ -1088,8 +1423,10 @@ function SwarmsInner() {
   const { fetchAPI } = useAPI();
   const qc = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [localSelectedId, setLocalSelectedId] = useState<number | null>(null);
 
-  const selectedId = searchParams.get('id') ? Number(searchParams.get('id')) : null;
+  const urlId = searchParams.get('id') ? Number(searchParams.get('id')) : null;
+  const selectedId = localSelectedId ?? urlId;
 
   const { data: swarms = [], isLoading } = useQuery<Swarm[]>({
     queryKey: ['swarms'],
@@ -1105,11 +1442,17 @@ function SwarmsInner() {
   const handleCreated = (id: number) => {
     setShowCreate(false);
     qc.invalidateQueries({ queryKey: ['swarms'] });
+    setLocalSelectedId(id);
     router.push(`/swarms?id=${id}`);
   };
 
+  const handleBack = () => {
+    setLocalSelectedId(null);
+    router.push('/swarms');
+  };
+
   if (selectedId) {
-    return <SwarmDetail swarmId={selectedId} onBack={() => router.push('/swarms')} />;
+    return <SwarmDetail swarmId={selectedId} onBack={handleBack} />;
   }
 
   return (
@@ -1153,7 +1496,7 @@ function SwarmsInner() {
             <SwarmCard
               key={s.id}
               swarm={s}
-              onSelect={() => router.push(`/swarms?id=${s.id}`)}
+              onSelect={() => { setLocalSelectedId(s.id); router.push(`/swarms?id=${s.id}`); }}
               onDelete={() => deleteMutation.mutate(s.id)}
             />
           ))}

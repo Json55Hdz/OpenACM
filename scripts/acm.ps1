@@ -1,13 +1,13 @@
 param([string]$Command = "help")
 
-$SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $SCRIPT_DIR
+$REPO_ROOT = Split-Path -Parent $PSScriptRoot
+Set-Location $REPO_ROOT
 
 function Show-Help {
     Write-Host ""
     Write-Host "  OpenACM CLI" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Usage: acm <command>" -ForegroundColor White
+    Write-Host "  Usage: openacm <command>" -ForegroundColor White
     Write-Host ""
     Write-Host "  Commands:" -ForegroundColor White
     Write-Host "    install   First-time setup (create venv, install deps, build frontend)" -ForegroundColor Gray
@@ -24,7 +24,6 @@ function Get-OpenACMPid {
         $conn = Get-NetTCPConnection -LocalPort 47821 -State Listen -ErrorAction SilentlyContinue
         if ($conn) { return $conn.OwningProcess }
     } catch {}
-    # Fallback: netstat
     $line = netstat -ano 2>$null | Select-String "47821.*LISTENING"
     if ($line) { return ($line.ToString().Trim() -split '\s+')[-1] }
     return $null
@@ -32,13 +31,13 @@ function Get-OpenACMPid {
 
 switch ($Command.ToLower()) {
     "install" {
-        & cmd /c "`"$SCRIPT_DIR\setup.bat`""
+        powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\setup.ps1"
     }
     "update" {
-        & cmd /c "`"$SCRIPT_DIR\update.bat`""
+        powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\update.ps1"
     }
     "start" {
-        & cmd /c "`"$SCRIPT_DIR\run.bat`""
+        powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\run.ps1"
     }
     "stop" {
         $pid = Get-OpenACMPid
@@ -67,10 +66,10 @@ switch ($Command.ToLower()) {
         } elseif (Test-Path ".venv\Scripts\pip.exe") {
             .venv\Scripts\pip.exe install -e .
         } else {
-            Write-Host "[ERROR] No virtual environment found. Run 'acm install' first." -ForegroundColor Red
+            Write-Host "[ERROR] No virtual environment found. Run 'openacm install' first." -ForegroundColor Red
             exit 1
         }
-        Write-Host "[OK] Repair complete. Run 'acm start' to launch." -ForegroundColor Green
+        Write-Host "[OK] Repair complete. Run 'openacm start' to launch." -ForegroundColor Green
     }
     default {
         if ($Command -ne "help" -and $Command -ne "--help" -and $Command -ne "-h") {

@@ -101,6 +101,34 @@ def register_routes(app: FastAPI) -> None:
         """Public health check — used by frontend to detect restarts."""
         return {"ok": True}
 
+    @app.get("/api/system/pick-folder")
+    async def pick_folder():
+        """Open a native OS folder picker and return the selected path.
+        Runs in a thread so it doesn't block the event loop.
+        Works on Windows (Explorer), macOS (Finder), Linux (GTK via tkinter).
+        Returns {"path": "..."} or {"path": "", "error": "..."} if unavailable."""
+        import asyncio
+
+        def _open_picker() -> str:
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                path = filedialog.askdirectory(title="Select working directory")
+                root.destroy()
+                return path or ""
+            except Exception as exc:
+                raise RuntimeError(str(exc))
+
+        loop = asyncio.get_event_loop()
+        try:
+            path = await loop.run_in_executor(None, _open_picker)
+            return {"path": path}
+        except Exception as exc:
+            return {"path": "", "error": str(exc)}
+
     @app.get("/api/system/info")
     async def system_info():
         """Basic system info flags (encryption status, etc.)."""
