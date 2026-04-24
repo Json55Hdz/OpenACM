@@ -79,6 +79,8 @@ dev = [
 [project.scripts]
 openacm = "openacm.__main__:main"
 openacm-cli = "openacm.core.interactive_repl:main"
+openacm-setup = "openacm.cli.setup_wizard:main"
+openacm-manage = "openacm.cli.manage:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
