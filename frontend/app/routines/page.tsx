@@ -28,8 +28,10 @@ import { useAuthStore } from '@/stores/auth-store';
 
 interface AppInfo {
   app_name: string;
+  display_name?: string;
   process_name: string;
   exe_path?: string;
+  project_name?: string;
 }
 
 interface TriggerData {
@@ -71,6 +73,7 @@ interface WatcherStatus {
   running: boolean;
   current_app: string | null;
   current_title: string | null;
+  current_project: string | null;
   sessions_recorded: number;
   encrypted: boolean;
   key_path: string | null;
@@ -621,6 +624,17 @@ function RoutineCard({
                 }}
               >
                 {app.app_name}
+                {app.project_name && (
+                  <span
+                    className="ml-0.5 px-1 rounded text-[9px]"
+                    style={{
+                      background: `color-mix(in srgb, ${appColorOklch(app.app_name)} 20%, transparent)`,
+                      opacity: 0.85,
+                    }}
+                  >
+                    {app.project_name}
+                  </span>
+                )}
               </span>
             ))}
           </div>
@@ -750,11 +764,12 @@ export default function RoutinesPage() {
   const [routines, setRoutines]         = useState<Routine[]>([]);
   const [stats, setStats]               = useState<ActivityStats>({ apps: [], total_hours: 0, session_count: 0 });
   const [watcher, setWatcher]           = useState<WatcherStatus>({
-    running: false, current_app: null, current_title: null,
+    running: false, current_app: null, current_title: null, current_project: null,
     sessions_recorded: 0, encrypted: false, key_path: null,
   });
   const [loading, setLoading]           = useState(true);
   const [analyzing, setAnalyzing]       = useState(false);
+  const [togglingWatcher, setTogglingWatcher] = useState(false);
   const [toast, setToast]               = useState<{ msg: string; ok: boolean } | null>(null);
   const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
 
@@ -818,6 +833,24 @@ export default function RoutinesPage() {
     fetchAll();
   };
 
+  const handleWatcherToggle = async () => {
+    setTogglingWatcher(true);
+    try {
+      const res = await fetch('/api/watcher/toggle', { method: 'POST', headers });
+      if (res.ok) {
+        const data: { running: boolean } = await res.json();
+        setWatcher(prev => ({ ...prev, running: data.running }));
+        showToast(data.running ? 'Watcher started' : 'Watcher stopped');
+      } else {
+        showToast('Failed to toggle watcher', false);
+      }
+    } catch {
+      showToast('Failed to toggle watcher', false);
+    } finally {
+      setTogglingWatcher(false);
+    }
+  };
+
   const handleAnalyze = async () => {
     setAnalyzing(true);
     try {
@@ -868,16 +901,23 @@ export default function RoutinesPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Watcher pill */}
-            <div
-              className="flex items-center gap-2 px-3 py-1.5 rounded-full"
-              style={{ border: '1px solid var(--acm-border)', background: 'var(--acm-card)' }}
+            {/* Watcher toggle pill */}
+            <button
+              onClick={handleWatcherToggle}
+              disabled={togglingWatcher}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors"
+              style={{
+                border: `1px solid ${watcher.running ? 'color-mix(in srgb, var(--acm-ok) 40%, transparent)' : 'var(--acm-border)'}`,
+                background: watcher.running ? 'color-mix(in srgb, var(--acm-ok) 8%, var(--acm-card))' : 'var(--acm-card)',
+                cursor: togglingWatcher ? 'wait' : 'pointer',
+              }}
+              title={watcher.running ? 'Click to stop watcher' : 'Click to start watcher'}
             >
-              <span className={`dot dot-${watcher.running ? 'accent acm-pulse' : 'idle'}`} />
+              <span className={`dot dot-${watcher.running ? 'ok acm-pulse' : 'idle'}`} />
               <span className="mono text-[11px]" style={{ color: 'var(--acm-fg-3)' }}>
-                Watcher · {watcher.running ? 'running' : 'stopped'}
+                {togglingWatcher ? 'Toggling…' : `Watcher · ${watcher.running ? 'on' : 'off'}`}
               </span>
-            </div>
+            </button>
 
             <button
               onClick={fetchAll}
@@ -928,6 +968,11 @@ export default function RoutinesPage() {
             >
               {watcher.current_app ?? '—'}
             </p>
+            {watcher.current_project && (
+              <p className="mono text-[10px] truncate mt-0.5" style={{ color: 'var(--acm-accent)' }}>
+                {watcher.current_project}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1096,16 +1141,17 @@ export default function RoutinesPage() {
                     { label: 'Status',            value: watcher.running ? 'Active' : 'Inactive', hi: watcher.running },
                     { label: 'Encryption',        value: watcher.encrypted ? 'AES-128 local key' : 'None' },
                     { label: 'Current app',       value: watcher.current_app ?? '—' },
+                    { label: 'Current project',   value: watcher.current_project ?? '—', accent: !!watcher.current_project },
                     { label: 'Window title',      value: watcher.current_title ?? '—', truncate: true },
                     { label: 'Sessions recorded', value: watcher.sessions_recorded.toString() },
                     { label: 'Total hours',       value: `${stats.total_hours.toFixed(1)}h` },
                     { label: 'Total sessions',    value: stats.session_count.toString() },
-                  ].map(({ label, value, hi, truncate }) => (
+                  ].map(({ label, value, hi, accent, truncate }) => (
                     <div key={label} className="flex items-center justify-between gap-4">
                       <span className="text-[11px] shrink-0" style={{ color: 'var(--acm-fg-4)' }}>{label}</span>
                       <span
                         className={`text-[12px] font-medium text-right mono ${truncate ? 'truncate max-w-[55%]' : ''}`}
-                        style={{ color: hi ? 'var(--acm-ok)' : 'var(--acm-fg-2)' }}
+                        style={{ color: hi ? 'var(--acm-ok)' : accent ? 'var(--acm-accent)' : 'var(--acm-fg-2)' }}
                       >
                         {value}
                       </span>

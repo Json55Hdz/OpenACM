@@ -46,6 +46,7 @@ class Database:
             "app_name":     self._d(row.get("app_name", "")),
             "window_title": self._d(row.get("window_title", "")),
             "process_name": self._d(row.get("process_name", "")),
+            "project_name": self._d(row.get("project_name", "")) if row.get("project_name") else "",
         }
 
     def _decrypt_routine(self, row: dict) -> dict:
@@ -166,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 15
+    _SCHEMA_VERSION = 16
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -671,6 +672,15 @@ class Database:
                     log.info(f"Migration 15: added {label} to swarms")
                 except Exception:
                     pass  # column already exists
+
+        if current < 16:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE app_activities ADD COLUMN project_name TEXT NOT NULL DEFAULT ''"
+                )
+                log.info("Migration 16: added project_name to app_activities")
+            except Exception:
+                pass  # column already exists
 
         # Save new version
         await self._db.execute(
@@ -1412,6 +1422,7 @@ class Database:
         day_of_week: int,
         hour_of_day: int,
         exe_path: str = "",
+        project_name: str = "",
     ) -> int:
         """Record a single app focus session (sensitive fields encrypted if configured)."""
         if not self._db:
@@ -1419,8 +1430,8 @@ class Database:
         cursor = await self._db.execute(
             "INSERT INTO app_activities "
             "(app_name, window_title, process_name, focus_seconds, "
-            " session_start, session_end, day_of_week, hour_of_day, exe_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " session_start, session_end, day_of_week, hour_of_day, exe_path, project_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._e(app_name),
                 self._e(window_title),
@@ -1431,6 +1442,7 @@ class Database:
                 day_of_week,
                 hour_of_day,
                 exe_path,
+                self._e(project_name) if project_name else "",
             ),
         )
         await self._db.commit()
@@ -1575,8 +1587,8 @@ class Database:
 
     async def get_routine_by_apps(self, apps: list[str]) -> dict[str, Any] | None:
         """
-        Find an existing routine whose app list matches (order-independent).
-        We compare JSON-encoded sorted app name lists.
+        Find an existing routine whose composite app keys match (order-independent).
+        Composite key = "AppName [ProjectName]" when project is set, else "AppName".
         """
         if not self._db:
             return None
@@ -1586,11 +1598,15 @@ class Database:
         for r in all_routines:
             try:
                 stored_apps = _json.loads(r.get("apps", "[]"))
-                stored_names = sorted(
-                    a["app_name"] if isinstance(a, dict) else a
+                stored_keys = sorted(
+                    (
+                        f"{a['app_name']} [{a['project_name']}]"
+                        if isinstance(a, dict) and a.get("project_name")
+                        else (a["app_name"] if isinstance(a, dict) else str(a))
+                    )
                     for a in stored_apps
                 )
-                if stored_names == target:
+                if stored_keys == target:
                     return r
             except Exception:
                 pass

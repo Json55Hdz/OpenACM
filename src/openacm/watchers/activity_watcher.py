@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Optional
 import psutil
 import structlog
 
+from openacm.watchers.project_extractor import extract_project
+
 if TYPE_CHECKING:
     from openacm.storage.database import Database
 
@@ -43,6 +45,7 @@ class WindowInfo:
     window_title: str
     process_name: str
     exe_path: str = field(default="")
+    project_name: str = field(default="")
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, WindowInfo):
@@ -64,6 +67,7 @@ class ActivityWatcher:
         # Public status fields
         self.current_app: str = "Unknown"
         self.current_title: str = ""
+        self.current_project: str = ""
         self.is_running: bool = False
         self.sessions_recorded: int = 0
 
@@ -96,10 +100,22 @@ class ActivityWatcher:
         while self._running:
             try:
                 info = await asyncio.to_thread(self._get_active_window)
-                if info:
+                now = datetime.now(timezone.utc)
+
+                if info is None:
+                    # Ignored app (lock screen, system UI) — flush current session
+                    # so its time is not incorrectly attributed to the previous app.
+                    if self._current and self._session_start:
+                        await self._flush_session(now)
+                        self._current = None
+                        self._session_start = None
+                        self.current_app = ""
+                        self.current_title = ""
+                        self.current_project = ""
+                else:
                     self.current_app = info.app_name
                     self.current_title = info.window_title
-                    now = datetime.now(timezone.utc)
+                    self.current_project = info.project_name
 
                     if self._current is None:
                         self._current = info
@@ -125,7 +141,7 @@ class ActivityWatcher:
         try:
             await self._db.log_app_activity(
                 app_name=self._current.app_name,
-                window_title=self._current.window_title[:255],
+                window_title=self._current.window_title,
                 process_name=self._current.process_name,
                 exe_path=self._current.exe_path,
                 focus_seconds=focus_seconds,
@@ -133,6 +149,7 @@ class ActivityWatcher:
                 session_end=end.isoformat(),
                 day_of_week=self._session_start.weekday(),
                 hour_of_day=self._session_start.hour,
+                project_name=self._current.project_name,
             )
             self.sessions_recorded += 1
         except Exception as exc:
@@ -185,7 +202,9 @@ class ActivityWatcher:
             app_name = "Unknown"
             process_name = "unknown"
 
-        return WindowInfo(app_name=app_name, window_title=window_title, process_name=process_name, exe_path=exe_path)
+        project_name = extract_project(process_name, window_title)
+        return WindowInfo(app_name=app_name, window_title=window_title,
+                          process_name=process_name, exe_path=exe_path, project_name=project_name)
 
     def _get_macos(self) -> Optional[WindowInfo]:
         import subprocess
@@ -210,7 +229,9 @@ class ActivityWatcher:
         except Exception:
             window_title = ""
 
-        return WindowInfo(app_name=app_name, window_title=window_title, process_name=app_name.lower())
+        project_name = extract_project(app_name, window_title)
+        return WindowInfo(app_name=app_name, window_title=window_title,
+                          process_name=app_name.lower(), project_name=project_name)
 
     def _get_linux(self) -> Optional[WindowInfo]:
         import subprocess
@@ -235,7 +256,9 @@ class ActivityWatcher:
                 if process_name.lower() in _IGNORE_APPS:
                     return None
                 app_name = process_name.replace("-", " ").replace("_", " ").title()
-                return WindowInfo(app_name=app_name, window_title=window_title, process_name=process_name)
+                project_name = extract_project(process_name, window_title)
+                return WindowInfo(app_name=app_name, window_title=window_title,
+                                  process_name=process_name, project_name=project_name)
         except FileNotFoundError:
             pass  # xdotool not installed
         except Exception:

@@ -46,7 +46,7 @@ export const translations = {
     debug: 'Traces',
     config: 'Configuration',
     tamagotchi: 'Tamagotchi',
-    routines: 'Mis Rutinas',
+    routines: 'Routines',
     cron: 'Cron Scheduler',
     swarms: 'Swarms',
     content: 'Auto Content',

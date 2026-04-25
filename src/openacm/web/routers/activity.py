@@ -187,8 +187,22 @@ def register_routes(app: FastAPI) -> None:
             "running": _state.activity_watcher.is_running,
             "current_app": _state.activity_watcher.current_app,
             "current_title": _state.activity_watcher.current_title,
+            "current_project": _state.activity_watcher.current_project,
             "sessions_recorded": _state.activity_watcher.sessions_recorded,
             "encrypted": encrypted,
             "key_path": key_path,
         }
+
+    @app.post("/api/watcher/toggle")
+    async def toggle_watcher():
+        """Start or stop the activity watcher."""
+        if _state.activity_watcher is None:
+            raise HTTPException(status_code=503, detail="Activity watcher not available")
+        if _state.activity_watcher.is_running:
+            await _state.activity_watcher.stop()
+            log.info("ActivityWatcher stopped via API")
+        else:
+            await _state.activity_watcher.start()
+            log.info("ActivityWatcher started via API")
+        return {"running": _state.activity_watcher.is_running}
 

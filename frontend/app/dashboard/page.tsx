@@ -559,7 +559,7 @@ export default function DashboardPage() {
           <div className="acm-card lg:col-span-2 p-6">
             <SectionHeader
               title="14-Day Activity History"
-              description="Blue bars = number of LLM API calls per day. Purple line = total tokens consumed (input + output, in thousands)."
+              description="Amber bars = tokens consumed per day (input + output). Green line = number of LLM API calls."
             />
             <ActivityChart data={history || []} loading={historyLoading} />
             {!historyLoading && history && history.length > 0 && (

@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useProviderStatus } from '@/hooks/use-setup';
 import { translations } from '@/lib/translations';
 import { CheckCircle, Circle, ExternalLink } from 'lucide-react';
@@ -21,16 +20,30 @@ export function TelegramSetup({ value, onChange }: TelegramSetupProps) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-white">{t.title}</h3>
-          <p className="text-sm text-slate-400 mt-1">{t.subtitle}</p>
+          <h3 className="text-lg font-semibold" style={{ color: 'var(--acm-fg)' }}>{t.title}</h3>
+          <p className="text-sm mt-1" style={{ color: 'var(--acm-fg-3)' }}>{t.subtitle}</p>
         </div>
         {isConfigured ? (
-          <span className="flex items-center gap-1.5 text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+            style={{
+              color: 'var(--acm-ok)',
+              background: 'oklch(0.75 0.09 160 / 0.1)',
+              border: '1px solid oklch(0.75 0.09 160 / 0.25)',
+            }}
+          >
             <CheckCircle size={12} />
             {ps.configured}
           </span>
         ) : (
-          <span className="flex items-center gap-1.5 text-xs font-medium text-slate-500 bg-slate-700/50 px-2.5 py-1 rounded-full">
+          <span
+            className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full"
+            style={{
+              color: 'var(--acm-fg-4)',
+              background: 'var(--acm-elev)',
+              border: '1px solid var(--acm-border)',
+            }}
+          >
             <Circle size={12} />
             {ps.notConfigured}
           </span>
@@ -38,7 +51,7 @@ export function TelegramSetup({ value, onChange }: TelegramSetupProps) {
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-300 mb-1.5">
+        <label className="block text-sm font-medium mb-1.5" style={{ color: 'var(--acm-fg-2)' }}>
           {t.tokenLabel}
         </label>
         <input
@@ -46,7 +59,7 @@ export function TelegramSetup({ value, onChange }: TelegramSetupProps) {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={t.tokenPlaceholder}
-          className="w-full px-4 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="acm-input mono"
         />
       </div>
 
@@ -54,7 +67,10 @@ export function TelegramSetup({ value, onChange }: TelegramSetupProps) {
         href="https://t.me/BotFather"
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        className="inline-flex items-center gap-1.5 text-xs transition-colors"
+        style={{ color: 'var(--acm-accent)' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--acm-accent-hi)'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--acm-accent)'; }}
       >
         <ExternalLink size={12} />
         {t.howToGet}

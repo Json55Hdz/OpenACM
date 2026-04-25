@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 # Minimum times a pattern must repeat to become a routine suggestion
-PATTERN_THRESHOLD = 3
+PATTERN_THRESHOLD = 5
 # Minimum focus time (seconds) to consider an app "significant" in a session
 MIN_FOCUS_SECONDS = 30
 # Max gap (seconds) between sessions to be in the same "work session"
@@ -155,16 +155,26 @@ class PatternAnalyzer:
             hour = 12
             dow = 0
 
-        # Aggregate focus time per app in this session
+        # Aggregate focus time per app in this session.
+        # When a project is detected, use "AppName [Project]" as composite key so
+        # "VS Code [OpenACM]" and "VS Code [MyGame]" are treated as separate contexts.
         app_focus: dict[str, float] = defaultdict(float)
         app_process: dict[str, str] = {}
         app_exe: dict[str, str] = {}
+        app_project: dict[str, str] = {}    # composite_key → project_name
+        app_real_name: dict[str, str] = {}  # composite_key → original app_name
+
         for act in acts:
             name = act.get("app_name", "Unknown")
-            app_focus[name] += act.get("focus_seconds", 0)
-            app_process[name] = act.get("process_name", name.lower())
+            project = act.get("project_name", "")
+            key = f"{name} [{project}]" if project else name
+            app_focus[key] += act.get("focus_seconds", 0)
+            app_process[key] = act.get("process_name", name.lower())
+            app_real_name[key] = name
+            if project:
+                app_project[key] = project
             if act.get("exe_path"):
-                app_exe[name] = act["exe_path"]
+                app_exe[key] = act["exe_path"]
 
         return {
             "start": start_str,
@@ -173,6 +183,8 @@ class PatternAnalyzer:
             "app_focus": dict(app_focus),
             "app_process": app_process,
             "app_exe": app_exe,
+            "app_project": app_project,
+            "app_real_name": app_real_name,
         }
 
     # ─── Pattern detection ─────────────────────────────────────
@@ -183,7 +195,7 @@ class PatternAnalyzer:
         """
         Find recurring app co-occurrence patterns across work sessions.
         """
-        # For each session, determine the "significant" app set
+        # For each session, determine the "significant" app set (composite keys)
         session_sets: list[dict[str, Any]] = []
         for sess in sessions:
             sig_apps = {
@@ -196,6 +208,9 @@ class PatternAnalyzer:
                     {
                         "apps": sig_apps,
                         "app_process": sess["app_process"],
+                        "app_exe": sess.get("app_exe", {}),
+                        "app_project": sess.get("app_project", {}),
+                        "app_real_name": sess.get("app_real_name", {}),
                         "hour": sess["hour"],
                         "day_of_week": sess["day_of_week"],
                         "start": sess["start"],
@@ -205,25 +220,31 @@ class PatternAnalyzer:
         if not session_sets:
             return []
 
-        # Count co-occurrences for every pair of apps
+        # Count co-occurrences for every pair of apps (using composite keys)
         pair_data: dict[tuple[str, str], dict] = defaultdict(
-            lambda: {"count": 0, "hours": [], "days": [], "all_apps": Counter()}
+            lambda: {"count": 0, "hours": [], "days": [], "all_apps": Counter(),
+                     "app_process": {}, "app_exe": {}, "app_project": {}, "app_real_name": {}}
         )
 
         for sess in session_sets:
             apps = sorted(sess["apps"])
             for i, a in enumerate(apps):
-                for b in apps[i + 1 :]:
+                for b in apps[i + 1:]:
                     key = (a, b)
                     pair_data[key]["count"] += 1
                     pair_data[key]["hours"].append(sess["hour"])
                     pair_data[key]["days"].append(sess["day_of_week"])
+                    pair_data[key]["app_process"].update(sess["app_process"])
+                    pair_data[key]["app_exe"].update(sess.get("app_exe", {}))
+                    pair_data[key]["app_project"].update(sess.get("app_project", {}))
+                    pair_data[key]["app_real_name"].update(sess.get("app_real_name", {}))
                     for app in sess["apps"]:
                         pair_data[key]["all_apps"][app] += 1
 
         # Also collect full-session sets (up to 5 apps) that repeat
         set_data: dict[frozenset, dict] = defaultdict(
-            lambda: {"count": 0, "hours": [], "days": [], "app_process": {}, "app_exe": {}}
+            lambda: {"count": 0, "hours": [], "days": [],
+                     "app_process": {}, "app_exe": {}, "app_project": {}, "app_real_name": {}}
         )
         for sess in session_sets:
             key = frozenset(sess["apps"])
@@ -232,14 +253,14 @@ class PatternAnalyzer:
             set_data[key]["days"].append(sess["day_of_week"])
             set_data[key]["app_process"].update(sess["app_process"])
             set_data[key]["app_exe"].update(sess.get("app_exe", {}))
+            set_data[key]["app_project"].update(sess.get("app_project", {}))
+            set_data[key]["app_real_name"].update(sess.get("app_real_name", {}))
 
         patterns: list[dict[str, Any]] = []
         seen_keys: set[frozenset] = set()
 
         # Prefer full-set patterns first (more specific)
-        for app_set, data in sorted(
-            set_data.items(), key=lambda x: -x[1]["count"]
-        ):
+        for app_set, data in sorted(set_data.items(), key=lambda x: -x[1]["count"]):
             if data["count"] < PATTERN_THRESHOLD:
                 continue
             key = frozenset(app_set)
@@ -247,12 +268,13 @@ class PatternAnalyzer:
                 continue
             seen_keys.add(key)
 
-            avg_hour = sum(data["hours"]) / len(data["hours"])
             patterns.append(
                 self._build_pattern(
                     apps=sorted(list(app_set)),
                     app_process=data["app_process"],
                     app_exe=data.get("app_exe", {}),
+                    app_project=data.get("app_project", {}),
+                    app_real_name=data.get("app_real_name", {}),
                     count=data["count"],
                     hours=data["hours"],
                     days=data["days"],
@@ -268,7 +290,6 @@ class PatternAnalyzer:
                 continue
             seen_keys.add(key)
 
-            # Compute the most common companion apps
             common_together = [
                 app
                 for app, cnt in data["all_apps"].most_common(5)
@@ -280,8 +301,10 @@ class PatternAnalyzer:
             patterns.append(
                 self._build_pattern(
                     apps=apps,
-                    app_process={},
-                    app_exe={},
+                    app_process=data["app_process"],
+                    app_exe=data["app_exe"],
+                    app_project=data.get("app_project", {}),
+                    app_real_name=data.get("app_real_name", {}),
                     count=data["count"],
                     hours=data["hours"],
                     days=data["days"],
@@ -298,26 +321,39 @@ class PatternAnalyzer:
         hours: list[int],
         days: list[int],
         app_exe: dict[str, str] | None = None,
+        app_project: dict[str, str] | None = None,
+        app_real_name: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         avg_hour = sum(hours) / len(hours) if hours else 12
         is_time = self._is_time_consistent(hours)
         common_days = self._common_days(days)
         confidence = min(0.97, 0.30 + count * 0.07)
         app_exe = app_exe or {}
+        app_project = app_project or {}
+        app_real_name = app_real_name or {}
 
         apps_payload = [
             {
-                "app_name": app,
-                "process_name": app_process.get(app, app.lower().replace(" ", "_")),
+                "app_name": app_real_name.get(app, app),
+                "display_name": app,
+                "process_name": app_process.get(app, app_real_name.get(app, app).lower().replace(" ", "_")),
                 "exe_path": app_exe.get(app, ""),
+                "project_name": app_project.get(app, ""),
             }
             for app in apps
         ]
 
+        # Build display names for the routine title (include project when known)
+        display_apps = []
+        for app in apps:
+            real = app_real_name.get(app, app)
+            proj = app_project.get(app, "")
+            display_apps.append(f"{real} ({proj})" if proj else real)
+
         return {
-            "name": self._suggest_name(apps, avg_hour),
+            "name": self._suggest_name(display_apps, avg_hour),
             "description": "",  # filled by _enrich_with_llm if available
-            "apps": apps,
+            "apps": apps,       # composite keys like "VS Code [OpenACM]"
             "apps_payload": apps_payload,
             "trigger_type": "time_based" if is_time else "manual",
             "trigger_data": {
@@ -357,20 +393,20 @@ class PatternAnalyzer:
 
     @staticmethod
     def _suggest_name(apps: list[str], avg_hour: float) -> str:
-        if avg_hour < 7:
-            slot = "Madrugada"
-        elif avg_hour < 10:
-            slot = "Inicio de mañana"
-        elif avg_hour < 13:
-            slot = "Mañana de trabajo"
-        elif avg_hour < 15:
-            slot = "Hora del almuerzo"
+        if avg_hour < 5:
+            slot = "Late night"
+        elif avg_hour < 9:
+            slot = "Morning"
+        elif avg_hour < 12:
+            slot = "Late morning"
+        elif avg_hour < 14:
+            slot = "Midday"
         elif avg_hour < 18:
-            slot = "Tarde de trabajo"
+            slot = "Afternoon"
         elif avg_hour < 21:
-            slot = "Noche"
+            slot = "Evening"
         else:
-            slot = "Noche tardía"
+            slot = "Night"
 
         if len(apps) == 0:
             return slot
@@ -379,9 +415,26 @@ class PatternAnalyzer:
         elif len(apps) == 2:
             return f"{slot} — {apps[0]} + {apps[1]}"
         else:
-            return f"{slot} — {apps[0]} + {len(apps) - 1} más"
+            return f"{slot} — {apps[0]} + {len(apps) - 1} more"
 
     # ─── DB persistence ───────────────────────────────────────
+
+    @staticmethod
+    def _routine_app_keys(apps_json: str) -> frozenset:
+        """Parse stored apps JSON → frozenset of composite keys (AppName [Project] or AppName)."""
+        try:
+            stored = json.loads(apps_json)
+            result = set()
+            for a in stored:
+                if isinstance(a, dict):
+                    name = a.get("app_name", "")
+                    proj = a.get("project_name", "")
+                    result.add(f"{name} [{proj}]" if proj else name)
+                else:
+                    result.add(str(a))
+            return frozenset(result)
+        except Exception:
+            return frozenset()
 
     @staticmethod
     def _jaccard(a: frozenset, b: frozenset) -> float:
@@ -408,22 +461,19 @@ class PatternAnalyzer:
         merged_count = 0
 
         for routine in all_routines:
-            try:
-                stored_apps = json.loads(routine.get("apps", "[]"))
-                app_names: frozenset = frozenset(
-                    a["app_name"] if isinstance(a, dict) else a
-                    for a in stored_apps
-                )
-            except Exception:
-                kept.append((routine, frozenset()))
-                continue
+            app_names = self._routine_app_keys(routine.get("apps", "[]"))
 
             if not app_names:
                 kept.append((routine, frozenset()))
                 continue
 
             similar_entry = next(
-                ((k, k_apps) for k, k_apps in kept if self._jaccard(app_names, k_apps) >= 0.70),
+                (
+                    (k, k_apps) for k, k_apps in kept
+                    if self._jaccard(app_names, k_apps) >= 0.60
+                    or app_names.issubset(k_apps)
+                    or k_apps.issubset(app_names)
+                ),
                 None,
             )
 
@@ -446,34 +496,46 @@ class PatternAnalyzer:
 
         return merged_count
 
+    async def _merge_routine(self, existing: dict[str, Any], pattern: dict[str, Any]) -> None:
+        """Update an existing routine: bump counts and fill in missing exe_paths."""
+        # Index new payload by composite key for precise matching
+        new_by_key = {
+            f"{a['app_name']} [{a['project_name']}]" if a.get("project_name") else a["app_name"]: a.get("exe_path", "")
+            for a in pattern["apps_payload"]
+        }
+        try:
+            stored_apps = json.loads(existing.get("apps", "[]"))
+            merged_apps = []
+            for a in stored_apps:
+                if isinstance(a, dict):
+                    composite = f"{a['app_name']} [{a.get('project_name', '')}]" if a.get("project_name") else a["app_name"]
+                    merged_apps.append({**a, "exe_path": a.get("exe_path") or new_by_key.get(composite, "")})
+                else:
+                    merged_apps.append(a)
+        except Exception:
+            merged_apps = None
+
+        kwargs: dict[str, Any] = {
+            "occurrence_count": max(existing.get("occurrence_count", 0), pattern["occurrence_count"]),
+            "confidence": max(existing.get("confidence", 0.0), pattern["confidence"]),
+        }
+        if merged_apps is not None:
+            kwargs["apps"] = json.dumps(merged_apps)
+        await self._db.update_routine(existing["id"], **kwargs)
+
     async def _upsert_routine(self, pattern: dict[str, Any]) -> dict[str, Any] | None:
         """Save pattern as routine; skip if same or similar (>=70% Jaccard) app set already exists."""
         existing = await self._db.get_routine_by_apps(pattern["apps"])
         if existing:
-            # Just bump the occurrence count
-            await self._db.update_routine(
-                existing["id"],
-                occurrence_count=max(existing.get("occurrence_count", 0), pattern["occurrence_count"]),
-                confidence=max(existing.get("confidence", 0.0), pattern["confidence"]),
-            )
+            await self._merge_routine(existing, pattern)
             return None
 
         # Also block near-duplicates via Jaccard similarity
         new_app_set: frozenset = frozenset(pattern["apps"])
         for r in await self._db.get_all_routines():
-            try:
-                stored = json.loads(r.get("apps", "[]"))
-                r_apps: frozenset = frozenset(
-                    a["app_name"] if isinstance(a, dict) else a for a in stored
-                )
-            except Exception:
-                continue
+            r_apps = self._routine_app_keys(r.get("apps", "[]"))
             if self._jaccard(new_app_set, r_apps) >= 0.70:
-                await self._db.update_routine(
-                    r["id"],
-                    occurrence_count=max(r.get("occurrence_count", 0), pattern["occurrence_count"]),
-                    confidence=max(r.get("confidence", 0.0), pattern["confidence"]),
-                )
+                await self._merge_routine(r, pattern)
                 return None
 
         routine_id = await self._db.create_routine(
