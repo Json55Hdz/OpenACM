@@ -267,7 +267,6 @@ class OpenACM:
             browser_agent,
             python_kernel,
             skill_creator,
-            blender_tool,
             add_resurrection_path,
             onboarding_tools,
         )
@@ -282,7 +281,6 @@ class OpenACM:
         self.tool_registry.register_module(browser_agent)
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
-        self.tool_registry.register_module(blender_tool)
         self.tool_registry.register_module(add_resurrection_path)
         self.tool_registry.register_module(onboarding_tools)
 
@@ -297,6 +295,9 @@ class OpenACM:
 
         from openacm.tools import code_editor
         self.tool_registry.register_module(code_editor)
+
+        from openacm.tools import platform_tools
+        self.tool_registry.register_module(platform_tools)
 
         # Content tools are now registered by the ContentAutomationPlugin via plugin_manager
         # (see _init_plugins). Keep nothing here for content.
@@ -492,6 +493,15 @@ class OpenACM:
                     _st._swarm_manager = self._swarm_manager
                 except Exception:
                     pass
+
+            # Give platform tools access to MCP manager and config
+            try:
+                from openacm.tools import platform_tools as _pt
+                if self._mcp_manager:
+                    _pt._mcp_manager = self._mcp_manager
+                _pt._config = self.config
+            except Exception:
+                pass
 
             self._web_server = await create_web_server(
                 config=self.config,

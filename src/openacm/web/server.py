@@ -259,6 +259,7 @@ async def create_web_server(
         EVENT_ROUTER_LEARNED,
         EVENT_TOOL_VALIDATION,
         EVENT_TOOL_CONFIRMATION,
+        EVENT_SKILL_ACTIVE,
     )
 
     for evt in [
@@ -272,6 +273,7 @@ async def create_web_server(
         EVENT_ROUTER_LEARNED,
         EVENT_TOOL_VALIDATION,
         EVENT_TOOL_CONFIRMATION,
+        EVENT_SKILL_ACTIVE,
         "memory.recall",
         "memory.compacted",
         # Swarm events — emitted by SwarmManager for every state change

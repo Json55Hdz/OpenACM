@@ -194,14 +194,6 @@ class ToolRegistry:
             "captura", "pantalla", "panta", "foto", "imagen", "enviar archivo",
             "toma un", "toma una", "hazme un", "dame una captura", "graba",
         ],
-        "blender": [
-            "blender", "3d", "model", "modelar", "modela", "mesh", "malla",
-            "bpy", "glb", "gltf", "stl", "obj", "blend",
-            "chess", "ajedrez", "pieza", "esfera", "cubo", "cilindro",
-            "render", "renderizar", "three-dimensional", "sculpt", "esculp",
-            "animate", "animacion", "rig", "skeleton", "esqueleto",
-            "three dimensional", "tridimensional",
-        ],
         "google": [
             "gmail", "email", "correo", "calendar", "calendario",
             "event", "evento", "drive", "youtube", "google",

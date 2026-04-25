@@ -251,6 +251,8 @@ class CronScheduler:
                     output = await self._custom_command(job.action_payload)
                 case "run_swarm_template":
                     output = await self._run_swarm_template(job.action_payload)
+                case "send_message":
+                    output = await self._send_message(job.action_payload)
                 case _:
                     raise ValueError(f"Unknown action_type: {job.action_type!r}")
         except Exception as exc:
@@ -408,6 +410,20 @@ class CronScheduler:
         except asyncio.TimeoutError:
             proc.kill()
             raise RuntimeError(f"Command timed out after {timeout}s")
+
+    async def _send_message(self, payload: dict) -> str:
+        message = payload.get("message", "")
+        if not message:
+            raise ValueError("message is required for send_message action")
+        if not self._brain:
+            raise RuntimeError("Brain not available for send_message action")
+        response = await self._brain.process_message(
+            content=message,
+            user_id="cron",
+            channel_id="cron",
+            channel_type="cron",
+        )
+        return truncate(str(response), TRUNCATE_CRON_OUTPUT_CHARS)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

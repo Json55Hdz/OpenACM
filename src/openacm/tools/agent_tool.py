@@ -2,6 +2,7 @@
 Agent Tool — create and manage autonomous agents from the chat.
 """
 
+import os
 import secrets
 from openacm.tools.base import tool
 
@@ -69,15 +70,86 @@ async def create_agent(
     import os
     port = os.environ.get("OPENACM_PORT", "47821")
     webhook_url = f"http://localhost:{port}/api/agents/{agent_id}/chat"
+    ui_url = f"http://localhost:{port}/agents"
 
     return (
-        f"✅ Agent **{name}** created (ID: {agent_id})\n\n"
+        f"✅ Agent **{name}** creado (ID: {agent_id})\n\n"
         f"**Webhook URL:**\n`{webhook_url}`\n\n"
         f"**Secret (X-Agent-Secret header):**\n`{webhook_secret}`\n\n"
         f"**Tools:** {allowed_tools}\n\n"
-        f"Call the webhook with:\n"
+        f"Llama al webhook con:\n"
         f"```\nPOST {webhook_url}\n"
         f"X-Agent-Secret: {webhook_secret}\n"
         f'Body: {{"message": "hello", "user_id": "user123"}}\n```\n\n'
-        f"You can also manage it at: http://localhost:{port}/agents"
+        f"[Ver Agentes →]({ui_url})"
+    )
+
+
+def _get_db(brain):
+    if brain and hasattr(brain, "memory") and brain.memory:
+        return brain.memory.database
+    return None
+
+
+@tool(
+    name="list_agents",
+    description=(
+        "List all autonomous agents configured in OpenACM. "
+        "Shows each agent's name, description, allowed tools, and webhook URL."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+    risk_level="low",
+    category="general",
+)
+async def list_agents(_brain=None, **kwargs) -> str:
+    db = _get_db(_brain)
+    if not db:
+        return "Error: database not available."
+    agents = await db.get_all_agents()
+    port = os.environ.get("OPENACM_PORT", "47821")
+    if not agents:
+        return f"No hay agentes creados aún.\n\n[Ir a Agentes →](http://localhost:{port}/agents)"
+    lines = [f"**Agentes ({len(agents)}):**\n"]
+    for a in agents:
+        lines.append(
+            f"- **[{a['id']}] {a['name']}** — {a.get('description', '')}\n"
+            f"  Tools: {a.get('allowed_tools', 'none')} | "
+            f"[Ver →](http://localhost:{port}/agents)"
+        )
+    lines.append(f"\n[Gestionar Agentes →](http://localhost:{port}/agents)")
+    return "\n".join(lines)
+
+
+@tool(
+    name="delete_agent",
+    description="Delete an autonomous agent by its ID. This cannot be undone.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "agent_id": {
+                "type": "integer",
+                "description": "The numeric ID of the agent to delete.",
+            },
+        },
+        "required": ["agent_id"],
+    },
+    risk_level="high",
+    category="general",
+)
+async def delete_agent(agent_id: int, _brain=None, **kwargs) -> str:
+    db = _get_db(_brain)
+    if not db:
+        return "Error: database not available."
+    agent = await db.get_agent(agent_id)
+    if not agent:
+        return f"Agente {agent_id} no encontrado."
+    await db.delete_agent(agent_id)
+    port = os.environ.get("OPENACM_PORT", "47821")
+    return (
+        f"🗑️ Agente **{agent['name']}** (ID: {agent_id}) eliminado.\n\n"
+        f"[Ver Agentes →](http://localhost:{port}/agents)"
     )

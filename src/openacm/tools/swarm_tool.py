@@ -94,23 +94,26 @@ async def create_swarm(
         workers = await _swarm_manager.db.get_swarm_workers(swarm_id)
         tasks = await _swarm_manager.db.get_swarm_tasks(swarm_id)
 
+        import os
+        port = os.environ.get("OPENACM_PORT", "47821")
+        url = f"http://localhost:{port}/swarms/{swarm_id}"
+
         summary = (
-            f"✅ Swarm **{effective_name}** created (ID: {swarm_id})\n\n"
-            f"**Team ({len(workers)} workers):**\n"
+            f"✅ Swarm **{effective_name}** creado (ID: {swarm_id})\n\n"
+            f"**Equipo ({len(workers)} workers):**\n"
             + "\n".join(
                 f"- **{w['name']}** ({w['role']}): {w.get('description', '')}"
                 for w in workers
             )
-            + f"\n\n**Tasks ({len(tasks)}):**\n"
+            + f"\n\n**Tareas ({len(tasks)}):**\n"
             + "\n".join(f"- {t['title']}" for t in tasks)
-            + "\n\nVe a la pestaña **Swarms** para verlo y gestionarlo."
         )
 
         if auto_start:
             await _swarm_manager.start_swarm(swarm_id)
-            summary += "\n\n🚀 Ejecución iniciada — workers corriendo en paralelo."
+            summary += f"\n\n🚀 Ejecución iniciada — workers corriendo en paralelo.\n\n[Ver Swarm →]({url})"
         else:
-            summary += "\n\nEl swarm está listo. Pulsa **Start** en la pestaña Swarms o dime que lo inicie."
+            summary += f"\n\nSwarm listo. Dime que lo inicie o ve directamente aquí:\n\n[Ver Swarm →]({url})"
 
         return summary
 
@@ -145,9 +148,76 @@ async def start_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
         if swarm["status"] not in ("planned", "paused"):
             return f"El swarm {swarm_id} está en estado '{swarm['status']}' — solo se puede iniciar si está en 'planned' o 'paused'."
         await _swarm_manager.start_swarm(swarm_id)
-        return f"🚀 Swarm '{swarm['name']}' (ID: {swarm_id}) iniciado."
+        import os
+        port = os.environ.get("OPENACM_PORT", "47821")
+        return f"🚀 Swarm '{swarm['name']}' (ID: {swarm_id}) iniciado.\n\n[Ver Swarm →](http://localhost:{port}/swarms/{swarm_id})"
     except Exception as e:
         return f"Error al iniciar el swarm: {e}"
+
+
+@tool(
+    name="stop_swarm",
+    description="Stop a running swarm. Workers will finish their current step and halt.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "swarm_id": {
+                "type": "integer",
+                "description": "The numeric ID of the swarm to stop.",
+            },
+        },
+        "required": ["swarm_id"],
+    },
+    risk_level="medium",
+    category="swarm",
+)
+async def stop_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
+    if _swarm_manager is None:
+        return "Swarm manager is not available."
+    try:
+        swarm = await _swarm_manager.db.get_swarm(swarm_id)
+        if not swarm:
+            return f"Swarm {swarm_id} not found."
+        if swarm["status"] != "running":
+            return f"El swarm {swarm_id} no está corriendo (estado: '{swarm['status']}')."
+        await _swarm_manager.stop_swarm(swarm_id)
+        import os
+        port = os.environ.get("OPENACM_PORT", "47821")
+        return f"⏹️ Swarm '{swarm['name']}' (ID: {swarm_id}) detenido.\n\n[Ver Swarm →](http://localhost:{port}/swarms/{swarm_id})"
+    except Exception as e:
+        return f"Error al detener el swarm: {e}"
+
+
+@tool(
+    name="delete_swarm",
+    description="Delete a swarm and all its workers, tasks, and messages permanently.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "swarm_id": {
+                "type": "integer",
+                "description": "The numeric ID of the swarm to delete.",
+            },
+        },
+        "required": ["swarm_id"],
+    },
+    risk_level="high",
+    category="swarm",
+)
+async def delete_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
+    if _swarm_manager is None:
+        return "Swarm manager is not available."
+    try:
+        swarm = await _swarm_manager.db.get_swarm(swarm_id)
+        if not swarm:
+            return f"Swarm {swarm_id} not found."
+        name = swarm["name"]
+        if swarm["status"] == "running":
+            await _swarm_manager.stop_swarm(swarm_id)
+        await _swarm_manager.db.delete_swarm(swarm_id)
+        return f"🗑️ Swarm '{name}' (ID: {swarm_id}) eliminado permanentemente."
+    except Exception as e:
+        return f"Error al eliminar el swarm: {e}"
 
 
 @tool(
@@ -166,14 +236,17 @@ async def list_swarms(_brain=None, **kwargs) -> str:
         return "Swarm manager is not available."
     try:
         swarms = await _swarm_manager.db.list_swarms()
+        import os
+        port = os.environ.get("OPENACM_PORT", "47821")
         if not swarms:
-            return "No hay swarms creados aún."
+            return f"No hay swarms creados aún.\n\n[Ir a Swarms →](http://localhost:{port}/swarms)"
         lines = []
         for s in swarms:
             lines.append(
                 f"- **[{s['id']}] {s['name']}** — {s['status']} "
-                f"({s.get('worker_count', 0)} workers, {s.get('task_count', 0)} tasks)"
+                f"({s.get('worker_count', 0)} workers, {s.get('task_count', 0)} tasks) "
+                f"[→](http://localhost:{port}/swarms/{s['id']})"
             )
-        return "**Swarms:**\n" + "\n".join(lines)
+        return "**Swarms:**\n" + "\n".join(lines) + f"\n\n[Ver todos los Swarms →](http://localhost:{port}/swarms)"
     except Exception as e:
         return f"Error al listar swarms: {e}"
