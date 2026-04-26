@@ -23,6 +23,7 @@ class ServerState:
     cron_scheduler: object = None
     swarm_manager: object = None
     content_watcher: object = None
+    voice_daemon: object = None
     # Runtime collections
     custom_provider_ids: set = field(default_factory=set)
     onboarding_triggered_flags: dict = field(default_factory=dict)

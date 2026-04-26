@@ -75,6 +75,12 @@ dev = [
     "pytest-mock>=3.14",
     "ruff>=0.8",
 ]
+voice = [
+    "sounddevice>=0.5",
+    "faster-whisper>=1.0",
+    "numpy>=1.26",
+    "pyttsx3>=2.90",
+]
 
 [project.scripts]
 openacm = "openacm.__main__:main"

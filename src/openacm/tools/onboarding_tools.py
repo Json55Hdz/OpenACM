@@ -34,17 +34,22 @@ log = structlog.get_logger()
             "behaviors": {
                 "type": "string",
                 "description": "The permanent instructions that will guide your personality and behavior (e.g. 'Always speak briefly, politely, and use pirate slang')."
-            }
+            },
+            "gender": {
+                "type": "string",
+                "enum": ["male", "female", "neutral"],
+                "description": "Infer the grammatical gender of the assistant name. 'female' for feminine names (Cortana, Aria, Nova, Sofia), 'male' for masculine names (Jarvis, Max, Alex, Victor), 'neutral' if ambiguous or the user didn't give a name."
+            },
         },
-        "required": ["user_name", "assistant_name", "behaviors"],
+        "required": ["user_name", "assistant_name", "behaviors", "gender"],
     },
     risk_level="low",
     needs_sandbox=False,
     category="system",
 )
-async def save_user_profile(user_name: str, assistant_name: str, behaviors: str, **kwargs) -> str:
+async def save_user_profile(user_name: str, assistant_name: str, behaviors: str, gender: str = "neutral", **kwargs) -> str:
     """Save the user's profile and configure the assistant."""
-    import re
+    import re, json
     _brain = kwargs.get("_brain")
 
     # Sanitization
@@ -120,6 +125,18 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
             _state.brain.config.system_prompt = new_prompt
     except Exception as e:
         log.warning("Could not update in-memory config after onboarding", error=str(e))
+
+    # Auto-select TTS voice gender
+    _VOICE_FOR_GENDER = {"female": "af_heart", "male": "am_adam"}
+    if gender in _VOICE_FOR_GENDER and _state.database:
+        try:
+            raw = await _state.database.get_setting("voice.config")
+            vcfg = json.loads(raw) if raw else {}
+            vcfg["tts_voice"] = _VOICE_FOR_GENDER[gender]
+            vcfg["gender"] = gender
+            await _state.database.set_setting("voice.config", json.dumps(vcfg))
+        except Exception as e:
+            log.warning("Could not auto-set voice gender", error=str(e))
 
     return (
         f"User profile saved successfully! You are now {assistant_name}. "

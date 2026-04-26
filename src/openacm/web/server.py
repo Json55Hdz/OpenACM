@@ -161,7 +161,9 @@ def create_app() -> FastAPI:
 
 
     # Register all route domains
-    from openacm.web.routers import system, config, chat, skills, agents, mcp, activity, cron, swarms
+    from openacm.web.routers import system, config, chat, skills, agents, mcp, activity, cron, swarms, voice as voice_router
+    from openacm.voice import TTSRouter
+
     system.register_routes(app)
     config.register_routes(app)
     chat.register_routes(app)
@@ -171,6 +173,7 @@ def create_app() -> FastAPI:
     activity.register_routes(app)
     cron.register_routes(app)
     swarms.register_routes(app)
+    voice_router.register_routes(app, tts_router=TTSRouter(database=_state.database))
 
     # Plugin API routes (before SPA catch-all)
     try:
@@ -222,6 +225,7 @@ async def create_web_server(
     cron_scheduler=None,
     swarm_manager=None,
     content_watcher=None,
+    voice_daemon=None,
 ) -> uvicorn.Server:
     """Create and start the web server."""
     _state.brain = brain
@@ -232,6 +236,7 @@ async def create_web_server(
     _state.cron_scheduler = cron_scheduler
     _state.swarm_manager = swarm_manager
     _state.content_watcher = content_watcher
+    _state.voice_daemon = voice_daemon
     _state.config = config
     _state.command_processor = CommandProcessor(brain, database)
     _state.channels = channels or []
@@ -298,8 +303,71 @@ async def create_web_server(
         "content:session_screenshot",
         "content:approved",
         "content:rejected",
+        # Voice daemon state changes
+        "voice:daemon_state",
     ]:
         event_bus.on(evt, on_event)
+
+    # Handle server-side voice utterances → brain → broadcast response
+    async def on_voice_utterance(event_type: str, data: dict[str, Any]):
+        text = data.get("text", "")
+        if not text.strip() or not _state.brain:
+            return
+
+        # Show user's spoken message in all connected browser chat windows
+        user_payload = {
+            "type":       "voice_user_message",
+            "content":    text,
+            "channel_id": "web",
+            "user_id":    "web",
+        }
+        _dead: set = set()
+        for client in list(_state.chat_ws_clients):
+            try:
+                await _safe_ws_send(client, user_payload)
+            except Exception:
+                _dead.add(client)
+        _state.chat_ws_clients -= _dead
+
+        # Process through brain (same pipeline as typed web chat)
+        try:
+            response = await _state.brain.process_message(
+                content=text,
+                user_id="web",
+                channel_id="web",
+                channel_type="web",
+            )
+        except Exception as exc:
+            log.error("Voice utterance processing failed", error=str(exc))
+            return
+
+        if not response:
+            return
+
+        # If edge-tts is installed the daemon will speak on the server's speakers.
+        # In that case the browser stays silent to avoid double audio.
+        # If edge-tts is absent the daemon is silent and the browser handles TTS.
+        from openacm.voice.voice_daemon import VoiceDaemon
+        edge_tts_ok = VoiceDaemon.edge_tts_available()
+        resp_payload = {
+            "type":               "voice_response",
+            "content":            response,
+            "channel_id":         "web",
+            "user_id":            "web",
+            "browser_tts_needed": not edge_tts_ok,
+        }
+        # Fire server-side TTS in background (plays on server machine's speakers via edge-tts)
+        if _state.voice_daemon and _state.voice_daemon.is_running:
+            asyncio.create_task(_state.voice_daemon.speak(response))
+        _dead2: set = set()
+        for client in list(_state.chat_ws_clients):
+            try:
+                await _safe_ws_send(client, resp_payload)
+            except Exception:
+                _dead2.add(client)
+        _state.chat_ws_clients -= _dead2
+
+    event_bus.on("voice:utterance", on_voice_utterance)
 
     # Mirror AI tool calls to the correct channel's terminal
     async def on_tool_called(event_type: str, data: dict[str, Any]):

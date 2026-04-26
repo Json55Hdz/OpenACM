@@ -45,7 +45,7 @@ export const translations = {
     mcp: 'MCP Servers',
     debug: 'Traces',
     config: 'Configuration',
-    tamagotchi: 'Tamagotchi',
+    daemon: 'Daemon',
     routines: 'Routines',
     cron: 'Cron Scheduler',
     swarms: 'Swarms',

@@ -151,6 +151,11 @@ html, body {
 }
 .acm-pulse { animation: acm-pulse 1.8s ease-in-out infinite; }
 
+@keyframes acm-pulse-ring {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%       { opacity: 0.2; transform: scale(1.08); }
+}
+
 /* ── Glowing caret ─────────────────────────────────────────────────────────── */
 @keyframes acm-caret {
   0%, 49% { opacity: 1; }

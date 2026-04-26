@@ -36,6 +36,10 @@ interface WebSocketMessage {
   // tool.confirmation_needed fields
   confirm_id?: string;
   command?: string;
+  // voice daemon fields
+  browser_tts_needed?: boolean;
+  state?: string;
+  count?: number;
 }
 
 export function useWebSocket() {
@@ -132,6 +136,22 @@ export function useWebSocket() {
           attachments: (data.attachments || []).map((name: string) => ({ id: name, name, type: 'file' })),
           usage: data.usage,
         }, forKey);
+        // Dispatch voice response only when the voice engine is waiting for this reply.
+        // The engine guards on voiceState === 'processing' but checking here avoids
+        // dispatching the event at all during normal typed conversations.
+        if (data.content && (window as any).__voiceProcessing) {
+          (window as any).__voiceProcessing = false;
+          window.dispatchEvent(new CustomEvent('openacm:voice_response', { detail: { content: data.content } }));
+        }
+      } else if (data.type === 'voice_user_message') {
+        // Server daemon: show the spoken user message in chat
+        storeRef.current.addMessage({ content: data.content || '', role: 'user' });
+      } else if (data.type === 'voice_response') {
+        // Server daemon: show AI response + optionally trigger browser TTS as fallback
+        storeRef.current.addMessage({ content: data.content || '', role: 'assistant' });
+        if (data.browser_tts_needed && data.content) {
+          window.dispatchEvent(new CustomEvent('openacm:voice_response', { detail: { content: data.content } }));
+        }
       } else if (data.type === 'command') {
         storeRef.current.addMessage({
           content: data.content || '',
@@ -332,6 +352,10 @@ export function useWebSocket() {
             command: data.command || '',
           },
         });
+      } else if (data.type === 'voice:daemon_state') {
+        if (data.state) {
+          window.dispatchEvent(new CustomEvent('openacm:daemon_state', { detail: { state: data.state } }));
+        }
       } else if (data.type === 'memory.compacted') {
         // Debounce: backend sometimes fires this event multiple times for the same compaction
         const now = Date.now();

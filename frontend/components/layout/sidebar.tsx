@@ -20,11 +20,12 @@ import {
   CalendarClock,
   Clock,
   Network,
-  Heart,
+  Mic,
   Puzzle,
 } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore } from '@/stores/auth-store';
+import { useVoice } from '@/components/providers/voice-provider';
 import { TamagotchiWidget } from '@/components/tamagotchi/tamagotchi-widget';
 import { translations } from '@/lib/translations';
 import { clsx, type ClassValue } from 'clsx';
@@ -42,7 +43,7 @@ const coreNavItems = [
   { href: '/dashboard', label: t.dashboard, icon: LayoutDashboard },
   { href: '/chat', label: t.chat, icon: MessageSquare },
   { href: '/swarms', label: t.swarms, icon: Network },
-  { href: '/tamagotchi', label: t.tamagotchi, icon: Heart },
+  { href: '/daemon', label: t.daemon, icon: Mic },
   { href: '/routines', label: t.routines, icon: CalendarClock },
   { href: '/cron', label: t.cron, icon: Clock },
   { href: '/tools', label: t.tools, icon: Wrench },
@@ -68,6 +69,15 @@ function resolveIcon(name: string): React.ElementType {
   return icons[name] ?? Puzzle;
 }
 
+// Voice state → color map for the sidebar pulse indicator
+const VOICE_PULSE_COLOR: Partial<Record<string, string>> = {
+  passive:    'oklch(0.84 0.16 82 / 0.5)',
+  activating: 'oklch(0.84 0.16 82 / 0.9)',
+  listening:  'oklch(0.74 0.06 230 / 0.9)',
+  processing: 'oklch(0.72 0.15 300 / 0.9)',
+  speaking:   'oklch(0.75 0.09 160 / 0.9)',
+};
+
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -77,6 +87,9 @@ export function Sidebar() {
   const pathname = usePathname();
   const isOnline = useChatStore((state) => state.wsConnected);
   const token = useAuthStore((s) => s.token);
+  const { voiceState } = useVoice();
+  const isVoiceActive = voiceState !== 'disabled';
+  const voicePulseColor = VOICE_PULSE_COLOR[voiceState];
 
   // Load plugin nav items + version once on mount
   useEffect(() => {
@@ -249,9 +262,39 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="border-t border-[var(--acm-border)] p-[14px] space-y-[10px]">
-          {/* Mini tamagotchi */}
+          {/* Mini daemon widget + voice pulse ring */}
           <div className="flex items-center justify-center">
-            <TamagotchiWidget size={44} />
+            <div style={{ position: 'relative', width: 44, height: 44 }}>
+              {isVoiceActive && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    inset: -5,
+                    borderRadius: '50%',
+                    border: `1.5px solid ${voicePulseColor}`,
+                    boxShadow: `0 0 8px ${voicePulseColor}`,
+                    animation: voiceState === 'passive' ? 'acm-pulse-ring 2.4s ease-in-out infinite' : undefined,
+                    transition: 'border-color 0.3s, box-shadow 0.3s',
+                  }}
+                />
+              )}
+              <TamagotchiWidget size={44} />
+              {isVoiceActive && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: -2,
+                    right: -2,
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background: voicePulseColor,
+                    border: '1.5px solid var(--acm-base)',
+                    boxShadow: `0 0 6px ${voicePulseColor}`,
+                  }}
+                />
+              )}
+            </div>
           </div>
 
           {/* Agent status card */}
