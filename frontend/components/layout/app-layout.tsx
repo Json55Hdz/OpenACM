@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { useChatStore } from '@/stores/chat-store';
+import { GlobalTamagotchi } from '@/components/tamagotchi/global-tamagotchi';
 
 // Watches for a pending onboarding greeting and navigates to /chat via Next.js
 // router (client-side, no reload) so the Zustand store state is preserved.
@@ -28,6 +29,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-[var(--acm-base)]">
       <OnboardingNavigator />
       <Sidebar />
+      <GlobalTamagotchi />
 
       {/* Main content */}
       <main className="lg:ml-64 min-h-screen">

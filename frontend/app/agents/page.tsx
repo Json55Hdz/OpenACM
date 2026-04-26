@@ -480,7 +480,7 @@ function AgentCard({
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {/* Icon box */}
           <div
             className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"

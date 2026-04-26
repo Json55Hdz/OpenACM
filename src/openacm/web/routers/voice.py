@@ -171,9 +171,12 @@ def register_routes(app: FastAPI, tts_router=None):
         deps = daemon.check_deps()
         print(f"[voice/start] deps={deps} engine_available={daemon.engine_available} device={mic_device!r}", flush=True)
         log.info("voice_daemon_start: deps check", deps=deps, engine_available=daemon.engine_available, device=mic_device)
-        # Apply server TTS voice from config before starting
+        # Apply server TTS voice and wake word from config before starting
         cfg_for_tts = await _get_settings()
         daemon._tts_voice = cfg_for_tts.get("server_tts_voice", "es-MX-DaliaNeural")
+        if _state.config:
+            daemon._wake_word = getattr(_state.config.assistant, "name", "") or "OpenACM"
+        print(f"[voice/start] wake_word={daemon._wake_word!r} server_tts_voice={daemon._tts_voice!r}", flush=True)
         print(f"[voice/start] server_tts_voice={daemon._tts_voice!r}", flush=True)
         print(f"[voice/start] calling daemon.start(device={mic_device!r}) ...", flush=True)
         error = await daemon.start(device=mic_device)

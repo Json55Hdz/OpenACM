@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
-import { TamagotchiWidget } from '@/components/tamagotchi/tamagotchi-widget';
+import { TamaPlaceholder } from '@/components/tamagotchi/global-tamagotchi';
 import { ACMMark } from '@/components/ui/acm-mark';
 import { useTamagotchiStore, AgentState } from '@/stores/tamagotchi-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -15,6 +15,12 @@ const INTRO_STORAGE_KEY = 'openacm_voice_intro_seen';
 
 // ── Built-in skins (add entries here when you bundle more skins) ──────────────
 const AVAILABLE_SKINS = [
+  {
+    id: 'ai_robot',
+    name: 'AI Robot',
+    description: 'Roboto animado con 5 estados + fidget aleatorio en idle.',
+    preview: '🤖',
+  },
   {
     id: 'space_cat',
     name: 'Space Cat',
@@ -121,7 +127,7 @@ function VoiceEngineCard({
   const edgeTtsAvail = daemonStatus?.deps?.edge_tts ?? false;
   // Show INSTALL when core deps OR edge-tts are missing (edge-tts is optional but preferred)
   const needsInstall = !daemonAvail || !edgeTtsAvail;
-  const isDaemonLoading = daemonRunning && daemonStatus?.current_state === 'idle';
+  const isDaemonLoading = daemonStatus?.current_state === 'loading_model';
 
   // Auto-scroll install log to bottom
   useEffect(() => {
@@ -220,13 +226,21 @@ function VoiceEngineCard({
               <span className="text-xs font-medium" style={{ color: 'var(--acm-fg-2)' }}>
                 {daemonRunning
                   ? isDaemonLoading
-                    ? 'Loading Whisper model…'
-                    : `Server daemon · ${daemonStatus.current_state}`
+                    ? 'Cargando modelo Whisper…'
+                    : daemonStatus?.current_state === 'passive'
+                      ? 'Esperando wake word…'
+                      : daemonStatus?.current_state === 'listening'
+                        ? 'Escuchando — habla tu comando'
+                        : daemonStatus?.current_state === 'processing'
+                          ? 'Procesando…'
+                          : daemonStatus?.current_state === 'speaking'
+                            ? 'Respondiendo…'
+                            : `Daemon · ${daemonStatus?.current_state}`
                   : isInstalling
-                    ? (!daemonAvail ? 'Installing dependencies…' : 'Installing edge-tts…')
+                    ? (!daemonAvail ? 'Instalando dependencias…' : 'Instalando edge-tts…')
                     : isStarting
-                      ? 'Starting daemon…'
-                      : 'Server daemon · stopped'}
+                      ? 'Iniciando daemon…'
+                      : 'Server daemon · detenido'}
               </span>
             </div>
             {daemonRunning ? (
@@ -702,7 +716,7 @@ function DaemonContent() {
   }, []);
   const isVoiceActive = voiceState !== 'disabled';
   const voiceInfo = VOICE_STATE_INFO[voiceState];
-  const isDaemonModelLoading = (daemonStatus?.is_running ?? false) && daemonStatus?.current_state === 'idle';
+  const isDaemonModelLoading = daemonStatus?.current_state === 'loading_model';
 
   // Show intro once per browser
   useEffect(() => {
@@ -777,7 +791,7 @@ function DaemonContent() {
               <div style={{ position: 'relative', width: 220, height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <VoiceAura voiceState={voiceState} micAmplitude={micAmplitude} speakerAmplitude={speakerAmplitude} />
                 <div style={{ position: 'relative', zIndex: 1 }}>
-                  <TamagotchiWidget size={200} />
+                  <TamaPlaceholder size={200} />
                 </div>
               </div>
 

@@ -147,8 +147,10 @@ export function useWebSocket() {
         // Server daemon: show the spoken user message in chat
         storeRef.current.addMessage({ content: data.content || '', role: 'user' });
       } else if (data.type === 'voice_response') {
-        // Server daemon: show AI response + optionally trigger browser TTS as fallback
+        // Server daemon: show AI response + reset tamagotchi + optionally trigger browser TTS
         storeRef.current.addMessage({ content: data.content || '', role: 'assistant' });
+        resetSpinner();
+        tamaRef.current.setAgentState('success');
         if (data.browser_tts_needed && data.content) {
           window.dispatchEvent(new CustomEvent('openacm:voice_response', { detail: { content: data.content } }));
         }

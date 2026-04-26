@@ -310,6 +310,7 @@ async def create_web_server(
 
     # Handle server-side voice utterances → brain → broadcast response
     async def on_voice_utterance(event_type: str, data: dict[str, Any]):
+        import random as _random
         text = data.get("text", "")
         if not text.strip() or not _state.brain:
             return
@@ -329,6 +330,14 @@ async def create_web_server(
                 _dead.add(client)
         _state.chat_ws_clients -= _dead
 
+        # Quick acknowledgment so the user hears something immediately while the LLM thinks.
+        # speak_quiet() plays without changing daemon state — the lock serializes it with
+        # the real speak() call that follows, so they never overlap.
+        _daemon = _state.voice_daemon
+        if _daemon and _daemon.is_running:
+            from openacm.voice.voice_daemon import _ACKS
+            asyncio.create_task(_daemon.speak_quiet(_random.choice(_ACKS)))
+
         # Process through brain (same pipeline as typed web chat)
         try:
             response = await _state.brain.process_message(
@@ -339,26 +348,25 @@ async def create_web_server(
             )
         except Exception as exc:
             log.error("Voice utterance processing failed", error=str(exc))
-            return
-
-        if not response:
+            # Restore daemon listening state even on error
+            if _daemon and _daemon.is_running:
+                asyncio.create_task(_daemon.speak(""))
             return
 
         # If edge-tts is installed the daemon will speak on the server's speakers.
-        # In that case the browser stays silent to avoid double audio.
-        # If edge-tts is absent the daemon is silent and the browser handles TTS.
+        # If absent the daemon is silent and the browser handles TTS via voice_response event.
         from openacm.voice.voice_daemon import VoiceDaemon
         edge_tts_ok = VoiceDaemon.edge_tts_available()
         resp_payload = {
             "type":               "voice_response",
-            "content":            response,
+            "content":            response or "",
             "channel_id":         "web",
             "user_id":            "web",
             "browser_tts_needed": not edge_tts_ok,
         }
-        # Fire server-side TTS in background (plays on server machine's speakers via edge-tts)
-        if _state.voice_daemon and _state.voice_daemon.is_running:
-            asyncio.create_task(_state.voice_daemon.speak(response))
+        # speak() handles both the audio and state restoration (including the empty-response case)
+        if _daemon and _daemon.is_running:
+            asyncio.create_task(_daemon.speak(response or ""))
         _dead2: set = set()
         for client in list(_state.chat_ws_clients):
             try:

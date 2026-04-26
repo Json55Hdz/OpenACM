@@ -203,6 +203,20 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, engineMode]);
 
+  // ── Browser mic amplitude for VoiceAura in server/auto mode ────────────
+  // The actual STT is handled by the server mic, but we open the browser mic
+  // in monitor-only mode so the canvas animation reacts to the user's voice.
+  useEffect(() => {
+    if (engineMode !== 'server' && engineMode !== 'auto') return;
+    if (!daemonStatus?.is_running) {
+      stopMicAmplitude();
+      return;
+    }
+    startMicAmplitude(selectedMicId !== 'default' ? selectedMicId : undefined);
+    return () => stopMicAmplitude();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daemonStatus?.is_running, engineMode]);
+
   // ── Mic device enumeration ────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
@@ -393,9 +407,18 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
       if (engineMode === 'browser') return;
       const state = (e as CustomEvent<{ state: string }>).detail?.state;
       if (!state) return;
-      if (state === 'listening') setState('passive');
+      if (state === 'passive') setState('passive');
+      else if (state === 'activating') {
+        setState('activating');
+        // Safety fallback: if daemon doesn't send 'listening' quickly, transition ourselves
+        setTimeout(() => {
+          if (voiceStateRef.current === 'activating') setState('listening');
+        }, 500);
+      }
+      else if (state === 'listening') setState('listening');
       else if (state === 'processing') setState('processing');
       else if (state === 'speaking') setState('speaking');
+      else if (state === 'loading_model') { /* model still loading — keep current state */ }
       else if (state === 'idle' && voiceStateRef.current !== 'disabled') setState('disabled');
     };
     window.addEventListener('openacm:daemon_state', handler);
