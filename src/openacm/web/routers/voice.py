@@ -98,7 +98,7 @@ def register_routes(app: FastAPI, tts_router=None):
 
     @app.patch("/api/voice/config")
     async def update_voice_config(body: dict):
-        allowed = {"tts_provider", "tts_voice", "stt_provider", "voice_enabled", "voice_language", "api_key", "engine_mode", "mic_device", "server_tts_voice"}
+        allowed = {"tts_provider", "tts_voice", "stt_provider", "voice_enabled", "voice_language", "api_key", "engine_mode", "mic_device", "server_tts_voice", "stt_language"}
         current = await _get_settings()
         for k, v in body.items():
             if k in allowed:
@@ -106,6 +106,11 @@ def register_routes(app: FastAPI, tts_router=None):
         await _save_settings(current)
         if _tts_router:
             _tts_router.invalidate_cache()
+        # Apply stt_language to running daemon immediately
+        daemon = getattr(_state, "voice_daemon", None)
+        if daemon:
+            raw_lang = current.get("stt_language", "")
+            daemon._stt_language = raw_lang if raw_lang else None
         return current
 
     # ── Providers & voices ────────────────────────────────────────────────────
@@ -171,12 +176,14 @@ def register_routes(app: FastAPI, tts_router=None):
         deps = daemon.check_deps()
         print(f"[voice/start] deps={deps} engine_available={daemon.engine_available} device={mic_device!r}", flush=True)
         log.info("voice_daemon_start: deps check", deps=deps, engine_available=daemon.engine_available, device=mic_device)
-        # Apply server TTS voice and wake word from config before starting
+        # Apply server TTS voice, wake word, and STT language from config before starting
         cfg_for_tts = await _get_settings()
         daemon._tts_voice = cfg_for_tts.get("server_tts_voice", "es-MX-DaliaNeural")
+        raw_lang = cfg_for_tts.get("stt_language", "")
+        daemon._stt_language = raw_lang if raw_lang else None
         if _state.config:
             daemon._wake_word = getattr(_state.config.assistant, "name", "") or "OpenACM"
-        print(f"[voice/start] wake_word={daemon._wake_word!r} server_tts_voice={daemon._tts_voice!r}", flush=True)
+        print(f"[voice/start] wake_word={daemon._wake_word!r} server_tts_voice={daemon._tts_voice!r} stt_language={daemon._stt_language!r}", flush=True)
         print(f"[voice/start] server_tts_voice={daemon._tts_voice!r}", flush=True)
         print(f"[voice/start] calling daemon.start(device={mic_device!r}) ...", flush=True)
         error = await daemon.start(device=mic_device)
@@ -260,18 +267,19 @@ def register_routes(app: FastAPI, tts_router=None):
     @app.get("/api/voice/model/status")
     async def get_model_status():
         """Check availability of server-side voice models and configured TTS provider."""
-        from openacm.voice.voice_daemon import VoiceDaemon
+        from openacm.voice.voice_daemon import VoiceDaemon, WHISPER_MODEL
         import os as _os
         deps = VoiceDaemon.check_deps()
 
-        # Check if faster-whisper "base" model is already in cache
+        # Check if the configured faster-whisper model is already in HF cache
         whisper_cached = False
         if deps["faster_whisper"]:
             try:
                 hf_cache = _os.path.expanduser("~/.cache/huggingface/hub")
                 if _os.path.exists(hf_cache):
+                    model_token = WHISPER_MODEL.lower()
                     whisper_cached = any(
-                        "whisper" in d.lower() and ("base" in d.lower() or "systran" in d.lower())
+                        "whisper" in d.lower() and (model_token in d.lower() or "systran" in d.lower())
                         for d in _os.listdir(hf_cache)
                     )
             except Exception:
@@ -282,7 +290,7 @@ def register_routes(app: FastAPI, tts_router=None):
             "stt": {
                 "provider":   "faster_whisper",
                 "available":  deps["faster_whisper"],
-                "model":      "base",
+                "model":      WHISPER_MODEL,
                 "downloaded": whisper_cached,
             },
             "mic":        {"available": deps["sounddevice"]},
@@ -338,6 +346,7 @@ async def _get_settings() -> dict:
         "voice_language": "en-US",
         "api_key": "",
         "server_tts_voice": "es-MX-DaliaNeural",
+        "stt_language": "",  # "" = auto-detect (multilingual); set "es"/"en"/"fr"/etc to force
     }
     if not _state.database:
         return defaults

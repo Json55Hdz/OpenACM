@@ -435,11 +435,12 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
       // In server/auto mode: browser_tts_needed controls whether we speak here.
       // When edge-tts is installed the server speaks and sets browser_tts_needed=false.
       // When edge-tts is absent, browser_tts_needed=true and we speak here via Web Speech.
-      // The check for 'disabled' above already guards unmounted state.
       setState('speaking');
-      ttsSpeak(text).then(() => {
+      // Always restore voice state when TTS finishes — success or rejection.
+      const restore = () => {
         if (voiceStateRef.current === 'speaking') setState('passive');
-      });
+      };
+      ttsSpeak(text).then(restore, restore);
     };
     window.addEventListener('openacm:voice_response', handler);
     return () => window.removeEventListener('openacm:voice_response', handler);

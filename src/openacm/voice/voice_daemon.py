@@ -17,7 +17,9 @@ Optional dependencies:
 from __future__ import annotations
 
 import asyncio
+import os
 import struct
+import tempfile
 import threading
 import time
 from typing import Optional
@@ -31,12 +33,21 @@ log = structlog.get_logger()
 SAMPLE_RATE          = 16_000   # Hz — Whisper native rate
 CHUNK_DURATION       = 0.5      # seconds per read
 CHUNK_SAMPLES        = int(SAMPLE_RATE * CHUNK_DURATION)
-SILENCE_CHUNKS       = 2        # chunks of silence to end an utterance (~1.0 s)
-MAX_CHUNKS           = 40       # max utterance length (~20 s)
+SILENCE_CHUNKS       = 4        # chunks of silence to end an utterance (~2.0 s) — tolerates natural pauses
+MAX_CHUNKS           = 60       # max utterance length (~30 s) — for longer dictations
+IN_SPEECH_VAD_FACTOR = 0.55     # while already speaking, threshold drops to this × base — keeps the mic "open" through quiet syllables
 ACTIVE_TIMEOUT       = 6.0      # seconds after speaking before returning to passive
-MIN_VAD_THRESHOLD    = 150      # absolute floor — never go quieter than this
-VAD_NOISE_MULTIPLIER = 3.5      # threshold = noise_floor × this
+MIN_VAD_THRESHOLD    = 100      # absolute floor — never go quieter than this
+VAD_NOISE_MULTIPLIER = 2.5      # threshold = noise_floor × this
 CALIBRATION_CHUNKS   = 4        # ~2 s of audio to measure ambient noise at startup
+ACTIVE_VAD_FACTOR    = 0.8      # in active mode, threshold is multiplied by this (slightly more sensitive)
+UTTERANCE_TIMEOUT    = 30.0     # seconds before giving up if speak() is never called
+MIN_LANG_PROB        = 0.40     # discard Whisper output below this language-detection confidence
+TTS_INTERRUPT_FACTOR = 3.0      # user must speak this many × measured TTS-echo RMS to interrupt TTS
+WHISPER_MODEL        = "small"  # faster-whisper model size: tiny|base|small|medium|large-v3
+POST_TTS_GRACE_S     = 1.2      # hard mute window right after TTS ends (room reverb dies down)
+POST_TTS_SUPPRESS_S  = 5.0      # extra suppression window after grace — accept only loud input
+POST_TTS_RMS_FACTOR  = 2.5      # during suppression, audio must exceed echo_rms × this to count
 
 _ACKS = ["Un momento...", "Déjame ver...", "Entendido...", "Claro..."]
 
@@ -76,8 +87,16 @@ class VoiceDaemon:
         self._active_timer: Optional[asyncio.Task] = None
         self._speak_lock: Optional[asyncio.Lock] = None
 
+        # STT language — None = auto-detect (can hallucinate); set to "es" or "en" for reliability
+        self._stt_language: str | None = None
+
         # Adaptive VAD
         self._vad_threshold: float = 600.0
+
+        # TTS playback — mic is muted while speaking and for a grace period after
+        self._mic_resume_after:    float = 0.0  # hard mute: drop ALL frames before this time
+        self._mic_suppress_until:  float = 0.0  # soft suppress: only loud frames pass before this
+        self._tts_echo_rms:        float = 0.0  # measured echo level of current TTS through speakers
 
         # TTS interrupt (wake word detected while speaking)
         self._tts_interrupt = threading.Event()
@@ -134,7 +153,7 @@ class VoiceDaemon:
         self._vad_threshold = 600.0
         self._tts_interrupt.clear()
         self._stop_evt.clear()
-        self._loop         = asyncio.get_event_loop()
+        self._loop         = asyncio.get_running_loop()
         self._q            = asyncio.Queue(maxsize=200)
         self._speak_lock   = asyncio.Lock()
         self._task         = asyncio.create_task(self._run(), name="voice_daemon")
@@ -218,15 +237,18 @@ class VoiceDaemon:
                     _log("_run() received sentinel — stopping")
                     break
 
-                has_voice = self._is_speech(chunk)
+                # Bi-modal VAD: harder to start speech, easier to keep it going
+                # (so quiet syllables / breaths between words don't end the utterance)
+                has_voice = self._is_speech(chunk, in_speech=in_speech)
 
                 if has_voice:
                     if not in_speech:
                         in_speech = True
-                        # Only cancel timer / emit state when not busy with TTS
+                        # Pause the active-mode timeout while user is speaking;
+                        # it gets restarted after flush (in _handle_flush / _restore_post_speak_state).
                         if self.current_state not in ("speaking", "processing"):
                             self._cancel_active_timer()
-                            if self._mode == "active":
+                            if self._mode == "active" and self.current_state != "listening":
                                 await self._emit_state("listening")
                     silence_count = 0
                     buf.append(chunk)
@@ -261,7 +283,7 @@ class VoiceDaemon:
         if self.current_state == "speaking":
             # ── Interrupt detection: check for wake word while TTS is playing ──
             audio      = b"".join(buf)
-            transcript = await asyncio.to_thread(self._transcribe, whisper, audio)
+            transcript = await asyncio.to_thread(self._transcribe, whisper, audio, self._stt_language)
             if transcript and self._contains_wake_word(transcript):
                 _log(f"_handle_flush() INTERRUPT — wake word while speaking: {transcript!r}")
                 self._tts_interrupt.set()          # signal _play_audio_file to stop
@@ -278,7 +300,7 @@ class VoiceDaemon:
         await self._emit_state("processing")
         audio      = b"".join(buf)
         _log(f"_handle_flush() transcribing {len(audio)//2} samples ({len(audio)/16000/2:.1f}s)")
-        transcript = await asyncio.to_thread(self._transcribe, whisper, audio)
+        transcript = await asyncio.to_thread(self._transcribe, whisper, audio, self._stt_language)
 
         if not transcript:
             await self._emit_state("passive" if self._mode == "passive" else "listening")
@@ -295,12 +317,18 @@ class VoiceDaemon:
                 self._mode = "active"
                 if command:
                     await self._send_utterance(command)
-                else:
-                    await self._emit_state("listening")
+                # Always end up in listening + active timer so the user knows we're waiting
+                # and the daemon recovers if the brain never calls speak()
+                await self._emit_state("listening")
+                self._start_active_timer()
             else:
                 await self._emit_state("passive")
         else:
             await self._send_utterance(transcript)
+            # Stay in listening so the user can chain more commands; speak() will manage
+            # state transitions when the brain replies. _utterance_timeout is the safety net.
+            await self._emit_state("listening")
+            self._start_active_timer()
 
     async def _send_utterance(self, text: str) -> None:
         _log(f"_send_utterance() {text!r}")
@@ -309,13 +337,22 @@ class VoiceDaemon:
             await self._event_bus.emit("voice:utterance", {
                 "text": text, "source": "server_daemon",
             })
+        # Safety net: if speak() is never called (e.g. TTS skipped), restore state
+        asyncio.create_task(self._utterance_timeout())
+
+    async def _utterance_timeout(self) -> None:
+        """Restore state if speak() is never called within UTTERANCE_TIMEOUT seconds."""
+        await asyncio.sleep(UTTERANCE_TIMEOUT)
+        if self.current_state in ("processing", "activating") and self._running:
+            _log("_utterance_timeout() — speak() was not called, restoring state")
+            await self._restore_post_speak_state()
 
     # ── Active-mode timeout ───────────────────────────────────────────────────
 
     def _start_active_timer(self) -> None:
         self._cancel_active_timer()
         if self._loop and self._running:
-            self._active_timer = self._loop.create_task(self._active_timeout_task())
+            self._active_timer = asyncio.create_task(self._active_timeout_task())
 
     def _cancel_active_timer(self) -> None:
         if self._active_timer and not self._active_timer.done():
@@ -334,24 +371,56 @@ class VoiceDaemon:
 
     # ── Wake word helpers ─────────────────────────────────────────────────────
 
+    @staticmethod
+    def _normalize_for_match(s: str) -> str:
+        """Lowercase, strip punctuation/accents, and fold common phonetic confusions
+        so STT variants like 'Garbys', 'Yarvis', 'Harbys' all collapse to the same
+        skeleton as 'jarvis'."""
+        import unicodedata
+        # Strip accents
+        s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+        s = s.lower()
+        # Keep only letters and spaces
+        s = "".join(c if c.isalpha() or c == " " else " " for c in s)
+        # Phonetic foldings — Spanish/English STT tends to confuse these
+        repl = [
+            ("ph", "f"), ("ck", "k"), ("qu", "k"), ("c", "k"),
+            ("z", "s"), ("x", "s"), ("v", "b"), ("w", "b"),
+            ("y", "i"), ("j", "i"), ("h", ""), ("g", "i"),  # j/y/g/h all sound similar in ES
+        ]
+        for a, b in repl:
+            s = s.replace(a, b)
+        return " ".join(s.split())  # collapse whitespace
+
     def _contains_wake_word(self, transcript: str) -> bool:
         if not self._wake_word:
             return True
-        wake  = self._wake_word.lower()
-        lower = transcript.lower()
-        if wake in lower:
+        wake_norm = self._normalize_for_match(self._wake_word)
+        text_norm = self._normalize_for_match(transcript)
+        if not wake_norm:
             return True
-        return any(self._levenshtein(w, wake) <= 1 for w in lower.split())
+        if wake_norm in text_norm:
+            return True
+        # Token-level fuzzy match with adaptive threshold (~30% of word length)
+        max_dist = max(2, len(wake_norm) // 3)
+        return any(
+            self._levenshtein(w, wake_norm) <= max_dist
+            for w in text_norm.split() if w
+        )
 
     def _extract_command(self, transcript: str) -> str:
+        """Return everything after the wake word. Falls back to the full transcript
+        if the wake word can't be located cleanly (token boundaries don't match)."""
         if not self._wake_word:
             return transcript.strip()
-        lower = transcript.lower()
-        wake  = self._wake_word.lower()
-        idx   = lower.find(wake)
-        if idx == -1:
-            return transcript.strip()
-        return transcript[idx + len(wake):].lstrip(" ,").strip()
+        wake_norm = self._normalize_for_match(self._wake_word)
+        # Walk transcript word-by-word and find the first token that matches wake word
+        original_words = transcript.split()
+        max_dist = max(2, len(wake_norm) // 3)
+        for i, w in enumerate(original_words):
+            if self._levenshtein(self._normalize_for_match(w), wake_norm) <= max_dist:
+                return " ".join(original_words[i + 1:]).lstrip(" ,.;:¿?¡!").strip()
+        return transcript.strip()
 
     @staticmethod
     def _levenshtein(a: str, b: str) -> int:
@@ -378,8 +447,40 @@ class VoiceDaemon:
             if self._stop_evt.is_set():
                 raise sd.CallbackStop()
             raw = (indata[:, 0] * 32767).astype("int16").tobytes()
-            if self._loop and self._q is not None:
-                self._loop.call_soon_threadsafe(self._q.put_nowait, raw)
+            if self.current_state == "speaking":
+                # Adaptive echo cancellation: track TTS echo level, trigger interrupt
+                # only when user speaks significantly louder than the reflected TTS audio.
+                if not self._tts_interrupt.is_set():
+                    rms = VoiceDaemon._rms(raw)
+                    # Exponential moving average of the TTS echo arriving at the mic
+                    if self._tts_echo_rms == 0.0:
+                        self._tts_echo_rms = max(rms, 1.0)
+                    else:
+                        self._tts_echo_rms = self._tts_echo_rms * 0.85 + rms * 0.15
+                    # Interrupt if user's voice is TTS_INTERRUPT_FACTOR × louder than echo
+                    if rms > self._tts_echo_rms * TTS_INTERRUPT_FACTOR and rms > self._vad_threshold:
+                        _log(f"_capture_loop() interrupt — rms={rms:.0f} echo={self._tts_echo_rms:.0f}")
+                        self._tts_interrupt.set()
+                return  # don't feed the normal pipeline while speaking
+            now = time.monotonic()
+            if now < self._mic_resume_after:
+                return  # hard mute: room reverb still dying down right after TTS
+            if now < self._mic_suppress_until:
+                # Soft suppression: only let through audio louder than the echo we last
+                # measured during TTS (× factor). This kills the trailing reverb that
+                # follows the hard-mute window without losing the user's real voice.
+                rms = VoiceDaemon._rms(raw)
+                gate = max(self._vad_threshold, self._tts_echo_rms * POST_TTS_RMS_FACTOR)
+                if rms < gate:
+                    return
+            q, loop = self._q, self._loop
+            if q is not None and loop is not None:
+                def _enqueue():
+                    try:
+                        q.put_nowait(raw)
+                    except asyncio.QueueFull:
+                        pass  # drop frame under backpressure
+                loop.call_soon_threadsafe(_enqueue)
 
         devices_to_try = [self._device, None] if self._device is not None else [None]
         for device in devices_to_try:
@@ -399,8 +500,9 @@ class VoiceDaemon:
                     break
 
         _log("_capture_loop() all attempts failed — sentinel")
-        if self._loop and self._q is not None:
-            self._loop.call_soon_threadsafe(self._q.put_nowait, None)
+        q, loop = self._q, self._loop
+        if q is not None and loop is not None:
+            loop.call_soon_threadsafe(q.put_nowait, None)
 
     # ── VAD ───────────────────────────────────────────────────────────────────
 
@@ -412,14 +514,21 @@ class VoiceDaemon:
         samples = struct.unpack(f"{n}h", chunk[:n * 2])
         return (sum(s * s for s in samples) / n) ** 0.5
 
-    def _is_speech(self, chunk: bytes) -> bool:
-        return self._rms(chunk) > self._vad_threshold
+    def _is_speech(self, chunk: bytes, in_speech: bool = False) -> bool:
+        rms = self._rms(chunk)
+        # Active mode is a bit more sensitive than passive
+        threshold = self._vad_threshold * (ACTIVE_VAD_FACTOR if self._mode == "active" else 1.0)
+        # If we're already capturing an utterance, drop the threshold further so brief
+        # quiet moments (between words, breath, soft consonants) don't end the buffer.
+        if in_speech:
+            threshold *= IN_SPEECH_VAD_FACTOR
+        return rms > threshold
 
     # ── Whisper STT ───────────────────────────────────────────────────────────
 
     @staticmethod
     def _load_whisper():
-        _log("_load_whisper() importing faster_whisper...")
+        _log(f"_load_whisper() importing faster_whisper (model={WHISPER_MODEL!r})...")
         import numpy as np
         from faster_whisper import WhisperModel
 
@@ -428,26 +537,37 @@ class VoiceDaemon:
             cuda_types = ctranslate2.get_supported_compute_types("cuda")
             if cuda_types:
                 _log(f"_load_whisper() CUDA detected — loading GPU model")
-                gpu_model = WhisperModel("base", device="cuda", compute_type="float16")
+                gpu_model = WhisperModel(WHISPER_MODEL, device="cuda", compute_type="float16")
                 list(gpu_model.transcribe(np.zeros(1600, dtype=np.float32), language="en")[0])
                 _log("_load_whisper() GPU OK!")
                 return gpu_model
         except Exception as exc:
             _log(f"_load_whisper() GPU failed ({exc}) — CPU fallback")
 
-        _log("_load_whisper() loading CPU model (int8)...")
-        model = WhisperModel("base", device="cpu", compute_type="int8")
+        _log(f"_load_whisper() loading CPU model {WHISPER_MODEL!r} (int8)...")
+        model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
         _log("_load_whisper() CPU model ready!")
         return model
 
     @staticmethod
-    def _transcribe(whisper, audio_bytes: bytes) -> str:
+    def _transcribe(whisper, audio_bytes: bytes, language: str | None = None) -> str:
         import numpy as np
         samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32767.0
         try:
-            segs, info = whisper.transcribe(samples, language=None, vad_filter=True, beam_size=3)
+            segs, info = whisper.transcribe(
+                samples, language=language, vad_filter=True, beam_size=3,
+            )
             result = " ".join(s.text for s in segs).strip()
-            _log(f"_transcribe() lang={info.language!r} prob={info.language_probability:.2f} → {result!r}")
+            _log(
+                f"_transcribe() lang={info.language!r} "
+                f"prob={info.language_probability:.2f} → {result!r}"
+            )
+            if info.language_probability < MIN_LANG_PROB and language is None:
+                _log(
+                    f"_transcribe() discarding — low language confidence "
+                    f"({info.language_probability:.2f} < {MIN_LANG_PROB})"
+                )
+                return ""
             return result
         except Exception as exc:
             _log(f"_transcribe() FAILED — {exc}")
@@ -456,18 +576,34 @@ class VoiceDaemon:
     # ── Server-side TTS ───────────────────────────────────────────────────────
 
     async def speak_quiet(self, text: str) -> bool:
-        """Speak without changing daemon state (quick acknowledgments)."""
+        """Speak a short acknowledgment. Engages the AEC pipeline (state='speaking')
+        during playback so the mic doesn't capture the ack, then restores the previous
+        logical state and extends the post-TTS suppression window."""
         if not text.strip():
             return False
         lock = self._speak_lock
         if lock is None:
             return False
         async with lock:
-            # Abort immediately if an interrupt happened before we acquired the lock
             if self._tts_interrupt.is_set():
                 return False
             self._tts_interrupt.clear()
-            return await self._tts_neural(text)
+            self._tts_echo_rms = 0.0
+            prev_state = self.current_state
+            self.current_state = "speaking"   # engages AEC branch in mic callback
+            try:
+                spoken = await self._tts_neural(text)
+            except Exception as exc:
+                _log(f"speak_quiet() failed: {exc}")
+                spoken = False
+            finally:
+                # Restore the prior logical state, extend mute/suppress windows so the
+                # tail of this ack doesn't get heard by the now-unmuted mic.
+                now = time.monotonic()
+                self._mic_resume_after   = max(self._mic_resume_after,   now + POST_TTS_GRACE_S)
+                self._mic_suppress_until = max(self._mic_suppress_until, now + POST_TTS_GRACE_S + POST_TTS_SUPPRESS_S)
+                self.current_state = prev_state
+            return spoken
 
     async def speak(self, text: str) -> bool:
         """Speak and update daemon state. Call speak('') to silently restore state."""
@@ -485,6 +621,7 @@ class VoiceDaemon:
                 return False
             _log(f"speak() {text!r}")
             self._tts_interrupt.clear()
+            self._tts_echo_rms = 0.0   # reset so echo calibrates fresh for this response
             self.current_state = "speaking"
             await self._emit_state("speaking")
             try:
@@ -498,9 +635,37 @@ class VoiceDaemon:
 
     async def _restore_post_speak_state(self) -> None:
         """Return to listening/passive after TTS. Skips if wake-word interrupt fired."""
+        # Two-stage post-TTS protection against the daemon hearing its own voice:
+        #   1. Hard mute (POST_TTS_GRACE_S): drop ALL frames — kills initial reverb tail
+        #   2. Soft suppression (POST_TTS_SUPPRESS_S): only frames louder than the
+        #      TTS echo level pass through — kills trailing reverb / speaker feedback
+        #      while still letting the user's actual voice through.
+        now = time.monotonic()
+        self._mic_resume_after   = now + POST_TTS_GRACE_S
+        self._mic_suppress_until = now + POST_TTS_GRACE_S + POST_TTS_SUPPRESS_S
+        # Drain any audio that accumulated in the queue during TTS (speaker feedback frames)
+        if self._q is not None:
+            drained = 0
+            while not self._q.empty():
+                try:
+                    self._q.get_nowait()
+                    drained += 1
+                except asyncio.QueueEmpty:
+                    break
+            if drained:
+                _log(f"_restore_post_speak_state() drained {drained} stale frames")
+
+        # If a wake-word interrupt fired during TTS, the interrupt handler in
+        # _handle_flush already set state → activating → listening. Just clear
+        # the flag and exit so we don't override that transition.
         if self._tts_interrupt.is_set():
-            # Interrupt handler already set the state — don't override it
             self._tts_interrupt.clear()
+            if self.current_state == "speaking":
+                # Defensive fallback: shouldn't normally happen, but if interrupt fired
+                # and state somehow stayed "speaking", recover to listening rather than mute forever
+                self.current_state = "listening"
+                await self._emit_state("listening")
+                self._start_active_timer()
             return
         if not self.is_running:
             self.current_state = "idle"
@@ -525,10 +690,9 @@ class VoiceDaemon:
             return False
 
     async def _tts_neural(self, text: str) -> bool:
-        import os, tempfile
         try:
             import edge_tts
-            voice = getattr(self, "_tts_voice", "es-MX-DaliaNeural")
+            voice = self._tts_voice
             _log(f"_tts_neural() edge-tts voice={voice!r}")
             communicate = edge_tts.Communicate(text, voice)
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
@@ -545,10 +709,11 @@ class VoiceDaemon:
                 except Exception:
                     pass
         except ImportError:
-            _log("_tts_neural() edge-tts not installed — browser handles TTS")
+            _log("_tts_neural() edge-tts not installed — falling back to system TTS")
+            return await asyncio.to_thread(self._tts_sapi, text)
         except Exception as exc:
-            _log(f"_tts_neural() failed: {exc}")
-        return False
+            _log(f"_tts_neural() failed: {exc} — falling back to system TTS")
+            return await asyncio.to_thread(self._tts_sapi, text)
 
     @staticmethod
     def _play_audio_file(path: str, stop_evt: threading.Event | None = None) -> None:
@@ -576,6 +741,7 @@ class VoiceDaemon:
             while proc.poll() is None:
                 if stop_evt and stop_evt.is_set():
                     proc.terminate()
+                    proc.wait()
                     break
                 time.sleep(0.05)
         else:
@@ -586,6 +752,7 @@ class VoiceDaemon:
                     while proc.poll() is None:
                         if stop_evt and stop_evt.is_set():
                             proc.terminate()
+                            proc.wait()
                             break
                         time.sleep(0.05)
                     return
@@ -594,6 +761,7 @@ class VoiceDaemon:
 
     @staticmethod
     def _tts_sapi(text: str) -> bool:
+        """Offline / system TTS fallback used when edge-tts is unavailable or fails."""
         try:
             import pyttsx3
             engine = pyttsx3.init()

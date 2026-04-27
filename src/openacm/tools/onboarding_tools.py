@@ -40,14 +40,18 @@ log = structlog.get_logger()
                 "enum": ["male", "female", "neutral"],
                 "description": "Infer the grammatical gender of the assistant name. 'female' for feminine names (Cortana, Aria, Nova, Sofia), 'male' for masculine names (Jarvis, Max, Alex, Victor), 'neutral' if ambiguous or the user didn't give a name."
             },
+            "language": {
+                "type": "string",
+                "description": "BCP-47 language code inferred from the user's primary spoken language ('es', 'en', 'fr', 'pt', 'de', 'it', 'ja', 'zh', etc.). If the user is comfortable in multiple languages or you cannot tell, return an empty string '' to enable multilingual auto-detection (Whisper supports 99 languages). Setting a fixed language gives more accurate STT for that language; empty string is more flexible."
+            },
         },
-        "required": ["user_name", "assistant_name", "behaviors", "gender"],
+        "required": ["user_name", "assistant_name", "behaviors", "gender", "language"],
     },
     risk_level="low",
     needs_sandbox=False,
     category="system",
 )
-async def save_user_profile(user_name: str, assistant_name: str, behaviors: str, gender: str = "neutral", **kwargs) -> str:
+async def save_user_profile(user_name: str, assistant_name: str, behaviors: str, gender: str = "neutral", language: str = "", **kwargs) -> str:
     """Save the user's profile and configure the assistant."""
     import re, json
     _brain = kwargs.get("_brain")
@@ -126,17 +130,29 @@ async def save_user_profile(user_name: str, assistant_name: str, behaviors: str,
     except Exception as e:
         log.warning("Could not update in-memory config after onboarding", error=str(e))
 
-    # Auto-select TTS voice gender
-    _VOICE_FOR_GENDER = {"female": "af_heart", "male": "am_adam"}
-    if gender in _VOICE_FOR_GENDER and _state.database:
+    # Auto-select TTS voice gender and persist STT language
+    _VOICE_FOR_GENDER        = {"female": "af_heart",          "male": "am_adam"}
+    _SERVER_TTS_FOR_GENDER   = {"female": "es-MX-DaliaNeural", "male": "es-MX-JorgeNeural"}
+    if _state.database:
         try:
             raw = await _state.database.get_setting("voice.config")
             vcfg = json.loads(raw) if raw else {}
-            vcfg["tts_voice"] = _VOICE_FOR_GENDER[gender]
+            if gender in _VOICE_FOR_GENDER:
+                vcfg["tts_voice"] = _VOICE_FOR_GENDER[gender]
+            if gender in _SERVER_TTS_FOR_GENDER:
+                vcfg.setdefault("server_tts_voice", _SERVER_TTS_FOR_GENDER[gender])
             vcfg["gender"] = gender
+            # Empty string → multilingual auto-detect; otherwise lock to that language
+            vcfg["stt_language"] = language.strip().lower()
             await _state.database.set_setting("voice.config", json.dumps(vcfg))
         except Exception as e:
-            log.warning("Could not auto-set voice gender", error=str(e))
+            log.warning("Could not auto-set voice config after onboarding", error=str(e))
+
+    # Apply STT language to running daemon immediately if active
+    daemon = getattr(_state, "voice_daemon", None)
+    if daemon:
+        lang = language.strip().lower()
+        daemon._stt_language = lang if lang else None
 
     return (
         f"User profile saved successfully! You are now {assistant_name}. "

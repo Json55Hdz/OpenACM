@@ -295,10 +295,10 @@ function VoiceEngineCard({
               <span className="dot dot-accent acm-pulse mt-0.5" style={{ flexShrink: 0 }} />
               <div>
                 <p className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-2)' }}>
-                  Downloading Whisper base model (~150 MB)
+                  Downloading Whisper small model (~470 MB)
                 </p>
                 <p className="text-[10px] mt-0.5" style={{ color: 'var(--acm-fg-4)' }}>
-                  First-run download from HuggingFace. Will be cached — won't download again.
+                  First-run download from HuggingFace. Multilingual — supports 99 languages. Will be cached.
                 </p>
               </div>
             </div>
@@ -850,26 +850,46 @@ function DaemonContent() {
               </p>
 
               {/* Voice toggle button */}
-              {isSupported && (
-                <button
-                  onClick={isVoiceActive ? deactivate : activate}
-                  className="mt-5 flex items-center gap-2 px-5 py-2 rounded-full transition-all"
-                  style={isVoiceActive ? {
-                    background: `${voiceInfo.color}18`,
-                    border: `1px solid ${voiceInfo.color}55`,
-                    color: voiceInfo.color,
-                  } : {
-                    background: 'var(--acm-elev)',
-                    border: '1px solid var(--acm-border)',
-                    color: 'var(--acm-fg-3)',
-                  }}
-                >
-                  {isVoiceActive
-                    ? <><MicOff size={13} /><span className="text-xs mono font-bold tracking-wider">DISABLE VOICE</span></>
-                    : <><Mic size={13} /><span className="text-xs mono font-bold tracking-wider">ENABLE VOICE</span></>
-                  }
-                </button>
-              )}
+              {isSupported && (() => {
+                // In browser/auto mode the in-page Kokoro model MUST be fully loaded before
+                // we let the user activate voice — otherwise a response could arrive before
+                // the model is ready and TTS would silently no-op.
+                const needsKokoro = engineMode === 'browser' || engineMode === 'auto';
+                const kokoroBlocking = needsKokoro && !isModelReady && !isVoiceActive;
+                const progressLabel = modelProgress != null
+                  ? `LOADING KOKORO ${modelProgress}%`
+                  : 'LOADING KOKORO…';
+                return (
+                  <button
+                    onClick={isVoiceActive ? deactivate : activate}
+                    disabled={kokoroBlocking}
+                    title={kokoroBlocking ? 'Waiting for Kokoro TTS model to finish loading' : undefined}
+                    className="mt-5 flex items-center gap-2 px-5 py-2 rounded-full transition-all"
+                    style={isVoiceActive ? {
+                      background: `${voiceInfo.color}18`,
+                      border: `1px solid ${voiceInfo.color}55`,
+                      color: voiceInfo.color,
+                    } : kokoroBlocking ? {
+                      background: 'var(--acm-elev)',
+                      border: '1px solid var(--acm-border)',
+                      color: 'var(--acm-fg-4)',
+                      opacity: 0.55,
+                      cursor: 'not-allowed',
+                    } : {
+                      background: 'var(--acm-elev)',
+                      border: '1px solid var(--acm-border)',
+                      color: 'var(--acm-fg-3)',
+                    }}
+                  >
+                    {isVoiceActive
+                      ? <><MicOff size={13} /><span className="text-xs mono font-bold tracking-wider">DISABLE VOICE</span></>
+                      : kokoroBlocking
+                        ? <><Mic size={13} /><span className="text-xs mono font-bold tracking-wider">{progressLabel}</span></>
+                        : <><Mic size={13} /><span className="text-xs mono font-bold tracking-wider">ENABLE VOICE</span></>
+                    }
+                  </button>
+                );
+              })()}
             </div>
 
             {/* State contract card */}
