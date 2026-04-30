@@ -8,6 +8,7 @@ channels, web dashboard, and the interactive console.
 import asyncio
 import signal
 import sys
+from importlib.metadata import version as _pkg_version
 
 import structlog
 from rich.console import Console
@@ -137,7 +138,7 @@ class OpenACM:
                 f"  🔑 Dashboard Token:\n"
                 f"  [bold yellow]{dashboard_token}[/bold yellow]\n"
                 f"  [dim](Copy this token the first time you open the dashboard)[/dim]",
-                title="[bold white]OpenACM v0.1.0[/bold white]",
+                title=f"[bold white]OpenACM v{_pkg_version('openacm')}[/bold white]",
                 border_style="green",
             )
         )
