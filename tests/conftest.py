@@ -26,6 +26,7 @@ from openacm.core.config import (
     ChannelsConfig,
 )
 from openacm.core.events import EventBus
+from openacm.core.llm_router import ProviderProfile
 from openacm.storage.database import Database
 
 
@@ -94,6 +95,12 @@ def mock_llm_router():
     router._current_provider = "mock"
     router._current_model = "mock-model"
     router.local_router = None
+    router.get_provider_profile = MagicMock(return_value=ProviderProfile(
+        name="mock",
+        needs_tool_enforcement=False,
+        tool_choice_mode="auto",
+        max_tools_per_call=None,
+    ))
     return router
 
 
@@ -114,12 +121,11 @@ async def tool_registry(db, event_bus, app_config):
     from openacm.security.policies import SecurityPolicy
 
     policy = SecurityPolicy(app_config.security)
-    sandbox = Sandbox(policy)
+    sandbox = Sandbox(policy, event_bus)
     registry = ToolRegistry(
         database=db,
         event_bus=event_bus,
         sandbox=sandbox,
-        security_policy=policy,
     )
     # Skip precomputing embeddings — too slow and needs sentence-transformers loaded
     return registry
@@ -129,15 +135,15 @@ async def tool_registry(db, event_bus, app_config):
 async def brain(app_config, mock_llm_router, db, tool_registry, event_bus):
     """Brain wired to mock LLM — no real API calls, no real model loading."""
     from openacm.core.brain import Brain
+    from openacm.core.memory import MemoryManager
 
+    memory = MemoryManager(database=db, config=app_config.assistant)
     b = Brain(
         config=app_config.assistant,
         llm_router=mock_llm_router,
-        database=db,
-        tool_registry=tool_registry,
+        memory=memory,
         event_bus=event_bus,
-        memory=None,
-        rag=None,
+        tool_registry=tool_registry,
         skill_manager=None,
     )
     return b

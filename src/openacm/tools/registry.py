@@ -162,7 +162,7 @@ class ToolRegistry:
             "inicializa", "iniciar", "inicializar", "deploy", "desplegar",
             # System info keywords
             "stats", "stat", "cpu", "ram", "memoria", "memory", "disco", "disk",
-            "gpu", "temperatura", "temperature", "bateria", "battery", "proceso",
+            "gpu", "temperatura", "temperature", "bateria", "battery",
             "rendimiento", "performance", "uso", "usage", "recursos", "resources",
             "info del pc", "info pc", "como esta el pc", "estado del pc",
         ],
