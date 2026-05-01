@@ -11,9 +11,19 @@ from openacm.tools.base import tool
 
 log = structlog.get_logger()
 
-# Injected by app.py
-_mcp_manager = None
-_config = None  # AppConfig instance
+
+def _mcp(brain):
+    """Return the MCP manager from the tool registry."""
+    if brain and brain.tool_registry:
+        return brain.tool_registry.mcp_manager
+    return None
+
+
+def _cfg(brain):
+    """Return the AppConfig from the tool registry."""
+    if brain and brain.tool_registry:
+        return brain.tool_registry.app_config
+    return None
 
 
 def _port() -> str:
@@ -39,6 +49,7 @@ def _get_db(brain):
     category="system",
 )
 async def list_mcp_servers(_brain=None, **kwargs) -> str:
+    _mcp_manager = _mcp(_brain)
     if _mcp_manager is None:
         return "MCP manager no disponible."
     servers = _mcp_manager.get_status()
@@ -122,6 +133,7 @@ async def add_mcp_server(
     _brain=None,
     **kwargs,
 ) -> str:
+    _mcp_manager = _mcp(_brain)
     if _mcp_manager is None:
         return "MCP manager no disponible."
 
@@ -172,6 +184,7 @@ async def add_mcp_server(
     category="system",
 )
 async def connect_mcp_server(name: str, _brain=None, **kwargs) -> str:
+    _mcp_manager = _mcp(_brain)
     if _mcp_manager is None:
         return "MCP manager no disponible."
     if name not in _mcp_manager.servers:
@@ -214,6 +227,7 @@ async def connect_mcp_server(name: str, _brain=None, **kwargs) -> str:
     category="system",
 )
 async def disconnect_mcp_server(name: str, _brain=None, **kwargs) -> str:
+    _mcp_manager = _mcp(_brain)
     if _mcp_manager is None:
         return "MCP manager no disponible."
     try:
@@ -242,6 +256,7 @@ async def disconnect_mcp_server(name: str, _brain=None, **kwargs) -> str:
 async def get_openacm_config(_brain=None, **kwargs) -> str:
     if _brain is None:
         return "Brain no disponible."
+    _config = _cfg(_brain)
     port = _port()
     lines = ["**Configuración actual de OpenACM:**\n"]
 
@@ -323,6 +338,7 @@ async def switch_llm_model(model: str, _brain=None, **kwargs) -> str:
     category="system",
 )
 async def update_security_mode(mode: str, _brain=None, **kwargs) -> str:
+    _config = _cfg(_brain)
     if _config is None:
         return "Config no disponible."
     try:

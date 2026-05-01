@@ -503,30 +503,11 @@ class OpenACM:
 
             import os as _os
             _os.environ["OPENACM_PORT"] = str(self.config.web.port)
-            # Give cron tools access to the scheduler for trigger_now
-            if self._cron_scheduler:
-                try:
-                    from openacm.tools import cron_tool as _ct
-                    _ct._cron_scheduler = self._cron_scheduler
-                except Exception:
-                    pass
-
-            # Give swarm tool access to the swarm manager
-            if self._swarm_manager:
-                try:
-                    from openacm.tools import swarm_tool as _st
-                    _st._swarm_manager = self._swarm_manager
-                except Exception:
-                    pass
-
-            # Give platform tools access to MCP manager and config
-            try:
-                from openacm.tools import platform_tools as _pt
-                if self._mcp_manager:
-                    _pt._mcp_manager = self._mcp_manager
-                _pt._config = self.config
-            except Exception:
-                pass
+            # Wire optional managers into the tool registry
+            self.tool_registry.cron_scheduler = self._cron_scheduler
+            self.tool_registry.swarm_manager = self._swarm_manager
+            self.tool_registry.mcp_manager = self._mcp_manager
+            self.tool_registry.app_config = self.config
 
             self._web_server = await create_web_server(
                 config=self.config,

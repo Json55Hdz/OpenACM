@@ -10,8 +10,12 @@ from openacm.tools.base import tool
 
 log = structlog.get_logger()
 
-# Injected by app.py after initialization
-_swarm_manager = None
+
+def _swarm(brain):
+    """Return the swarm manager from the tool registry."""
+    if brain and brain.tool_registry:
+        return brain.tool_registry.swarm_manager
+    return None
 
 
 @tool(
@@ -68,6 +72,7 @@ async def create_swarm(
     _brain=None,
     **kwargs,
 ) -> str:
+    _swarm_manager = _swarm(_brain)
     if _swarm_manager is None:
         return "Swarm manager is not available. Restart OpenACM and try again."
 
@@ -139,6 +144,7 @@ async def create_swarm(
     category="swarm",
 )
 async def start_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
+    _swarm_manager = _swarm(_brain)
     if _swarm_manager is None:
         return "Swarm manager is not available."
     try:
@@ -172,6 +178,7 @@ async def start_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
     category="swarm",
 )
 async def stop_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
+    _swarm_manager = _swarm(_brain)
     if _swarm_manager is None:
         return "Swarm manager is not available."
     try:
@@ -205,6 +212,7 @@ async def stop_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
     category="swarm",
 )
 async def delete_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
+    _swarm_manager = _swarm(_brain)
     if _swarm_manager is None:
         return "Swarm manager is not available."
     try:
@@ -232,6 +240,7 @@ async def delete_swarm(swarm_id: int, _brain=None, **kwargs) -> str:
     category="swarm",
 )
 async def list_swarms(_brain=None, **kwargs) -> str:
+    _swarm_manager = _swarm(_brain)
     if _swarm_manager is None:
         return "Swarm manager is not available."
     try:

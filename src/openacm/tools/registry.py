@@ -56,6 +56,11 @@ class ToolRegistry:
         # Callback injected by the web server to request user confirmation before
         # executing sensitive tools.  Signature: (tool, command, channel_id) -> bool
         self.confirm_callback = None
+        # Optional manager references — set by app.py after startup
+        self.cron_scheduler: Any = None
+        self.swarm_manager: Any = None
+        self.mcp_manager: Any = None
+        self.app_config: Any = None
 
     def register(self, tool: ToolDefinition):
         """Register a single tool."""

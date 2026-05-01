@@ -16,8 +16,12 @@ from openacm.tools.base import tool
 
 log = structlog.get_logger()
 
-# Module-level scheduler reference — set by app.py after init
-_cron_scheduler = None
+
+def _sched(brain):
+    """Return the cron scheduler from the tool registry."""
+    if brain and brain.tool_registry:
+        return brain.tool_registry.cron_scheduler
+    return None
 
 
 # ─── list_cron_jobs ───────────────────────────────────────────────────────────
@@ -128,6 +132,7 @@ async def create_cron_job(
     _brain=None,
     **kwargs,
 ) -> str:
+    _cron_scheduler = _sched(_brain)
     db = _get_db(_brain)
     if not db:
         return "Error: database not available."
@@ -200,6 +205,7 @@ async def create_cron_job(
     category="system",
 )
 async def delete_cron_job(job_id: int, _brain=None, **kwargs) -> str:
+    _cron_scheduler = _sched(_brain)
     db = _get_db(_brain)
     if not db:
         return "Error: database not available."
@@ -238,6 +244,7 @@ async def delete_cron_job(job_id: int, _brain=None, **kwargs) -> str:
     category="system",
 )
 async def toggle_cron_job(job_id: int, enabled: bool | None = None, _brain=None, **kwargs) -> str:
+    _cron_scheduler = _sched(_brain)
     db = _get_db(_brain)
     if not db:
         return "Error: database not available."
@@ -277,6 +284,7 @@ async def toggle_cron_job(job_id: int, enabled: bool | None = None, _brain=None,
     category="system",
 )
 async def trigger_cron_job(job_id: int, _brain=None, **kwargs) -> str:
+    _cron_scheduler = _sched(_brain)
     if not _cron_scheduler:
         return "Error: cron scheduler is not running."
 
@@ -347,6 +355,7 @@ async def update_cron_job(
     _brain=None,
     **kwargs,
 ) -> str:
+    _cron_scheduler = _sched(_brain)
     db = _get_db(_brain)
     if not db:
         return "Error: database not available."
