@@ -9,6 +9,14 @@ from typing import Any
 
 import structlog
 
+from openacm.core.messages import (
+    MSG_CMD_RESET,
+    MSG_CMD_NO_LLM,
+    MSG_CMD_TOO_FEW,
+    MSG_CMD_COMPACT_HEADER,
+    MSG_CMD_COMPACT_FAILED,
+)
+
 log = structlog.get_logger()
 
 
@@ -81,7 +89,7 @@ class CommandProcessor:
         await self.brain.memory.clear(user_id, channel_id)
         return CommandResult(
             handled=True,
-            text="🔄 Reset complete. Conversation history cleared.\nThe AI is ready for a fresh start.",
+            text=MSG_CMD_RESET,
             data={"reset": True},
         )
 
@@ -143,14 +151,14 @@ class CommandProcessor:
         """Force immediate compaction of the current conversation."""
         mem = self.brain.memory
         if not mem._llm_router:
-            return CommandResult(handled=True, text="⚠️ No LLM available for compaction.")
+            return CommandResult(handled=True, text=MSG_CMD_NO_LLM)
 
         msgs = await mem.get_messages(user_id, channel_id)
         non_system = [m for m in msgs if m.get("role") != "system"]
         if len(non_system) < 4:
             return CommandResult(
                 handled=True,
-                text="ℹ️ Not enough messages to compact yet (need at least 4).",
+                text=MSG_CMD_TOO_FEW,
             )
 
         # Force compaction regardless of threshold
@@ -161,7 +169,7 @@ class CommandProcessor:
         except Exception as e:
             return CommandResult(
                 handled=True,
-                text=f"❌ Compaction failed: {e}",
+                text=MSG_CMD_COMPACT_FAILED.format(error=e),
             )
         finally:
             # Always reset the auto-compact baseline after a manual attempt so the
@@ -175,7 +183,7 @@ class CommandProcessor:
         new_msgs = await mem.get_messages(user_id, channel_id)
         new_count = len([m for m in new_msgs if m.get("role") != "system"])
 
-        header = f"🗜️ Compacted {len(non_system)} → {new_count} messages.\n\n"
+        header = MSG_CMD_COMPACT_HEADER.format(before=len(non_system), after=new_count)
         body = summary_text if summary_text else "(no summary produced)"
         return CommandResult(
             handled=True,

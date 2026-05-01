@@ -29,6 +29,27 @@ from openacm.core.events import (
 )
 from openacm.core.llm_router import LLMRouter
 from openacm.core.memory import MemoryManager
+from openacm.core.messages import (
+    MSG_CANCELLED,
+    MSG_CANCELLED_FOLLOWUP,
+    MSG_QUEUED_NOTIFY,
+    MSG_QUEUED_ACK,
+    MSG_QUEUED_DEQUEUED,
+    MSG_THINKING,
+    MSG_COMPACTING,
+    MSG_STEP,
+    MSG_TOOL_EXECUTING,
+    MSG_EMPTY_RESPONSE,
+    MSG_MAX_ITERATIONS,
+    MSG_TOOL_GEN_FAILED,
+    MSG_TOOL_GEN_SUCCESS,
+    MSG_TOOL_GEN_ERROR,
+    MSG_TOOL_REGISTRY_UNAVAILABLE,
+    MSG_ROUTINES_HEADER,
+    MSG_ROUTINES_FOOTER,
+    PROMPT_SETUP_MODE,
+    PROMPT_RESURRECTION_HINT,
+)
 from openacm.core.acm_context import get_openacm_context, get_short_context, current_channel_id
 
 log = structlog.get_logger()
@@ -245,7 +266,7 @@ class Brain:
             from urllib.parse import urlparse
             label = urlparse(url).netloc or url
             await self.local_router.learn_action(
-                phrase, tool_name, args, intent, f"Abriendo {label}..."
+                phrase, tool_name, args, intent, MSG_FAST_OPENING.format(name=label)
             )
 
         elif tool_name == "run_command" and intent == "OPEN_APP":
@@ -255,7 +276,7 @@ class Brain:
             # Use the last token of the command as the app name (e.g. "start blender" → "Blender")
             app_name = command.strip().split()[-1].title()
             await self.local_router.learn_action(
-                phrase, tool_name, args, intent, f"Abriendo {app_name}..."
+                phrase, tool_name, args, intent, MSG_FAST_OPENING.format(name=app_name)
             )
 
     # ── Multimodal helpers ────────────────────────────────────────────────
@@ -578,18 +599,18 @@ class Brain:
                     "channel_id": channel_id,
                     "channel_type": channel_type,
                 })
-                return "⏹ Cancelado."
+                return MSG_CANCELLED
             else:
                 # Queue the message — latest message wins
                 self._channel_queue[_task_key] = (content, user_id, channel_id, channel_type, attachments, is_transparent)
                 await self.event_bus.emit(EVENT_THINKING, {
                     "status": "queued",
-                    "message": "⏳ Procesando tarea anterior... tu mensaje se enviará al terminar.",
+                    "message": MSG_QUEUED_NOTIFY,
                     "user_id": user_id,
                     "channel_id": channel_id,
                     "channel_type": channel_type,
                 })
-                return "⏳ Procesando algo, espera... (escribe «cancelar» para detener)"
+                return MSG_QUEUED_ACK
 
         # No active task — clear any stale cancel flag and run immediately
         self._cancel_flags.setdefault(_task_key, asyncio.Event()).clear()
@@ -602,7 +623,7 @@ class Brain:
         try:
             return await task
         except asyncio.CancelledError:
-            return "⏹ Cancelado."
+            return MSG_CANCELLED
 
     async def _run_then_drain(
         self,
@@ -626,7 +647,7 @@ class Brain:
             q_content, q_user, q_channel, q_type, q_attach, q_trans = queued
             await self.event_bus.emit(EVENT_THINKING, {
                 "status": "start",
-                "message": "▶ Procesando tu mensaje...",
+                "message": MSG_QUEUED_DEQUEUED,
                 "user_id": q_user,
                 "channel_id": q_channel,
                 "channel_type": q_type,
@@ -650,28 +671,11 @@ class Brain:
         system_prompt = self.config.system_prompt
 
         if not getattr(self.config, "onboarding_completed", False):
-            system_prompt = (
-                "[SETUP MODE]: You are meeting your user for the first time. Be natural and conversational — no agendas, no lists, no robotic structure.\n"
-                "You need to collect 3 things across the conversation, each one naturally:\n"
-                "   1. Their name.\n"
-                "   2. What they want to call you.\n"
-                "   3. How they want you to behave (tone, style, personality).\n"
-                "Collect them one at a time through normal conversation — never announce that you have 'N questions' or a setup process. "
-                "Just chat, ask naturally, and wait for each answer before moving on.\n"
-                "Do NOT help with unrelated tasks until you have all 3.\n"
-                "Once you have all 3, call the `save_user_profile` tool to finish setup."
-            )
+            system_prompt = PROMPT_SETUP_MODE
         else:
             rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
             if len(rc_paths) == 0:
-                system_prompt += (
-                    "\n\n[SISTEMA]: Tienes activa la capacidad 'Code Resurrection' que indexa código antiguo del usuario. "
-                    "Pero NO hay ninguna ruta configurada en el sistema. Cuando consideres que la "
-                    "conversación actual está terminando naturalmente, ofrécele muy amistosamente usar Code Resurrection. "
-                    "Dile que puede pasarte la ruta del directorio por el chat para que tú la agregues automáticamente "
-                    "(usando la tool add_resurrection_path), O en su defecto, dale este enlace markdown exacto con formato de botón para "
-                    "que lo haga manualmente: `[Ir a Configuración](/config)`."
-                )
+                system_prompt += PROMPT_RESURRECTION_HINT
 
         existing_messages = await self.memory.get_messages(user_id, channel_id)
         is_new_conversation = len(existing_messages) == 0
@@ -980,7 +984,7 @@ class Brain:
             EVENT_THINKING,
             {
                 "status": "start",
-                "message": "🤔 Pensando...",
+                "message": MSG_THINKING,
                 "user_id": user_id,
                 "channel_id": channel_id,
                 "channel_type": channel_type,
@@ -1012,7 +1016,7 @@ class Brain:
         if self.memory.should_compact(user_id, channel_id):
             await self.event_bus.emit(EVENT_THINKING, {
                 "status": "queued",
-                "message": "🗜️ Compactando contexto...",
+                "message": MSG_COMPACTING,
                 "user_id": user_id,
                 "channel_id": channel_id,
                 "channel_type": channel_type,
@@ -1112,7 +1116,7 @@ class Brain:
                 EVENT_THINKING,
                 {
                     "status": "processing",
-                    "message": f"🔄 Step {iterations}/{max_iterations}...",
+                    "message": MSG_STEP.format(iterations=iterations, max_iterations=max_iterations),
                     "iteration": iterations,
                     "user_id": user_id,
                     "channel_id": channel_id,
@@ -1370,7 +1374,7 @@ class Brain:
                     EVENT_THINKING,
                     {
                         "status": "tool_execution",
-                        "message": f"⚙️ Ejecutando {tool_name}...",
+                        "message": MSG_TOOL_EXECUTING.format(tool_name=tool_name),
                         "tool": tool_name,
                         "user_id": user_id,
                         "channel_id": channel_id,
@@ -1423,7 +1427,7 @@ class Brain:
                     _trace["outcome"] = "cancelled"
                     _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
                     self._save_trace(_trace)
-                    return "⏹ Cancelado — ¿en qué más puedo ayudarte?"
+                    return MSG_CANCELLED_FOLLOWUP
                 except json.JSONDecodeError:
                     result = f"Error: Invalid arguments for tool '{tool_name}'"
                     _tool_trace["error"] = "JSONDecodeError"
@@ -1570,19 +1574,13 @@ class Brain:
                 _trace["outcome"] = "empty_response"
                 _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
                 self._save_trace(_trace)
-                return (
-                    "⚠️ He ejecutado varias herramientas pero no obtuve una respuesta final clara. "
-                    "Los resultados están disponibles en el historial. ¿Te gustaría que intentemos de otra forma?"
-                )
+                return MSG_EMPTY_RESPONSE
         except Exception as e:
             log.error("Error in final LLM call after max iterations", error=str(e))
             _trace["outcome"] = "max_iterations_error"
             _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
             self._save_trace(_trace)
-            return (
-                "⚠️ He ejecutado varias herramientas pero alcanzé el límite de pasos. "
-                "Revisa el dashboard para ver los resultados completos, o intenta dividir tu solicitud en pasos más pequeños."
-            )
+            return MSG_MAX_ITERATIONS
 
     # ── Workflow tracking helpers ─────────────────────────────────────────────
 
@@ -1659,7 +1657,7 @@ class Brain:
             await db.mark_routines_mentioned(ids)
 
             lines = ["\n\n---"]
-            lines.append("📅 **He detectado nuevas rutinas en tu actividad:**")
+            lines.append(MSG_ROUTINES_HEADER)
             for r in routines:
                 name = r.get("name", "Rutina")
                 desc = r.get("description", "")
@@ -1675,7 +1673,7 @@ class Brain:
                 if desc:
                     line += f"\n    _{desc}_"
                 lines.append(line)
-            lines.append("Puedes verlas y ejecutarlas en la pestaña **Mis Rutinas**.")
+            lines.append(MSG_ROUTINES_FOOTER)
             return response_text + "\n".join(lines)
         except Exception as exc:
             log.debug("_append_routine_mentions failed", error=str(exc))
@@ -1747,7 +1745,7 @@ class Brain:
             # Parse JSON response
             json_match = _re.search(r'\{.*\}', raw, _re.DOTALL)
             if not json_match:
-                return "No pude generar la tool. Inténtalo manualmente con 'crea una tool que...'."
+                return MSG_TOOL_GEN_FAILED
 
             tool_data = json.loads(json_match.group())
 
@@ -1764,10 +1762,10 @@ class Brain:
                     },
                     user_id, channel_id, channel_type, _brain=self
                 )
-                return f"Basándome en tus flujos repetidos, generé esta tool:\n\n{result}"
+                return MSG_TOOL_GEN_SUCCESS.format(result=result)
 
-            return "Tool registry no disponible. No se pudo crear la tool."
+            return MSG_TOOL_REGISTRY_UNAVAILABLE
 
         except Exception as e:
             log.error("Workflow tool creation failed", error=str(e))
-            return f"Error al generar la tool automáticamente: {str(e)[:200]}"
+            return MSG_TOOL_GEN_ERROR.format(error=str(e)[:200])

@@ -12,6 +12,7 @@ from typing import Any
 from datetime import datetime
 
 from openacm.storage.database import Database
+from openacm.core.messages import MSG_SKILL_CONTEXT_HEADER, MSG_SKILL_CONTEXT_FOOTER
 from openacm.core.skill_manager_default_skills import DEFAULT_SKILLS
 
 log = structlog.get_logger()
@@ -228,14 +229,14 @@ created: "{datetime.now().isoformat()}"
         # Build prompt — cap each skill at 1200 chars to avoid token bloat.
         # Skills are instructional context, not full documentation.
         MAX_SKILL_CHARS = 1200
-        prompts = ["\n# Contexto Especializado (solo para esta consulta):"]
+        prompts = [MSG_SKILL_CONTEXT_HEADER]
         for skill in relevant_skills:
             content = skill["content"]
             if len(content) > MAX_SKILL_CHARS:
                 content = content[:MAX_SKILL_CHARS] + "..."
             prompts.append(f"\n## {skill['name']}\n{content}")
 
-        prompts.append("\n[Usa este contexto solo si es relevante para responder]")
+        prompts.append(MSG_SKILL_CONTEXT_FOOTER)
 
         return "\n".join(prompts)
 

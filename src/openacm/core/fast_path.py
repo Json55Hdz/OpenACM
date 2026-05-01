@@ -21,6 +21,14 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 import structlog
 
+from openacm.core.messages import (
+    MSG_FAST_DONE,
+    MSG_FAST_SYSINFO,
+    MSG_FAST_SCREENSHOT,
+    MSG_FAST_OPENING,
+    MSG_FAST_MEDIA,
+)
+
 if TYPE_CHECKING:
     from openacm.core.brain import Brain
 
@@ -97,7 +105,7 @@ async def dispatch(
             result = await brain.tool_registry.execute(
                 learned["tool"], learned["args"], user_id, channel_id, _brain=brain
             )
-            return learned.get("response") or "✅ Listo."
+            return learned.get("response") or MSG_FAST_DONE
         except Exception as e:
             log.warning("Fast-path: learned action failed, trying handler", error=str(e))
 
@@ -121,7 +129,7 @@ async def handle_system_info(
     raw = await brain.tool_registry.execute(
         "system_info", {"detail": "summary"}, user_id, channel_id, _brain=brain
     )
-    return f"Aquí está el resumen del sistema:\n\n{raw}"
+    return MSG_FAST_SYSINFO.format(raw=raw)
 
 
 @register("SCREENSHOT")
@@ -131,7 +139,7 @@ async def handle_screenshot(
     raw = await brain.tool_registry.execute(
         "take_screenshot", {}, user_id, channel_id, _brain=brain
     )
-    return f"Captura tomada. {raw}"
+    return MSG_FAST_SCREENSHOT.format(raw=raw)
 
 
 @register("OPEN_APP")
@@ -147,7 +155,7 @@ async def handle_open_app(
     await brain.tool_registry.execute(
         "run_command", {"command": cmd}, user_id, channel_id, _brain=brain
     )
-    return f"Abriendo {matched.title()}..."
+    return MSG_FAST_OPENING.format(name=matched.title())
 
 
 @register("PLAY_MEDIA")
@@ -162,4 +170,4 @@ async def handle_play_media(
     await brain.tool_registry.execute(
         "run_command", {"command": cmd}, user_id, channel_id, _brain=brain
     )
-    return "¡Dale! Abriendo la música..."
+    return MSG_FAST_MEDIA

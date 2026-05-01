@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import structlog
 
 from openacm.core.config import AssistantConfig
+from openacm.core.messages import PROMPT_COMPACT_SYSTEM
 from openacm.storage.database import Database
 from openacm.core.events import EventBus, EVENT_MEMORY_COMPACTED
 
@@ -26,34 +27,7 @@ _DEFAULT_COMPACT_THRESHOLD = 25
 _DEFAULT_COMPACT_KEEP_RECENT = 6
 
 # Prompt used to summarize old messages
-_COMPACT_SYSTEM_PROMPT = """\
-You are compacting a conversation between a user and an AI assistant.
-
-Produce a DETAILED summary that preserves everything needed to continue the work seamlessly.
-Structure your response exactly like this (use the same language the user used):
-
-## Lo que se trabajó
-- Main goals, tasks, and requests from the user
-
-## Acciones realizadas
-- Files created, edited, or deleted — with EXACT full paths
-- Commands run and their output or result
-- Tools used and what they produced or found
-- Code written, bugs fixed, features added
-
-## Decisiones y hallazgos clave
-- Technical decisions made and the reasoning behind them
-- Bugs found and how they were fixed
-- Important discoveries or constraints uncovered
-
-## Estado actual
-- What is done ✓
-- What is pending / in progress (be specific)
-- Any errors, blockers, or open questions remaining
-
-Be thorough and specific — this summary permanently replaces the original messages \
-and is the ONLY record of this work. Never truncate or omit paths, filenames, or outcomes.\
-"""
+_COMPACT_SYSTEM_PROMPT = PROMPT_COMPACT_SYSTEM
 
 
 class MemoryManager:
