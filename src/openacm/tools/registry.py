@@ -20,6 +20,7 @@ from openacm.core.events import EventBus
 from openacm.security.sandbox import Sandbox
 from openacm.storage.database import Database
 from openacm.tools.base import ToolDefinition, get_registered_tools
+from openacm.tools.intent_keywords import INTENT_KEYWORDS as _DEFAULT_INTENT_KEYWORDS
 
 log = structlog.get_logger()
 
@@ -152,96 +153,7 @@ class ToolRegistry:
         return selected
 
     # Keyword-to-category mapping for intent-based tool filtering
-    INTENT_KEYWORDS: dict[str, list[str]] = {
-        "system": [
-            "run", "execute", "command", "terminal", "bash", "shell", "install",
-            "system", "proceso", "ejecuta", "ejecutar", "pip", "npm",
-            # Git / version control
-            "git", "commit", "push", "pull", "clone", "branch", "merge", "checkout",
-            "stash", "rebase", "diff", "log", "status", "remote", "fetch", "tag",
-            "inicializa", "iniciar", "inicializar", "deploy", "desplegar",
-            # System info keywords
-            "stats", "stat", "cpu", "ram", "memoria", "memory", "disco", "disk",
-            "gpu", "temperatura", "temperature", "bateria", "battery",
-            "rendimiento", "performance", "uso", "usage", "recursos", "resources",
-            "info del pc", "info pc", "como esta el pc", "estado del pc",
-        ],
-        "file": [
-            "file", "read", "write", "save", "directory", "folder",
-            "archivo", "carpeta", "leer", "escribir", "guardar", "lista",
-            "pdf", "excel", "word", "pptx", "powerpoint", "xlsx", "docx",
-            "csv", "zip", "download", "descargar", "adjunto", "adjuntar",
-            # Code editor tools
-            "edit", "edita", "editar", "modifica", "modificar", "cambia", "cambiar",
-            "reemplaza", "replace", "refactor", "refactoriza",
-            "función", "funcion", "clase", "class", "método", "metodo", "method",
-            "línea", "linea", "line", "outline", "estructura", "structure",
-            "busca en", "search in", "grep", "find in",
-            "lint", "linter", "error de sintaxis", "syntax error",
-            "arregla el código", "fix the code", "fix code",
-            "code", "código", "codigo", "implement", "implementa",
-        ],
-        "web": [
-            "search", "browse", "url", "website", "navigate", "click",
-            "busca", "buscar", "web", "página", "página web",
-        ],
-        "ai": [
-            "remember", "memory", "recall", "search_memory",
-            "recuerda", "memoria", "olvida", "recordar",
-        ],
-        "media": [
-            "screenshot", "screen", "image", "photo", "capture", "pdf", "send_file",
-            "captura", "pantalla", "panta", "foto", "imagen", "enviar archivo",
-            "toma un", "toma una", "hazme un", "dame una captura", "graba",
-        ],
-        "google": [
-            "gmail", "email", "correo", "calendar", "calendario",
-            "event", "evento", "drive", "youtube", "google",
-        ],
-        "meta": [
-            # Tool/skill listing
-            "list tools", "list skills", "what tools", "what skills",
-            "listar tools", "listar skills", "listar herramientas",
-            "qué tools", "que tools", "qué herramientas", "que herramientas",
-            "qué habilidades", "que habilidades",
-            "what can you do", "what are your tools", "what are your skills",
-            "qué puedes hacer", "que puedes hacer",
-            "cuáles son", "cuales son",
-            "show tools", "show skills", "muéstrame", "muestrame",
-            "available tools", "herramientas disponibles",
-            # Skill/tool creation
-            "create_skill", "create_tool", "crear skill", "crear tool",
-            "nueva habilidad", "nuevo skill", "new skill",
-            "create a skill", "make a skill", "define a skill",
-        ],
-        "mcp": [
-            "mcp", "model context protocol", "mcp server", "mcp tool",
-            "servidor mcp", "herramienta mcp",
-        ],
-        "ui": [
-            "ui", "interfaz", "interface", "pantalla", "screen", "dashboard",
-            "formulario", "form", "landing", "página", "component", "componente",
-            "diseño", "design", "frontend", "html", "react", "vue",
-            "stitch", "google stitch", "mockup", "prototipo", "prototype",
-            "layout", "card", "tabla", "table", "botón", "button",
-        ],
-        "iot": [
-            "light", "lights", "luz", "luces", "lamp", "lampara", "bulb",
-            "curtain", "curtains", "blind", "blinds", "persiana", "persianas",
-            "cortina", "cortinas", "cover", "shutter",
-            "tv", "television", "tele", "lg", "webos",
-            "vacuum", "aspiradora", "robot", "xiaomi", "roborock",
-            "switch", "enchufe", "plug", "outlet",
-            "iot", "smart home", "domótica", "domotica",
-            "tuya", "smartlife", "miio",
-            "turn on", "turn off", "enciende", "apaga", "encender", "apagar",
-            "dim", "brightness", "brillo", "color", "temperatura de color",
-            "open", "close", "abre", "cierra", "abrir", "cerrar",
-            "volume", "volumen", "channel", "canal", "mute", "silencio",
-            "netflix", "youtube", "hdmi",
-            "scan devices", "escanear dispositivos",
-        ],
-    }
+    INTENT_KEYWORDS: dict[str, list[str]] = _DEFAULT_INTENT_KEYWORDS
 
     def register_plugin_keywords(self, keywords: dict[str, list[str]]) -> None:
         """Allow plugins to register their own intent keyword categories at runtime.

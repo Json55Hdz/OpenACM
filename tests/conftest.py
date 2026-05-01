@@ -137,7 +137,12 @@ async def brain(app_config, mock_llm_router, db, tool_registry, event_bus):
     from openacm.core.brain import Brain
     from openacm.core.memory import MemoryManager
 
-    memory = MemoryManager(database=db, config=app_config.assistant)
+    memory = MemoryManager(
+        database=db,
+        config=app_config.assistant,
+        llm_router=mock_llm_router,
+        event_bus=event_bus,
+    )
     b = Brain(
         config=app_config.assistant,
         llm_router=mock_llm_router,

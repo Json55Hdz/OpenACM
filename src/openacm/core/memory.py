@@ -33,11 +33,17 @@ _COMPACT_SYSTEM_PROMPT = PROMPT_COMPACT_SYSTEM
 class MemoryManager:
     """Manages conversation memory per user/channel pair."""
 
-    def __init__(self, database: Database, config: AssistantConfig):
+    def __init__(
+        self,
+        database: Database,
+        config: AssistantConfig,
+        llm_router: Any = None,
+        event_bus: EventBus | None = None,
+    ):
         self.database = database
         self.config = config
-        self._llm_router: Any = None  # set by brain.py after init
-        self._event_bus: EventBus | None = None  # set by brain.py after init
+        self._llm_router: Any = llm_router
+        self._event_bus: EventBus | None = event_bus
         # In-memory cache for active conversations
         self._cache: dict[str, list[dict[str, Any]]] = {}
         # Track which conversations have a pending compaction to avoid double-firing

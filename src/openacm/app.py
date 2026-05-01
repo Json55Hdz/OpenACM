@@ -198,7 +198,12 @@ class OpenACM:
         self.security_policy = SecurityPolicy(self.config.security)
         self.sandbox = Sandbox(self.security_policy, self.event_bus)
         self.llm_router = LLMRouter(self.config.llm, self.event_bus)
-        self.memory = MemoryManager(self.database, self.config.assistant)
+        self.memory = MemoryManager(
+            self.database,
+            self.config.assistant,
+            llm_router=self.llm_router,
+            event_bus=self.event_bus,
+        )
 
         # RAG Engine
         try:

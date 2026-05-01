@@ -117,9 +117,6 @@ class Brain:
         self.event_bus = event_bus
         self.tool_registry = tool_registry
         self.skill_manager = skill_manager
-        # Give memory access to LLM router and event bus for conversation compaction
-        self.memory._llm_router = llm_router
-        self.memory._event_bus = event_bus
         self.terminal_history: list[dict] = []
         # Tracks the active processing task per channel — used for interruption
         self._channel_tasks: dict[str, asyncio.Task] = {}
