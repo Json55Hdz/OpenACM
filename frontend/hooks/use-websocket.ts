@@ -17,6 +17,7 @@ interface WebSocketMessage {
   tool?: string;
   arguments?: string;
   result?: string;
+  success?: boolean;
   message?: string;
   status?: string;
   partial?: boolean;
@@ -321,7 +322,7 @@ export function useWebSocket() {
         storeRef.current.updateToolCall(
           data.tool || '',
           data.result || '',
-          'completed',
+          data.success === false ? 'error' : 'completed',
         );
         // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.validation') {

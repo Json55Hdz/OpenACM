@@ -3,6 +3,8 @@
 import asyncio
 import json
 import re
+import time as _time
+import uuid as _uuid
 
 import structlog
 
@@ -169,6 +171,124 @@ class BrainLoopMixin:
 
         return prepared
 
+    async def _execute_one_tool(
+        self,
+        tool_call: dict,
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+    ) -> tuple:
+        """Execute a single tool call and return all data needed for memory writes.
+
+        Raises asyncio.CancelledError transparently so gather can detect cancellation.
+        All other exceptions are caught and surfaced as error strings in the result.
+        """
+        tool_name = tool_call["function"]["name"]
+        tool_args_str = tool_call["function"]["arguments"]
+        tool_call_id = _clean_tool_call_id(tool_call["id"])
+
+        _tool_trace: dict = {
+            "tool": tool_name,
+            "args_chars": len(tool_args_str),
+            "result_chars": 0,
+            "truncated": False,
+            "elapsed_ms": 0,
+            "error": None,
+        }
+        _tool_t0 = _time.monotonic()
+
+        log.info("Tool call", tool=tool_name, args=tool_args_str[:200])
+
+        await self.event_bus.emit(
+            EVENT_THINKING,
+            {
+                "status": "tool_execution",
+                "message": MSG_TOOL_EXECUTING.format(tool_name=tool_name),
+                "tool": tool_name,
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+            },
+        )
+        await self.event_bus.emit(
+            EVENT_TOOL_CALLED,
+            {
+                "tool": tool_name,
+                "arguments": tool_args_str,
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+            },
+        )
+
+        tool_args: dict = {}
+        result: str = ""
+        try:
+            tool_args = json.loads(tool_args_str) if tool_args_str else {}
+            if not isinstance(tool_args, dict):
+                tool_args = {}
+
+            if self.tool_registry and tool_name in self.tool_registry.tools:
+                result = await self.tool_registry.execute(
+                    tool_name, tool_args, user_id, channel_id, channel_type, _brain=self
+                )
+            else:
+                result = f"Error: Tool '{tool_name}' not found"
+
+        except asyncio.CancelledError:
+            raise  # propagate — gather handles it
+        except json.JSONDecodeError:
+            result = f"Error: Invalid arguments for tool '{tool_name}'"
+            _tool_trace["error"] = "JSONDecodeError"
+        except Exception as e:
+            result = f"Error executing tool '{tool_name}': {str(e)}"
+            _tool_trace["error"] = str(e)
+            log.error("Tool execution error", tool=tool_name, error=str(e))
+
+        await self.event_bus.emit(
+            EVENT_TOOL_RESULT,
+            {
+                "tool": tool_name,
+                "result": result[:5000],  # Display cap — LLM gets separately compressed copy
+                "success": _tool_trace["error"] is None,
+                "user_id": user_id,
+                "channel_id": channel_id,
+                "channel_type": channel_type,
+            },
+        )
+
+        _tool_trace["elapsed_ms"] = int((_time.monotonic() - _tool_t0) * 1000)
+        _tool_trace["result_chars"] = len(str(result))
+        _tool_trace["truncated"] = len(str(result)) > 6000
+
+        # Compress result for LLM context
+        MAX_TOOL_RESULT_CHARS = 6000
+        result_for_memory, _orig_len, _comp_len = compress_output(
+            _strip_ansi(str(result)), tool_name, tool_args
+        )
+        if _orig_len != _comp_len:
+            log.debug(
+                "Tool output compressed",
+                tool=tool_name,
+                summary=compression_summary(_orig_len, _comp_len),
+            )
+        if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
+            head = result_for_memory[:3500]
+            tail = result_for_memory[-1000:]
+            omitted = len(result_for_memory) - 4500
+            result_for_memory = head + f"\n... [{omitted} chars omitted] ...\n" + tail
+
+        # Detect file attachment produced by send_file_to_chat
+        attachment: str | None = None
+        if isinstance(result, str) and result.startswith("ATTACHMENT:"):
+            first_line = result.split("\n")[0]
+            filename = first_line.replace("ATTACHMENT:", "").strip()
+            if filename:
+                attachment = filename
+                log.info("File attachment detected", filename=filename, tool=tool_name)
+
+        return tool_call_id, tool_name, tool_args, result_for_memory, attachment, _tool_trace
+
     async def _run(
         self,
         content: str,
@@ -316,8 +436,6 @@ class BrainLoopMixin:
         _cancel_event = self._cancel_flags.setdefault(_task_key_for_cancel, asyncio.Event())
 
         # ── Trace: record this request for debugging ──────────────────────────
-        import time as _time
-        import uuid as _uuid
         _trace: dict = {
             "id": _uuid.uuid4().hex[:8],
             "started_at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -580,133 +698,72 @@ class BrainLoopMixin:
                 _last_tool_signature = _call_sig
                 _repeated_call_count = 0
 
-            # Execute each tool call
-            for tool_call in response["tool_calls"]:
-                tool_name = tool_call["function"]["name"]
-                tool_args_str = tool_call["function"]["arguments"]
-                tool_call_id = _clean_tool_call_id(tool_call["id"])
+            # Execute all tool calls in parallel, then write results to memory in order.
+            # asyncio.gather preserves input order in its return list regardless of
+            # completion order, so the memory writes below are always correctly sequenced
+            # (required by the OpenAI tool-call protocol).
+            _tool_results = await asyncio.gather(
+                *[
+                    self._execute_one_tool(tc, user_id, channel_id, channel_type)
+                    for tc in response["tool_calls"]
+                ],
+                return_exceptions=True,
+            )
 
-                log.info("Tool call", tool=tool_name, args=tool_args_str[:200])
-                _tool_trace: dict = {
-                    "tool": tool_name,
-                    "args_chars": len(tool_args_str),
-                    "result_chars": 0,
-                    "truncated": False,
-                    "elapsed_ms": 0,
-                    "error": None,
-                }
-                _tool_t0 = _time.monotonic()
+            # Check for cancellation before touching memory
+            if any(isinstance(_r, asyncio.CancelledError) for _r in _tool_results):
+                log.info("Tool execution cancelled during parallel run")
+                _trace["outcome"] = "cancelled"
+                _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
+                self._save_trace(_trace)
+                return MSG_CANCELLED_FOLLOWUP
 
-                await self.event_bus.emit(
-                    EVENT_THINKING,
-                    {
-                        "status": "tool_execution",
-                        "message": MSG_TOOL_EXECUTING.format(tool_name=tool_name),
-                        "tool": tool_name,
-                        "user_id": user_id,
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                    },
-                )
-
-                await self.event_bus.emit(
-                    EVENT_TOOL_CALLED,
-                    {
-                        "tool": tool_name,
-                        "arguments": tool_args_str,
-                        "user_id": user_id,
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                    },
-                )
-
-                try:
-                    # Parse arguments
-                    tool_args = json.loads(tool_args_str) if tool_args_str else {}
-
-                    # Record tool call for workflow tracking
-                    _tool_sequence_for_turn.append({
-                        "tool": tool_name,
-                        "arguments": tool_args if isinstance(tool_args, dict) else {},
-                    })
-
-                    # Execute tool
-                    if self.tool_registry and tool_name in self.tool_registry.tools:
-                        result = await self.tool_registry.execute(
-                            tool_name, tool_args, user_id, channel_id, channel_type, _brain=self
-                        )
-
-                        # Any tool can return ATTACHMENT:filename on the first line
-                        if result.startswith("ATTACHMENT:"):
-                            first_line = result.split("\n")[0]
-                            filename = first_line.replace("ATTACHMENT:", "").strip()
-                            if filename:
-                                generated_attachments.append(filename)
-                                log.info("File attachment detected", filename=filename, tool=tool_name)
-                    else:
-                        result = f"Error: Tool '{tool_name}' not found"
-
-                except asyncio.CancelledError:
-                    log.info("Tool execution cancelled by new message", tool=tool_name)
-                    _tool_trace["error"] = "CancelledError"
-                    _iter_trace["tool_calls"].append(_tool_trace)
-                    _trace["iterations"].append(_iter_trace)
-                    _trace["outcome"] = "cancelled"
-                    _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
-                    self._save_trace(_trace)
-                    return MSG_CANCELLED_FOLLOWUP
-                except json.JSONDecodeError:
-                    result = f"Error: Invalid arguments for tool '{tool_name}'"
-                    _tool_trace["error"] = "JSONDecodeError"
-                except Exception as e:
-                    result = f"Error executing tool '{tool_name}': {str(e)}"
-                    _tool_trace["error"] = str(e)
-                    log.error("Tool execution error", tool=tool_name, error=str(e))
-
-                await self.event_bus.emit(
-                    EVENT_TOOL_RESULT,
-                    {
-                        "tool": tool_name,
-                        "result": result[:5000],  # Display cap — LLM gets separately compressed copy
-                        "user_id": user_id,
-                        "channel_id": channel_id,
-                        "channel_type": channel_type,
-                    },
-                )
-
-                # Complete tool trace entry
-                _tool_trace["elapsed_ms"] = int((_time.monotonic() - _tool_t0) * 1000)
-                _tool_trace["result_chars"] = len(str(result))
-                _tool_trace["truncated"] = len(str(result)) > 6000
-                _iter_trace["tool_calls"].append(_tool_trace)
-
-                # Compress tool result before adding to LLM context
-                MAX_TOOL_RESULT_CHARS = 6000
-                result_for_memory, _orig_len, _comp_len = compress_output(
-                    _strip_ansi(str(result)), tool_name, tool_args if isinstance(tool_args, dict) else {}
-                )
-                if _orig_len != _comp_len:
-                    log.debug(
-                        "Tool output compressed",
-                        tool=tool_name,
-                        summary=compression_summary(_orig_len, _comp_len),
-                    )
-                # Hard cap — if still too large after compression, truncate head+tail
-                if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
-                    head = result_for_memory[:3500]
-                    tail = result_for_memory[-1000:]
-                    omitted = len(result_for_memory) - 4500
-                    result_for_memory = head + f"\n... [{omitted} chars omitted] ...\n" + tail
-
+            # Write results to memory in original order and collect side-effects
+            for _r in _tool_results:
+                if isinstance(_r, Exception):
+                    continue  # _execute_one_tool catches all non-CancelledError exceptions
+                _tc_id, _tc_name, _tc_args, _tc_result, _tc_attachment, _tc_trace = _r
+                _tool_sequence_for_turn.append({"tool": _tc_name, "arguments": _tc_args})
+                if _tc_attachment:
+                    generated_attachments.append(_tc_attachment)
+                _iter_trace["tool_calls"].append(_tc_trace)
                 await self.memory.add_message(
                     user_id,
                     channel_id,
                     "tool",
-                    result_for_memory,
-                    tool_call_id=tool_call_id,
-                    name=tool_name,
+                    _tc_result,
+                    tool_call_id=_tc_id,
+                    name=_tc_name,
                 )
-                messages = await self.memory.get_messages(user_id, channel_id)
+
+            messages = await self.memory.get_messages(user_id, channel_id)
+
+            # Reflection: if any tool raised an exception, inject a one-shot hint so the
+            # LLM can reason about the failure before its next call. This message is NOT
+            # persisted to the DB — it lives only for the current LLM iteration and
+            # disappears the next time get_messages() refreshes the list.
+            _failed_tools: list[tuple[str, str]] = []
+            for _r in _tool_results:
+                if not isinstance(_r, Exception):
+                    _, _fn, _, _, _, _ft = _r
+                    if _ft["error"]:
+                        _failed_tools.append((_fn, _ft["error"]))
+            if _failed_tools:
+                _error_summary = "; ".join(
+                    f"`{name}` failed with: {err}" for name, err in _failed_tools
+                )
+                messages = list(messages) + [{
+                    "role": "system",
+                    "content": (
+                        f"[REFLECTION] The following tool calls failed — {_error_summary}. "
+                        "Analyze what went wrong and try a different approach. "
+                        "Do not repeat the same call with the same arguments."
+                    ),
+                }]
+                log.info(
+                    "Reflection injected for failed tools",
+                    failed=[n for n, _ in _failed_tools],
+                )
 
             _trace["iterations"].append(_iter_trace)
 

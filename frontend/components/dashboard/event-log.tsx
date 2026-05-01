@@ -34,6 +34,8 @@ function eventIcon(type: string) {
       return <Wrench size={14} className="text-amber-400" />;
     case 'tool.result':
       return <Wrench size={14} className="text-emerald-400" />;
+    case 'tool.result.error':
+      return <Wrench size={14} className="text-red-400" />;
     case 'llm.request':
       return <Cpu size={14} className="text-purple-400" />;
     case 'llm.response':
@@ -99,11 +101,15 @@ export function EventLog() {
           const type = data.type as string;
           if (!type) return;
 
+          const effectiveType =
+            type === 'tool.result' && data.success === false
+              ? 'tool.result.error'
+              : type;
           const item: EventItem = {
             id: `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
             time: formatTime(new Date()),
             text: describeEvent(type, data),
-            type,
+            type: effectiveType,
           };
 
           setEvents((prev) => {
