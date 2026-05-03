@@ -56,9 +56,7 @@ class SwarmManager:
         # Retry counters: swarm_id → {task_id → retries_used}
         # Persists across auto-restarts so a task can't retry infinitely across runs.
         self._task_retries: dict[int, dict[int, int]] = {}
-        # Per-swarm LLM semaphore — limits concurrent LLM calls to avoid TPM rate limits.
-        # Each worker acquires this before its agentic loop; tool calls inside don't count.
-        self._llm_semaphores: dict[int, asyncio.Semaphore] = {}
+        self._llm_semaphores: dict[int, asyncio.Semaphore] = {}  # kept for legacy cleanup only
         # Schedule orphaned-task cleanup after the event loop is running
         asyncio.get_event_loop().call_soon(
             lambda: asyncio.ensure_future(self._reset_orphaned_tasks())
@@ -109,7 +107,7 @@ class SwarmManager:
         file_contents: list of {"filename": ..., "content": ...} dicts already read.
         """
         swarm_id = await self.db.create_swarm(name, goal, global_model)
-        swarm_dir = self._swarm_dir(swarm_id)
+        swarm_dir = self._swarm_dir(swarm_id, name)
         swarm_dir.mkdir(parents=True, exist_ok=True)
         (swarm_dir / "workers").mkdir(exist_ok=True)
         (swarm_dir / "context").mkdir(exist_ok=True)
@@ -117,16 +115,34 @@ class SwarmManager:
         shared_context = ""
         context_files: list[str] = []
 
+        _TEXT_EXTENSIONS = {
+            ".txt", ".md", ".rst", ".csv", ".json", ".yaml", ".yml",
+            ".toml", ".ini", ".cfg", ".xml", ".html", ".htm",
+            ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".c", ".cpp",
+            ".h", ".cs", ".go", ".rs", ".rb", ".php", ".sh", ".bat",
+            ".sql", ".r", ".kt", ".swift",
+        }
         if file_contents:
-            parts: list[str] = []
+            manifest_lines: list[str] = []
             for f in file_contents:
                 fname = f.get("filename", "file")
-                content = f.get("content", "")
+                raw: bytes = f.get("raw") or f.get("content", "").encode()
                 fpath = swarm_dir / "context" / fname
-                fpath.write_text(content, encoding="utf-8", errors="replace")
+                ext = Path(fname).suffix.lower()
+                is_text = ext in _TEXT_EXTENSIONS
+
+                if is_text:
+                    text = raw.decode("utf-8", errors="replace")
+                    fpath.write_text(text, encoding="utf-8")
+                    size_label = f"{len(text):,} chars"
+                else:
+                    fpath.write_bytes(raw)
+                    size_label = f"{len(raw):,} bytes"
+
                 context_files.append(fname)
-                parts.append(f"### {fname}\n{content}")
-            shared_context = "\n\n".join(parts)
+                manifest_lines.append(f"- {fpath} ({size_label})")
+
+            shared_context = "Uploaded files:\n" + "\n".join(manifest_lines)
 
         await self.db.update_swarm(
             swarm_id,
@@ -279,17 +295,23 @@ class SwarmManager:
             f"GOAL:\n{swarm['goal']}"
             f"{ctx_section}\n\n"
             "---\n\n"
-            "Before designing the team and task plan, review everything carefully and list "
-            "the clarifying questions you need answered to do this work precisely.\n\n"
-            "Ask about:\n"
-            "- Information that is missing but critical to complete the goal correctly\n"
-            "- Ambiguities in requirements that would change the approach\n"
-            "- Technical constraints, standards, or preferences to follow\n"
-            "- Expected output format, quality bar, or deliverable details\n"
-            "- External tools, APIs, or access that may be needed\n"
-            "- Whether specific reference materials or additional documents would help\n\n"
-            "Only include questions that genuinely matter for doing this precisely. "
-            "Aim for 3–7 focused questions. Skip trivial or obvious ones.\n\n"
+            "Before designing the team and task plan, you MUST identify every gap and ambiguity "
+            "that would force a worker to guess or make an assumption. Your job is to surface those "
+            "gaps NOW, before any work starts, so the plan is precise.\n\n"
+            "You MUST ask about ALL of the following that apply:\n"
+            "- Tech stack: language version, framework, libraries, package manager (never assume)\n"
+            "- Project structure: where files should live, naming conventions, existing patterns to follow\n"
+            "- Scope boundaries: what is IN scope vs explicitly OUT of scope\n"
+            "- Integration: does this connect to existing code? If so, what are the interfaces?\n"
+            "- Output / deliverable: exact format, what files, where they go, how they are run\n"
+            "- Quality bar: error handling depth, test coverage, type annotations, linting rules\n"
+            "- Ambiguities: any requirement where two different developers might make different decisions\n"
+            "- Missing information: anything not provided that a worker would need to look up or invent\n\n"
+            "Rules:\n"
+            "- When in doubt, ASK — it is always better to ask than to have workers guess wrong\n"
+            "- Do NOT skip a question just because an answer seems 'obvious' — obvious things are often wrong\n"
+            "- Aim for 5–10 questions; fewer only if the goal is extremely simple and well-specified\n"
+            "- Each question must be specific and actionable, not vague\n\n"
             "Respond with ONLY a JSON array of question strings — no prose, no markdown wrapper:\n"
             '["Question 1?", "Question 2?", ...]'
         )
@@ -298,7 +320,7 @@ class SwarmManager:
         try:
             result = await self.llm_router.chat(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+                temperature=0.6,
                 max_tokens=1024,
                 model_override=swarm.get("global_model") or None,
             )
@@ -337,63 +359,87 @@ class SwarmManager:
         plan_prompt = self._build_plan_prompt(swarm)
 
         try:
-            result = await self.llm_router.chat(
-                messages=[{"role": "user", "content": plan_prompt}],
-                temperature=0.4,
-                max_tokens=16384,
-                model_override=swarm.get("global_model") or None,
-            )
-            plan_text = result.get("content", "")
-            # Retry once with a simpler prompt if the model returned empty content
-            if not plan_text.strip():
-                log.warning("Swarm plan response was empty, retrying with simplified prompt", swarm_id=swarm_id)
-                retry_prompt = (
-                    f"Goal: {swarm.get('goal', '')}\n\n"
-                    "Reply with ONLY a JSON object (no prose, no markdown) with this structure:\n"
-                    '{"workers":[{"name":"...","role":"worker","description":"...","system_prompt":"...","model":null,"allowed_tools":"all"}],'
-                    '"tasks":[{"title":"...","description":"...","worker":"<worker name>","depends_on":[]}]}'
-                )
-                result2 = await self.llm_router.chat(
-                    messages=[{"role": "user", "content": retry_prompt}],
-                    temperature=0.2,
-                    max_tokens=2048,
-                    model_override=swarm.get("global_model") or None,
-                )
-                plan_text = result2.get("content", "")
-            try:
-                plan = self._parse_plan(plan_text)
-            except ValueError:
-                # Parse failed (truncated response) — retry with a compact no-context prompt
-                log.warning(
-                    "Swarm plan parse failed, retrying with compact prompt",
-                    swarm_id=swarm_id,
-                )
-                compact_prompt = (
-                    f"Goal: {swarm.get('goal', '')}\n\n"
-                    "Reply with ONLY a raw JSON object — no markdown fences, no prose:\n"
-                    '{"workers":[{"name":"...","role":"orchestrator|worker","description":"...","system_prompt":"...","model":null,"allowed_tools":"all"}],'
-                    '"tasks":[{"title":"...","description":"...","worker":"<name>","depends_on":[]}]}\n\n'
-                    "Rules: 1 orchestrator + 2-4 workers. Keep system_prompts under 80 words each."
-                )
-                retry_result = await self.llm_router.chat(
-                    messages=[{"role": "user", "content": compact_prompt}],
-                    temperature=0.2,
+            # Stream the plan. If the JSON is truncated at the token limit, ask the model
+            # to continue exactly from where it stopped and append the continuation.
+            def _plan_is_valid(p: dict) -> bool:
+                """A plan needs at least 2 workers (orchestrator + 1 specialist) and 1 task."""
+                return len(p.get("workers", [])) >= 2 and len(p.get("tasks", [])) >= 1
+
+            messages: list[dict] = [{"role": "user", "content": plan_prompt}]
+            plan_text = ""
+            plan: dict | None = None
+            MAX_CONTINUATIONS = 3
+
+            for attempt in range(MAX_CONTINUATIONS + 1):
+                chunk_text = ""
+                async for _chunk in self.llm_router.chat_stream(
+                    messages=messages,
+                    temperature=0.4,
                     max_tokens=4096,
                     model_override=swarm.get("global_model") or None,
-                )
-                retry_text = retry_result.get("content", "")
+                ):
+                    chunk_text += _chunk
+                    await self.event_bus.emit("swarm:planning_thought", {
+                        "swarm_id": swarm_id,
+                        "chunk": _chunk,
+                        "accumulated": plan_text + chunk_text,
+                    })
+                plan_text += chunk_text
+
+                # Try to parse and validate
                 try:
-                    plan = self._parse_plan(retry_text)
+                    candidate = self._parse_plan(plan_text)
+                    if _plan_is_valid(candidate):
+                        plan = candidate
+                        break
+                    # Parsed fine but incomplete (e.g. only orchestrator, no tasks) —
+                    # ask the model to complete the plan
+                    if attempt < MAX_CONTINUATIONS:
+                        log.debug("Plan incomplete, requesting completion",
+                                  swarm_id=swarm_id, attempt=attempt + 1,
+                                  workers=len(candidate.get("workers", [])),
+                                  tasks=len(candidate.get("tasks", [])))
+                        messages = [
+                            {"role": "user", "content": plan_prompt},
+                            {"role": "assistant", "content": plan_text},
+                            {"role": "user", "content": (
+                                "Your plan is incomplete. You defined workers but are missing "
+                                "the full team and/or all tasks. Continue the JSON exactly from "
+                                "where you stopped — do not repeat what you already wrote."
+                            )},
+                        ]
+                        continue
                 except ValueError:
-                    log.error("Compact retry also failed, using minimal fallback", swarm_id=swarm_id)
-                    plan = {
-                        "workers": [{"name": "General Worker", "role": "worker",
-                                     "description": "General purpose worker",
-                                     "system_prompt": "You are a helpful AI assistant. Complete the given task.",
-                                     "model": None, "allowed_tools": "all"}],
-                        "tasks": [{"title": "Main Task", "description": swarm.get("goal", "Complete the project goal."),
-                                   "worker": "General Worker", "depends_on": []}],
-                    }
+                    pass
+
+                # JSON truncated — ask for continuation
+                if attempt < MAX_CONTINUATIONS and self._json_is_truncated(plan_text):
+                    log.debug("Plan JSON truncated, requesting continuation",
+                              swarm_id=swarm_id, attempt=attempt + 1)
+                    messages = [
+                        {"role": "user", "content": plan_prompt},
+                        {"role": "assistant", "content": plan_text},
+                        {"role": "user", "content": "Continue exactly from where you stopped. Do not repeat anything already written."},
+                    ]
+                else:
+                    break
+
+            if plan is None:
+                log.warning("Plan could not be parsed after continuations, using minimal fallback",
+                            swarm_id=swarm_id, preview=plan_text[:300])
+                plan = {
+                    "workers": [{"name": "General Worker", "role": "worker",
+                                 "description": "General purpose worker",
+                                 "system_prompt": "You are a helpful AI assistant. Complete the given task.",
+                                 "model": None, "allowed_tools": "all"}],
+                    "tasks": [{"title": "Main Task",
+                               "description": swarm.get("goal", "Complete the project goal."),
+                               "worker": "General Worker", "depends_on": []}],
+                }
+
+            log.info("Swarm plan built", swarm_id=swarm_id,
+                     workers=len(plan.get("workers", [])), tasks=len(plan.get("tasks", [])))
+
         except Exception as e:
             err_str = str(e)
             log.error("Swarm planning LLM call failed", swarm_id=swarm_id, error=err_str)
@@ -414,7 +460,9 @@ class SwarmManager:
             "worker_names": [w.get("name") for w in worker_specs],
         })
         for w in worker_specs:
-            wname = w.get("name", "worker").lower().replace(" ", "_")
+            import re as _re
+            wname = _re.sub(r'[^a-z0-9_-]', '_', w.get("name", "worker").lower())
+            wname = _re.sub(r'_+', '_', wname).strip('_') or "worker"
             worker_dir = swarm_dir / "workers" / wname
             worker_dir.mkdir(parents=True, exist_ok=True)
 
@@ -442,6 +490,7 @@ class SwarmManager:
                 title=t.get("title", "Task"),
                 description=t.get("description", ""),
                 depends_on=json.dumps(t.get("depends_on", [])),
+                task_type=t.get("task_type", "standard"),
             )
 
         # ── Phase: Contract Generation ────────────────────────────────────────
@@ -555,25 +604,18 @@ class SwarmManager:
 
             react_prompt = (
                 f"You are the orchestrator of swarm '{swarm['name']}'.\n"
-                f"Project goal: {swarm['goal']}\n\n"
+                f"Project goal: {swarm['goal']}\n"
+                f"Swarm workspace: {str(Path(swarm['workspace_path']))}\n\n"
                 f"Work completed so far:\n{results_summary}\n\n"
                 f"Currently pending tasks: {pending_summary}\n\n"
-                f"**The user just sent this message:**\n\n{user_message}\n\n"
+                f"**The user says:**\n\n{user_message}\n\n"
                 f"---\n"
-                f"IMPORTANT: You are in coordination mode. Your available tools are:\n"
-                f"- `read_file`, `list_directory`, `grep_in_files` — read project files for context\n"
-                f"- `swarm_create_task(title, description, assign_to)` — create work for a worker\n"
-                f"- `swarm_broadcast(message)` — send a message to all workers\n"
-                f"- `swarm_send_message(to_worker, message)` — send a direct message\n"
-                f"- `swarm_ask_user(question)` — ask the user something\n"
-                f"You do NOT have run_command, write_file, or any execution tools — delegate that to workers.\n\n"
-                f"Your job right now:\n"
-                f"1. Read what the user said and decide what work needs to happen.\n"
-                f"2. Call `swarm_create_task` once for EACH unit of work — assign it to the right worker by name.\n"
-                f"3. Write detailed task descriptions so the worker knows exactly what to do.\n"
-                f"4. After creating all tasks, briefly summarize what you scheduled.\n\n"
-                f"Do NOT describe the work in plain text — CREATE the tasks using the tool. "
-                f"Workers are available and will execute whatever tasks you create immediately."
+                f"Read the user's message and respond appropriately. You know this project inside out.\n"
+                f"- If the user is asking about the project, answer them directly and concisely.\n"
+                f"- If the user wants changes or new work, use `swarm_create_task` to delegate to the right worker.\n"
+                f"- Use `list_directory` or `read_file` only if you need a specific detail you don't already have.\n\n"
+                f"Available tools: `read_file`, `list_directory`, `swarm_create_task`, `swarm_broadcast`, `swarm_send_message`, `swarm_ask_user`.\n"
+                f"You do NOT have run_command or write_file — delegate execution to workers."
             )
 
             config = AssistantConfig(
@@ -596,6 +638,8 @@ class SwarmManager:
                     swarm_id, orchestrator["id"], workers, orchestrator
                 ),
             )
+            brain._swarm_id = swarm_id
+            brain._swarm_worker_name = orchestrator.get("name", "orchestrator")
             if model_override:
                 _orig = brain.llm_router.chat
                 async def _patched(*a, **kw):
@@ -604,7 +648,9 @@ class SwarmManager:
                 brain.llm_router.chat = _patched
 
             import time as _time_mod
-            _react_channel = f"swarm_{swarm_id}_orchestrator_react_{int(_time_mod.time())}"
+            _swarm_slug = self._safe_slug(swarm.get("name", str(swarm_id)))
+            _orch_slug = self._safe_slug(orchestrator.get("name", "orchestrator"))
+            _react_channel = f"{_swarm_slug}__{_orch_slug}__react_{int(_time_mod.time())}"
             response = await brain.process_message(
                 content=react_prompt,
                 user_id=f"swarm_{swarm_id}",
@@ -652,6 +698,32 @@ class SwarmManager:
 
     # ─── Execution Engine ─────────────────────────────────────────────────────
 
+    async def _swarm_watchdog(self, swarm_id: int, stop_event: asyncio.Event) -> None:
+        """
+        Runs in parallel with _run_swarm. Emits a heartbeat every 60 s so the UI
+        knows the swarm is alive even when workers are mid-LLM-call and silent.
+        """
+        while True:
+            try:
+                await asyncio.wait_for(asyncio.shield(stop_event.wait()), timeout=60.0)
+                break  # stop_event fired — swarm finished or was cancelled
+            except asyncio.TimeoutError:
+                pass
+            if stop_event.is_set():
+                break
+            try:
+                tasks = await self.db.get_swarm_tasks(swarm_id)
+                by_status: dict[str, int] = {}
+                for t in tasks:
+                    by_status[t["status"]] = by_status.get(t["status"], 0) + 1
+                await self._emit(swarm_id, "swarm:heartbeat", {
+                    "swarm_id": swarm_id,
+                    "task_counts": by_status,
+                    "running_tasks": [t["title"] for t in tasks if t["status"] == "running"],
+                })
+            except Exception as e:
+                log.debug("Watchdog heartbeat failed", swarm_id=swarm_id, error=str(e))
+
     async def _run_swarm(self, swarm_id: int) -> None:
         """
         Main execution loop.
@@ -662,6 +734,8 @@ class SwarmManager:
         Events are emitted for every state change so the UI can react in real time.
         """
         sem = asyncio.Semaphore(SWARM_MAX_PARALLEL_WORKERS)
+        _watchdog_stop = asyncio.Event()
+        _watchdog_task = asyncio.ensure_future(self._swarm_watchdog(swarm_id, _watchdog_stop))
 
         try:
             await self.db.update_swarm(swarm_id, status="running")
@@ -677,12 +751,16 @@ class SwarmManager:
             completed_titles: set[str] = {
                 t["title"] for t in all_tasks_now if t["status"] == "completed"
             }
-            max_rounds = 30
+            # Dynamic cap: at least 60 rounds, or 3× the task count so deep
+            # dependency chains never exhaust the loop before finishing.
+            max_rounds = max(60, len(all_tasks_now) * 3)
             MAX_TASK_RETRIES = SWARM_MAX_TASK_RETRIES
             # Use persistent retry counts so retries survive auto-restarts
             if swarm_id not in self._task_retries:
                 self._task_retries[swarm_id] = {}
             retry_counts = self._task_retries[swarm_id]
+            # Stall detector: abort early if two consecutive rounds produce zero progress
+            _consecutive_stall = 0
 
             for round_no in range(max_rounds):
                 tasks = await self.db.get_swarm_tasks(swarm_id)
@@ -732,13 +810,27 @@ class SwarmManager:
                     async with _sem:
                         worker = _itw.get(task.get("worker_id"))
                         if not worker and _ws:
-                            worker = _ws[task["id"] % len(_ws)]
+                            # Prefer role-based match over arbitrary modulo assignment
+                            task_text = (
+                                (task.get("title") or "") + " " + (task.get("description") or "")
+                            ).lower()
+                            for w in _ws:
+                                role = (w.get("role") or "").lower()
+                                if role and role != "orchestrator" and role in task_text:
+                                    worker = w
+                                    break
+                            if not worker:
+                                non_orch = [w for w in _ws if (w.get("role") or "") != "orchestrator"]
+                                worker = non_orch[0] if non_orch else _ws[0]
                         if not worker:
                             await self.db.update_swarm_task(
                                 task["id"], status="failed", result="No worker assigned"
                             )
                             return None
-                        result_status = await self._execute_task(_sw, worker, task, _aw)
+                        if task.get("task_type") == "debate":
+                            result_status = await self._execute_debate_task(_sw, task, _aw)
+                        else:
+                            result_status = await self._execute_task(_sw, worker, task, _aw)
                         if result_status == "completed":
                             return task["title"]
                         if result_status == "failed":
@@ -785,9 +877,26 @@ class SwarmManager:
                         return None  # waiting or permanently failed — do NOT unblock dependents
 
                 results = await asyncio.gather(*[_run_one(t) for t in ready], return_exceptions=True)
+                newly_completed = 0
                 for r in results:
                     if isinstance(r, str):
                         completed_titles.add(r)
+                        newly_completed += 1
+
+                # Stall detection: two consecutive rounds with zero progress → abort
+                if newly_completed == 0:
+                    _consecutive_stall += 1
+                    if _consecutive_stall >= 2:
+                        log.warning(
+                            "Swarm stalled — no progress in 2 consecutive rounds, aborting loop",
+                            swarm_id=swarm_id, round=round_no,
+                        )
+                        await self._emit(swarm_id, "swarm:stalled", {
+                            "swarm_id": swarm_id, "round": round_no, "reason": "no_progress",
+                        })
+                        break
+                else:
+                    _consecutive_stall = 0
 
                 # Check for cancellation / pause
                 current = await self.db.get_swarm(swarm_id)
@@ -884,6 +993,9 @@ class SwarmManager:
             log.error("Swarm execution failed", swarm_id=swarm_id, error=str(e))
             await self.db.update_swarm(swarm_id, status="failed")
             await self._emit_swarm_event(swarm_id, "failed", {"error": str(e)})
+        finally:
+            _watchdog_stop.set()
+            _watchdog_task.cancel()
 
     async def _execute_task(
         self,
@@ -935,7 +1047,8 @@ class SwarmManager:
             retry_history: list[dict] = []
             try:
                 prev_result = task.get("result") or ""
-                if prev_result and not prev_result.startswith("[Retry ") and not prev_result.startswith("[Rate ") and not prev_result.startswith("[Network ") and not prev_result.startswith("[Skipped"):
+                _noise_prefixes = ("[Retry ", "[Rate ", "[Network ", "[Skipped", "[Reset:")
+                if prev_result and not any(prev_result.startswith(p) for p in _noise_prefixes):
                     task_status_prev, fail_reason_prev = self._parse_task_status(prev_result)
                     retry_history.append({"result": prev_result, "fail_reason": fail_reason_prev or "Task did not complete"})
                 # Also grab accumulated history stored in task metadata key
@@ -949,9 +1062,11 @@ class SwarmManager:
             # Build context: shared contract + dependency outputs + messages + task description
             messages_in = await self.db.get_swarm_messages(swarm_id, to_worker_id=worker_id)
             messages_in = messages_in[-20:]  # cap to last 20 to avoid context overflow
+            team_updates = await self.db.get_swarm_team_updates(swarm_id, limit=20)
             swarm_context = self._build_worker_context(
                 swarm, worker, task, messages_in, dep_outputs,
                 retry_history=retry_history or None,
+                team_updates=team_updates or None,
             )
 
             # System prompt with swarm awareness
@@ -960,8 +1075,8 @@ class SwarmManager:
             config = AssistantConfig(
                 name=worker["name"],
                 system_prompt=system_prompt,
-                max_tool_iterations=30,  # swarm tasks are complex — need more steps than chat
-                onboarding_completed=True,  # workers skip onboarding entirely
+                max_tool_iterations=25,
+                onboarding_completed=True,
             )
 
             # Model override: worker-specific > swarm global > system default
@@ -977,6 +1092,8 @@ class SwarmManager:
                     swarm_id, worker_id, all_workers, worker
                 ),
             )
+            brain._swarm_id = swarm_id
+            brain._swarm_worker_name = worker.get("name", "")
 
             # If a model override is set, patch the router call
             if model_override:
@@ -988,39 +1105,37 @@ class SwarmManager:
 
                 brain.llm_router.chat = _patched_chat
 
-            # Unique channel per task so memory never bleeds between task executions
-            channel_id = f"swarm_{swarm_id}_worker_{worker_id}_task_{task_id}"
-
-            # Acquire per-swarm LLM semaphore to throttle concurrent LLM calls.
-            # Default: max 2 workers active at the same time per swarm.
-            # This prevents TPM rate limits when running many workers in parallel.
-            if swarm_id not in self._llm_semaphores:
-                self._llm_semaphores[swarm_id] = asyncio.Semaphore(2)
-            llm_sem = self._llm_semaphores[swarm_id]
+            # One stable channel per worker across all its tasks.
+            # No task_id in channel_id so the worker keeps its full history.
+            swarm_slug = self._safe_slug(swarm.get("name", str(swarm_id)))
+            worker_slug = self._safe_slug(worker.get("name", str(worker_id)))
+            user_id_str = f"swarm_{swarm_id}"
+            channel_id = f"{swarm_slug}__{worker_slug}"
 
             # Pin workspace for this task channel: use swarm's working_path if set,
-            # otherwise fall back to the global default workspace.
+            # otherwise use the swarm's own workspace directory (NOT the global workspace).
             swarm_record = await self.db.get_swarm(swarm_id)
             task_working_path = (swarm_record or {}).get("working_path", "").strip()
             if not task_working_path:
-                from openacm.core.acm_context import _resolve_workspace
-                task_working_path = _resolve_workspace()
+                task_working_path = str(Path(swarm["workspace_path"]))
             brain.memory.set_conversation_workspace(
-                f"swarm_{swarm_id}", channel_id, task_working_path
+                user_id_str, channel_id, task_working_path
             )
 
-            # 10-minute hard timeout per task — prevents infinite hangs
+            # 10-minute hard timeout per task — prevents infinite hangs.
+            # Parallelism is controlled by the outer semaphore in _run_swarm;
+            # a nested LLM semaphore here caused deadlocks (3 workers holding outer
+            # slots while all waiting on a max-2 inner sem).
             try:
-                async with llm_sem:
-                    response = await asyncio.wait_for(
-                        brain.process_message(
-                            content=swarm_context,
-                            user_id=f"swarm_{swarm_id}",
-                            channel_id=channel_id,
-                            channel_type="swarm",
-                        ),
-                        timeout=600.0,
-                    )
+                response = await asyncio.wait_for(
+                    brain.process_message(
+                        content=swarm_context,
+                        user_id=user_id_str,
+                        channel_id=channel_id,
+                        channel_type="swarm",
+                    ),
+                    timeout=600.0,
+                )
             except asyncio.TimeoutError:
                 raise RuntimeError(f"Task timed out after 10 minutes")
 
@@ -1031,23 +1146,40 @@ class SwarmManager:
                 response or "", encoding="utf-8"
             )
 
-            # Determine actual task status from the worker's explicit marker
-            task_status, fail_reason = self._parse_task_status(response or "")
+            # If brain swallowed a RateLimitError and returned it as text, requeue instead of failing
+            resp_text = response or ""
+            if "RateLimitError" in resp_text or ("rate limit" in resp_text.lower() and "429" in resp_text):
+                import re as _re
+                wait_match = _re.search(r"try again in (\d+(?:\.\d+)?)s", resp_text, _re.IGNORECASE)
+                wait_secs = float(wait_match.group(1)) + 1.0 if wait_match else 15.0
+                log.warning("Task response contains RateLimitError — requeueing",
+                            task_id=task_id, task_title=task["title"], wait_secs=wait_secs)
+                await self.db.update_swarm_task(task_id, status="pending",
+                                                result=f"[Rate limited — requeued after {wait_secs:.0f}s]")
+                await self.db.update_swarm_worker(worker_id, status="idle")
+                await self._emit_task_event(swarm_id, task_id, "pending", {
+                    "task_title": task["title"], "reason": "rate_limited",
+                })
+                await asyncio.sleep(wait_secs)
+                return "rate_limited"
 
-            result_preview = (response or "")[:200]
-            await self.db.update_swarm_task(task_id, status=task_status, result=response or "")
+            # Determine actual task status from the worker's explicit marker
+            task_status, fail_reason = self._parse_task_status(resp_text)
+
+            result_preview = resp_text[:200]
+            await self.db.update_swarm_task(task_id, status=task_status, result=resp_text)
             await self.db.update_swarm_worker(worker_id, status="idle")
 
             # Store task result as activity message so the feed shows it
             if task_status == "completed":
                 msg_type = "task_result"
-                msg_content = f"**[{task['title']}]**\n\n{response or '(no output)'}"
+                msg_content = f"**[{task['title']}]**\n\n{resp_text or '(no output)'}"
             elif task_status == "waiting":
                 msg_type = "task_waiting"
                 msg_content = f"**[{task['title']}]** waiting for user input."
             else:
                 msg_type = "task_failed"
-                msg_content = f"**[{task['title']}] FAILED:** {fail_reason}\n\n{response or ''}"
+                msg_content = f"**[{task['title']}] FAILED:** {fail_reason}\n\n{resp_text}"
 
             await self.db.add_swarm_message(
                 swarm_id=swarm_id,
@@ -1138,6 +1270,121 @@ class SwarmManager:
             })
             return f"Error: {e}"
 
+    async def _execute_debate_task(
+        self,
+        swarm: dict,
+        task: dict,
+        all_workers: list[dict],
+    ) -> str:
+        """
+        Run a debate task: two workers tackle the same problem from opposing perspectives,
+        then an LLM judge synthesizes the best solution from both.
+        Returns the canonical task status string ("completed" / "failed").
+        """
+        from openacm.core.config import AssistantConfig
+        from openacm.core.brain import Brain
+
+        swarm_id = swarm["id"]
+        task_id = task["id"]
+
+        await self.db.update_swarm_task(task_id, status="running")
+        await self._emit_task_event(swarm_id, task_id, "running", {
+            "task_title": task["title"], "mode": "debate",
+        })
+
+        debaters = [w for w in all_workers if (w.get("role") or "") != "orchestrator"][:2]
+        if len(debaters) < 2:
+            debaters = (debaters * 2)[:2]
+        if not debaters:
+            debaters = all_workers[:2]
+
+        perspectives = [
+            "Prioritize reliability, simplicity, and correctness. Prefer proven patterns.",
+            "Prioritize performance, elegance, and innovation. Prefer modern approaches.",
+        ]
+
+        async def _run_debater(worker: dict, perspective: str) -> str:
+            dep_outputs: list[tuple[str, str]] = []
+            try:
+                dep_titles = json.loads(task.get("depends_on") or "[]")
+                if dep_titles:
+                    all_tasks = await self.db.get_swarm_tasks(swarm_id)
+                    done_map = {t["title"]: t for t in all_tasks if t["status"] == "completed"}
+                    for dt in dep_titles:
+                        if dt in done_map and done_map[dt].get("result"):
+                            dep_outputs.append((dt, done_map[dt]["result"]))
+            except Exception:
+                pass
+
+            messages_in = (await self.db.get_swarm_messages(swarm_id, to_worker_id=worker["id"]))[-10:]
+            context = self._build_worker_context(swarm, worker, task, messages_in, dep_outputs or None)
+            context += f"\n\n**Debate perspective — adopt this lens for your solution:** {perspective}"
+
+            config = AssistantConfig(
+                name=worker["name"],
+                system_prompt=self._build_worker_system_prompt(worker, swarm, all_workers),
+                max_tool_iterations=20,
+                onboarding_completed=True,
+            )
+            brain = Brain(
+                config=config,
+                llm_router=self.llm_router,
+                memory=self.memory,
+                event_bus=self.event_bus,
+                tool_registry=self._build_worker_tool_registry(swarm_id, worker["id"], all_workers, worker),
+            )
+            brain._swarm_id = swarm_id
+            brain._swarm_worker_name = worker.get("name", "")
+            _sw_slug = self._safe_slug(swarm.get("name", str(swarm_id)))
+            _w_slug = self._safe_slug(worker.get("name", str(worker["id"])))
+            channel_id = f"{_sw_slug}__{_w_slug}"
+            _uid = f"swarm_{swarm_id}"
+            brain.memory.set_conversation_workspace(
+                _uid, channel_id,
+                (swarm.get("working_path") or "").strip() or str(Path(swarm["workspace_path"]))
+            )
+            try:
+                return await asyncio.wait_for(
+                    brain.process_message(content=context, user_id=_uid,
+                                          channel_id=channel_id, channel_type="swarm"),
+                    timeout=300.0,
+                ) or ""
+            except Exception as e:
+                return f"Debater error: {e}"
+
+        responses = await asyncio.gather(
+            _run_debater(debaters[0], perspectives[0]),
+            _run_debater(debaters[1], perspectives[1]),
+        )
+
+        judge_prompt = (
+            f"Two agents approached the same task from different angles. "
+            f"Synthesize the definitively best solution.\n\n"
+            f"**Task:** {task['title']}\n{task['description']}\n\n"
+            f"**Approach A (reliability-focused):**\n{responses[0][:3000]}\n\n"
+            f"**Approach B (innovation-focused):**\n{responses[1][:3000]}\n\n"
+            f"Write the final solution, taking the strongest elements from both. "
+            f"Produce real, runnable output — not a summary of the debate. "
+            f"End with exactly: TASK_STATUS: COMPLETED"
+        )
+
+        try:
+            synthesis_resp = await self.llm_router.chat(
+                messages=[{"role": "user", "content": judge_prompt}],
+                temperature=0.2,
+                max_tokens=4096,
+                model_override=swarm.get("global_model") or None,
+            )
+            result = synthesis_resp.get("content") or "".join(responses)
+        except Exception:
+            result = responses[0] + "\n\nTASK_STATUS: COMPLETED"
+
+        await self.db.update_swarm_task(task_id, status="completed", result=result)
+        await self._emit_task_event(swarm_id, task_id, "completed", {
+            "task_title": task["title"], "mode": "debate",
+        })
+        return "completed"
+
     async def _synthesize(self, swarm: dict, workers: list[dict]) -> str:
         """Orchestrator final synthesis of all task results."""
         swarm_id = swarm["id"]
@@ -1200,6 +1447,7 @@ class SwarmManager:
             all_workers=all_workers,
             database=self.db,
             event_bus=self.event_bus,
+            swarm_manager=self,
         )
 
         # Respect allowed_tools policy
@@ -1283,6 +1531,7 @@ class SwarmManager:
             all_workers=all_workers,
             database=self.db,
             event_bus=self.event_bus,
+            swarm_manager=self,
         )
 
         swarm_tool_defs = {}
@@ -1419,34 +1668,163 @@ Return ONLY valid JSON with this exact structure:
     {{
       "name": "Worker Name",
       "role": "orchestrator|worker",
-      "description": "What this worker does",
-      "system_prompt": "Detailed system prompt for this worker...",
+      "description": "One-line description of this worker's specialty",
+      "system_prompt": "You are a [specialty] worker. Your owned files are: [exact list of file paths]. You MUST NOT create or edit any file outside this list. [Detailed instructions...]",
       "model": null,
       "allowed_tools": "all"
     }}
   ],
   "tasks": [
     {{
-      "title": "Task title",
-      "description": "Detailed task description",
+      "title": "Short unambiguous title",
+      "description": "File: src/models/user.py | Action: CREATE User SQLAlchemy model (id, name, email) | Imports: none | Exports: User class used by routes/users.py | Details: use declarative base from db/base.py",
       "worker": "Worker Name",
-      "depends_on": []
+      "depends_on": [],
+      "task_type": "standard"
     }}
   ]
 }}
 
 Rules:
+
+**Team composition**
 - Include exactly ONE worker with role "orchestrator" (project lead)
-- Include 2-5 specialist workers depending on complexity
+- Include 2–5 specialist workers depending on complexity
 - The model field can be null (use global) or a LiteLLM model string like "anthropic/claude-opus-4-6"
-- Tasks in depends_on must reference titles of earlier tasks EXACTLY as written
+- Each worker owns a non-overlapping set of files — NO two workers ever write the same file
 - Workers WILL be able to communicate with each other during execution
-- Each worker should have a clear, focused role and own a specific set of files
-- System prompts must include the worker's specialty and which files they own
-- If the goal involves testing, QA, or validation: include a dedicated QA worker whose system prompt explicitly instructs it to use the `swarm_report_bug` tool for every issue found (NOT just fail the task). The QA worker should also schedule its verification tasks AFTER the implementation tasks (via depends_on).
-- When a QA worker is present, also ensure there is a developer/fixer worker who can receive bug fix tasks.
-- ALWAYS include a final "Integration" task assigned to the orchestrator (or most senior worker). This task must: (1) read ALL files produced by other workers using read_file, (2) wire them together into the project entry point (e.g., main.js, index.py, App.tsx), (3) have depends_on listing ALL other implementation tasks. Without this task the project will be a collection of disconnected files.
-- After planning, a shared interface CONTRACT will be auto-generated and given to every worker. Design the plan so interfaces between workers are clean and minimal — fewer cross-worker dependencies means fewer integration bugs."""
+
+**Worker system prompts — REQUIRED content**
+Every system_prompt MUST include:
+  1. The worker's specialty in one sentence
+  2. EXACT list of file paths they own, e.g.: "Your owned files: src/routes/users.py, src/routes/tasks.py"
+  3. The rule: "You MUST NOT create or edit any file outside your ownership list. If you need something from another worker's file, read it — never rewrite it."
+
+**Task granularity — CRITICAL**
+Each task must be ATOMIC: one file, one concern. Split anything that touches more than one file. Aim for 10–20 tasks on non-trivial goals.
+
+BAD (too broad):
+  ✗ "Implement CRUD and router"        ← contains "and" between two actions
+  ✗ "Set up database models and migrations"
+  ✗ "Build the authentication system"
+
+GOOD (atomic — one file, one action):
+  ✓ "Create User model in src/models/user.py"
+  ✓ "Add POST /api/users endpoint in src/routes/users.py"
+  ✓ "Add GET /api/users/:id endpoint in src/routes/users.py"
+  ✓ "Add PUT /api/users/:id endpoint in src/routes/users.py"
+  ✓ "Add DELETE /api/users/:id endpoint in src/routes/users.py"
+  ✓ "Create users table migration in migrations/001_users.sql"
+
+Test: if the description contains "and" between two distinct actions → split into two tasks.
+
+**Task descriptions — REQUIRED format**
+Every description MUST be a single line using pipe-separated fields:
+  "File: <exact path> | Action: CREATE|EDIT|ADD <one-line summary> | Imports: <from other workers, or none> | Exports: <what others import from this, or none> | Details: <exact content to add/change>"
+Keep it on one line — no literal newlines inside the JSON string.
+
+**Task descriptions MUST be self-contained. A worker MUST be able to execute the task by reading ONLY the target file (or zero files for CREATE tasks):**
+- EDIT tasks: include the exact text/code to replace AND the exact replacement. Quote it verbatim from the context.
+- ADD tasks: include the exact content to insert and the precise location (after line X, inside function Y, at the end of the array, etc.).
+- CREATE tasks: include the complete structure, format, all field names, and sample values. The worker should be able to write the file without reading anything else.
+- Bug-fix tasks: state the exact wrong value and the exact correct value. Never say "fix the mismatch" — say "change X to Y".
+- If the context contains the relevant snippet, COPY it into the task description verbatim.
+
+BAD Details (worker still has to investigate):
+  ✗ "Fix the narrative mismatch"
+  ✗ "Add the missing steps"
+  ✗ "Follow the existing pattern"
+  ✗ "Update to match the schema"
+
+GOOD Details (worker knows exactly what to write):
+  ✓ "File has NARRATIVES for step-1..step-4. Add exactly 3 new entries after step-4 following this format: {\"step-5\":{\"title\":\"...\",\"text\":\"...\"},\"step-6\":{...},\"step-7\":{...}}. Copy the structure from existing step-4 entry."
+  ✓ "Replace line: const MAX = 10 with: const MAX = 50 in the config block at the top of the file."
+  ✓ "Create file with these exact fields: {id, name, email, created_at}. Use declarative_base from db/base.py (already written by DB Worker)."
+
+**Dependencies — decision rule**
+Add task A to depends_on of task B if and only if: B needs to open or import a file that A creates or modifies.
+Do NOT add a dependency just to be safe — unnecessary deps serialize work that could run in parallel.
+
+Decision process for each task B:
+  → For each file B reads or imports: who writes that file? → that task goes in B's depends_on
+  → If B only writes new files that nobody wrote before: depends_on = []
+  → If two tasks touch completely different files: NO dependency between them (run in parallel)
+
+Goal: maximize parallelism. Tasks that work on separate files MUST run concurrently.
+
+**Special tasks**
+- QA/testing goals: include a dedicated QA worker using `swarm_report_bug` for every issue. QA tasks must have all implementation tasks in depends_on.
+- When a QA worker is present, include a fixer worker to receive bug-fix tasks.
+- ALWAYS include a final "Integration" task assigned to the orchestrator. Before writing it, enumerate ALL other task titles — every single one must appear in its depends_on. This task wires all files into the entry point.
+- After planning, a shared interface CONTRACT will be auto-generated. Keep cross-worker interfaces minimal.
+- Use `task_type: "debate"` only for critical architectural decisions. All implementation tasks use `task_type: "standard"`."""
+
+    def _build_workers_prompt(self, swarm: dict) -> str:
+        ctx = swarm.get("shared_context", "") or ""
+        if len(ctx) > self._MAX_PLAN_CONTEXT_CHARS:
+            ctx = ctx[: self._MAX_PLAN_CONTEXT_CHARS] + "\n\n[...context truncated...]"
+        ctx_section = f"\n\n**Provided context files:**\n{ctx}" if ctx else ""
+        answers = (swarm.get("clarification_answers") or "").strip()
+        answers_section = (
+            f"\n\n**Clarification Q&A:**\n{answers}" if answers else ""
+        )
+        return f"""You are a project planning AI. Design the optimal team of AI worker agents for this goal.{ctx_section}{answers_section}
+
+**Goal:** {swarm["goal"]}
+
+Return ONLY a raw JSON array — no prose, no markdown fences:
+[
+  {{
+    "name": "Worker Name",
+    "role": "orchestrator|worker",
+    "description": "One-line specialty",
+    "system_prompt": "You are a [specialty] worker. Your owned files: [exact list]. You MUST NOT edit files outside this list.",
+    "model": null,
+    "allowed_tools": "all"
+  }}
+]
+
+Rules:
+- Exactly 1 orchestrator + 2–5 specialist workers
+- Each worker owns a non-overlapping set of files — no two workers ever write the same file
+- system_prompt max 100 words; MUST include: specialty, exact owned file paths, no-edit-outside rule
+- model can be null or a LiteLLM string like "anthropic/claude-opus-4-6\""""
+
+    def _build_tasks_prompt(self, swarm: dict, workers: list[dict]) -> str:
+        worker_names = [w.get("name", "") for w in workers]
+        workers_summary = "\n".join(
+            f'- {w.get("name")} ({w.get("role")}): {w.get("description", "")}'
+            for w in workers
+        )
+        return f"""You are a project planning AI. Given the worker team below, generate the complete task plan.
+
+**Goal:** {swarm["goal"]}
+
+**Team:**
+{workers_summary}
+
+Valid worker names (use exactly): {json.dumps(worker_names)}
+
+Return ONLY a raw JSON array of tasks — no prose, no markdown fences:
+[
+  {{
+    "title": "Short unambiguous title",
+    "description": "File: <exact path> | Action: CREATE|EDIT|ADD <summary> | Imports: <or none> | Exports: <or none> | Details: <notes>",
+    "worker": "<exact worker name from list above>",
+    "depends_on": [],
+    "task_type": "standard"
+  }}
+]
+
+Rules:
+- Each task is ATOMIC: one file, one action. If it says "and" between two actions → split it.
+- Aim for 10–20 tasks on non-trivial goals
+- depends_on: list task titles that must complete before this one (only real file dependencies)
+- Maximize parallelism — tasks on separate files have NO dependency
+- ALWAYS include a final "Integration" task assigned to the orchestrator with ALL other task titles in depends_on
+- ALWAYS include a "Documentation" task assigned to the orchestrator, depends_on ALL other task titles (including Integration). This task must produce a `README.md` in the workspace root covering: what was built, the architecture/structure, how to install/run it, how to use it, and any important decisions made. This is mandatory — every swarm must leave complete documentation.
+- QA tasks (if needed) must depend on all implementation tasks
+- task_type: "debate" only for critical architectural decisions; everything else is "standard\""""
 
     @staticmethod
     async def _cascade_fail(self, swarm_id: int, failed_title: str) -> None:
@@ -1521,10 +1899,13 @@ Rules:
                 if "waiting_for_user" in reason.lower():
                     return "waiting", reason
                 return status, reason
-        # No marker — worker didn't follow the protocol. Treat as completed so
-        # well-behaved models that produce real output are not penalised.
-        # Workers that genuinely failed should use TASK_STATUS: FAILED.
-        return "completed", ""
+        # No explicit marker — infer from output quality rather than defaulting to success.
+        # A response with code blocks or substantial content is likely real work; anything
+        # short or empty is a silent failure that should be retried, not treated as done.
+        stripped = response.strip() if response else ""
+        if "```" in stripped or len(stripped) > 400:
+            return "completed", ""
+        return "failed", "Worker produced no output and did not confirm completion (missing TASK_STATUS marker)"
 
     def _build_worker_system_prompt(
         self, worker: dict, swarm: dict, all_workers: list[dict]
@@ -1536,13 +1917,36 @@ Rules:
         ]
         team_section = "\n".join(teammates) if teammates else "None"
 
+        import platform as _platform
+        os_hint = (
+            "You are running on **Windows**. "
+            "Use `list_directory` / `read_file` / `write_file` for all file operations — "
+            "NEVER `ls`, `pwd`, or Unix paths. "
+            "When you must use `run_command`, use Windows syntax (backslashes, `dir`, `type`, etc.)."
+            if _platform.system() == "Windows"
+            else "You are running on Linux/macOS. Use standard shell commands."
+        )
+
+        shared_ws = (swarm.get("working_path") or "").strip() or worker["workspace_path"]
+
         return (
             f"{worker['system_prompt']}\n\n"
             f"---\n"
             f"**Swarm context:**\n"
             f"Project goal: {swarm['goal']}\n"
             f"Your role: {worker.get('role', 'worker')}\n"
-            f"Your workspace: {worker['workspace_path']}\n\n"
+            f"Shared project workspace (ALL team output goes here): `{shared_ws}`\n\n"
+            f"**⚠️ FILE OPERATIONS — READ THIS FIRST:**\n"
+            f"{os_hint}\n"
+            f"- **One shared workspace for the whole team:** `{shared_ws}`\n"
+            f"  Every worker reads and writes project files HERE — not in personal subdirectories.\n"
+            f"  Example: `write_file(\"{shared_ws}/app/main.py\", content)`\n"
+            f"- **Modify existing files with `edit_file`, not `write_file`.**\n"
+            f"  `edit_file(path, old_string, new_string)` replaces only the changed section.\n"
+            f"  Only use `write_file` when creating a file that does NOT exist yet.\n"
+            f"  Rewriting an entire file that a teammate already created will destroy their work.\n"
+            f"- Use `read_file` and `list_directory` for reading — NOT shell commands.\n"
+            f"- NEVER use `cd`, `ls`, `pwd`, or try to navigate. Start writing files immediately.\n\n"
             f"**Your teammates:**\n{team_section}\n\n"
             f"**Swarm communication tools:**\n"
             f"- `swarm_send_message`: send a message to a specific teammate\n"
@@ -1550,8 +1954,18 @@ Rules:
             f"- `swarm_read_messages`: read messages sent to you or from the user\n"
             f"- `swarm_ask_user`: post a question to the user in the Activity feed (they will reply as a message)\n"
             f"- `swarm_create_task`: create a new task for yourself or a teammate\n"
-            f"- `swarm_report_bug`: (QA workers) report a bug — auto-creates a fix task + re-test task\n\n"
+            f"- `swarm_report_bug`: (QA workers) report a bug — auto-creates a fix task + re-test task\n"
+            f"- `swarm_post_update`: post a progress update to the **team bulletin board** (all workers see it)\n"
+            f"- `swarm_store_knowledge`: store a key fact/decision so ALL teammates can find it\n"
+            f"- `swarm_query_knowledge`: search facts stored by any worker before starting your task\n"
+            f"- `swarm_spawn_subswarm`: spawn a child swarm for a complex sub-goal (blocks, returns synthesis)\n\n"
             f"**IMPORTANT RULES:**\n"
+            f"- **Trust your tools.** Tool results are accurate. If read_file returns content, that IS the file's content.\n"
+            f"  Do NOT re-read the same file to verify — read each file ONCE, then act on the result.\n"
+            f"- **Bias to action, not verification.** If you have enough information to write a file, write it.\n"
+            f"  Imperfect working code is better than perfect paralysis. You can fix errors on retry.\n"
+            f"- **Teammate failures are not your problem.** If a teammate had issues, read their outputs anyway\n"
+            f"  and do your best with what exists. Do not let their failure stop you from creating your files.\n"
             f"- **Read the CONTRACT first**: your task context includes a SHARED INTERFACE CONTRACT.\n"
             f"  Follow it exactly — do not invent your own event names, data formats, DOM IDs, or import paths.\n"
             f"- **File ownership**: only write to the files your role owns per the contract.\n"
@@ -1561,10 +1975,17 @@ Rules:
             f"- If you need information from the user, call `swarm_ask_user` — NEVER write questions to files.\n"
             f"- Do NOT create README or question files just to ask the user something.\n"
             f"- If blocked waiting for user input, use `swarm_ask_user` then end with TASK_STATUS: FAILED: waiting_for_user\n"
-            f"- Read your messages with `swarm_read_messages` before starting — the user may have already answered.\n"
-            f"- **If your role is QA/testing**: use `swarm_report_bug` for every issue found. NEVER just mark a task failed silently — report the bug so it gets fixed and re-tested automatically.\n"
-            f"- **If your role is orchestrator/auditor**: when reviewing work and finding problems (missing imports, disconnected files, broken wiring), call `swarm_create_task` immediately to create a fix task for the responsible worker. Do NOT just note the problem — create the task so it gets done.\n"
-            f"- **Integration tasks**: use `read_file` on EVERY file teammates created, then write the actual wiring code into the entry point (main.js, index.py, etc.). Do not write a summary — write real, runnable code.\n\n"
+            f"- Call `swarm_read_messages` ONLY if your task is blocked waiting for a user reply or a teammate's answer — not as a routine step.\n"
+            f"- Call `swarm_query_knowledge` ONLY when your task requires knowing a teammate's API, file format, or schema that isn't already in your task context.\n"
+            f"- **Call `swarm_post_update` when you finish significant work** (e.g. 'Finished DB schema at db/schema.sql', 'API: POST /items returns {{id, name}}') so teammates stay informed.\n"
+            f"- **Call `swarm_store_knowledge` after every key decision** (API shape, file path, DB schema, pattern used) so teammates don't have to guess.\n\n"
+            f"**MATCH YOUR EFFORT TO YOUR TASK SCOPE:**\n"
+            f"- **Single-file edit**: your task names a file and describes a specific change → read that file ONCE (if you need the current content), apply the edit, done. Do NOT explore the codebase, query knowledge, or read other files.\n"
+            f"- **New file**: your task asks you to create a file → write it directly. Do NOT read the whole project first.\n"
+            f"- **Integration task**: your task says to wire multiple files together → use `read_file` on the specific files listed in your task, then write the wiring. Do NOT read files not mentioned.\n"
+            f"- **Documentation task**: survey the workspace with `list_directory` and `read_file` only on files you'll document, then write `README.md`.\n"
+            f"- **QA/testing**: call `swarm_report_bug` ONCE PER BUG — ONE bug, ONE file, ONE call. NEVER create a broad 'Bug Fixing' task. Workflow: find bug in file X → `swarm_report_bug` (provide FILE/WRONG/CORRECT/REASON in description) → find next bug → `swarm_report_bug` → ... → TASK_STATUS: COMPLETED. Do NOT bundle bugs. Do NOT attempt fixes in files you don't own.\n"
+            f"- **Orchestrator/auditor**: when finding problems (missing imports, broken wiring), call `swarm_create_task` immediately — do not just note the problem.\n\n"
             f"---\n"
             f"**REQUIRED — always end your response with exactly one of these lines:**\n"
             f"  TASK_STATUS: COMPLETED\n"
@@ -1580,10 +2001,32 @@ Rules:
         messages_in: list[dict],
         dep_outputs: list[tuple[str, str]] | None = None,
         retry_history: list[dict] | None = None,
+        team_updates: list[dict] | None = None,
     ) -> str:
+        shared_ws = (swarm.get("working_path") or "").strip()
+        ws_reminder = (
+            f"\n> **Shared workspace:** `{shared_ws}`  "
+            f"Write ALL output files here. Use `edit_file` to modify existing files, "
+            f"`write_file` only for new files."
+        ) if shared_ws else ""
+
         parts = [
-            f"# Task: {task['title']}\n\n{task['description']}",
+            f"# Task: {task['title']}{ws_reminder}\n\n{task['description']}",
         ]
+
+        # ── Team Bulletin Board ───────────────────────────────────────────────
+        # Recent updates posted by teammates via swarm_post_update.
+        # Read these to know what's been done and avoid duplicating work.
+        if team_updates:
+            lines = []
+            for u in team_updates:
+                who = u.get("from_worker_name") or "unknown"
+                lines.append(f"- [{who}] {u['content']}")
+            parts.append(
+                f"\n## Team Bulletin Board\n"
+                f"Recent updates from your teammates:\n" + "\n".join(lines) + "\n\n"
+                f"Post your own updates with `swarm_post_update` when you finish significant work."
+            )
 
         # ── 0. Retry History ──────────────────────────────────────────────────
         # If this task was attempted before, inject a summary of what was tried,
@@ -1631,7 +2074,7 @@ Rules:
         # knows exactly what was built and can import/extend it correctly.
         if dep_outputs:
             dep_section = "\n\n".join(
-                f"### Output of: {title}\n\n{truncate(output, TRUNCATE_SWARM_TASK_OUTPUT_CHARS)}"
+                f"### Output of: {title}\n\n{self._smart_truncate_output(output, TRUNCATE_SWARM_TASK_OUTPUT_CHARS)}"
                 for title, output in dep_outputs
             )
             parts.append(
@@ -1641,9 +2084,16 @@ Rules:
             )
 
         # ── 3. Shared Project Context (uploaded files) ────────────────────────
-        if swarm.get("shared_context"):
+        # Only show a compact file manifest — workers read files on demand.
+        # Never inline full content here: workers reuse the same channel across
+        # tasks, so injecting content each time wastes tokens unnecessarily.
+        _ctx_files = json.loads(swarm.get("context_files") or "[]")
+        if _ctx_files:
+            _ws = swarm.get("workspace_path", "")
+            _ctx_dir = Path(_ws) / "context" if _ws else Path("context")
+            _flist = "\n".join(f"- {_ctx_dir / fn}" for fn in _ctx_files)
             parts.append(
-                f"\n## Shared Project Context\n\n{swarm['shared_context']}"
+                f"\n## Project Files\n\nUploaded files available — use `read_file` to access:\n{_flist}"
             )
 
         # ── 4. Workspace File Listing ─────────────────────────────────────────
@@ -1679,6 +2129,76 @@ Rules:
         return "\n\n".join(parts)
 
     # ─── Plan Parser ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _smart_truncate_output(text: str, max_chars: int) -> str:
+        """
+        Truncate a task output while preserving code blocks.
+        Workers downstream need the actual code above all else — prose can be cut,
+        but a fenced code block that gets sliced in half is worse than nothing.
+        Strategy:
+          1. If the full text fits, return it as-is.
+          2. Collect all fenced code blocks. If they fit within the budget, include
+             all of them plus as much leading prose as the remaining budget allows.
+          3. If code alone exceeds the budget, include blocks greedily until full.
+        """
+        import re as _re
+        if len(text) <= max_chars:
+            return text
+
+        code_blocks = _re.findall(r"```[\s\S]*?```", text)
+        if not code_blocks:
+            return text[:max_chars] + "\n… [truncated]"
+
+        code_total = sum(len(b) for b in code_blocks)
+        if code_total <= max_chars:
+            prose_budget = max_chars - code_total
+            prose = _re.sub(r"```[\s\S]*?```", "", text).strip()
+            header = (prose[:prose_budget] + "\n\n") if prose_budget > 80 else ""
+            return header + "\n\n".join(code_blocks)
+
+        # Code alone overflows — include blocks greedily
+        parts: list[str] = []
+        remaining = max_chars
+        for block in code_blocks:
+            if remaining <= 0:
+                break
+            if len(block) <= remaining:
+                parts.append(block)
+                remaining -= len(block)
+            else:
+                parts.append(block[:remaining] + "\n… [truncated]\n```")
+                remaining = 0
+        return "\n\n".join(parts)
+
+    @staticmethod
+    @staticmethod
+    def _json_is_truncated(text: str) -> bool:
+        """Return True if the JSON looks cut off (unbalanced braces/brackets)."""
+        t = text.strip()
+        opens = t.count("{") - t.count("}")
+        arr_opens = t.count("[") - t.count("]")
+        return opens > 0 or arr_opens > 0
+
+    @staticmethod
+    def _extract_json_array(text: str) -> str:
+        """Pull the first [...] JSON array out of an LLM response (strips fences/prose)."""
+        import re as _re
+        stripped = text.strip()
+        # Direct array
+        if stripped.startswith("["):
+            return stripped
+        # Fenced code block
+        m = _re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", stripped)
+        if m:
+            candidate = m.group(1).strip()
+            if candidate.startswith("["):
+                return candidate
+        # Any [...] in the text
+        m = _re.search(r"\[[\s\S]*\]", stripped)
+        if m:
+            return m.group()
+        return stripped
 
     @staticmethod
     def _repair_json(text: str) -> str:
@@ -1750,9 +2270,18 @@ Rules:
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
-    def _swarm_dir(self, swarm_id: int) -> Path:
+    @staticmethod
+    def _safe_slug(text: str, max_len: int = 40) -> str:
+        """Convert any string to a filesystem/ID-safe slug."""
+        import re as _re
+        slug = _re.sub(r'[^a-z0-9_-]', '_', text.lower())
+        slug = _re.sub(r'_+', '_', slug).strip('_')
+        return (slug[:max_len] or "unnamed")
+
+    def _swarm_dir(self, swarm_id: int, name: str = "") -> Path:
         workspace = Path(os.environ.get("OPENACM_WORKSPACE", "workspace"))
-        return workspace / "swarms" / str(swarm_id)
+        folder = f"{self._safe_slug(name)}_{swarm_id}" if name else str(swarm_id)
+        return workspace / "swarms" / folder
 
     async def _emit(self, swarm_id: int, event_type: str, payload: dict):
         """Emit any swarm-related event.  All events carry swarm_id for filtering."""

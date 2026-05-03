@@ -1037,27 +1037,29 @@ export default function ConfigPage() {
   };
 
   // ─── Compaction ─────────────────────────────────────────────────────────────
-  const [compactThreshold, setCompactThreshold] = useState(25);
+  const [compactRatio, setCompactRatio] = useState(60);       // stored as 0–100 int, sent as 0.0–1.0
   const [compactKeepRecent, setCompactKeepRecent] = useState(6);
   const [compactionSaving, setCompactionSaving] = useState(false);
 
   useEffect(() => {
     fetchAPI('/api/config/compaction')
       .then((d: unknown) => {
-        const data = d as { compact_threshold?: number; compact_keep_recent?: number };
-        if (typeof data?.compact_threshold === 'number') setCompactThreshold(data.compact_threshold);
+        const data = d as { compact_ratio?: number; compact_threshold?: number; compact_keep_recent?: number };
+        // Support both old (compact_threshold messages) and new (compact_ratio float) formats
+        if (typeof data?.compact_ratio === 'number') setCompactRatio(Math.round(data.compact_ratio * 100));
+        else if (typeof data?.compact_threshold === 'number') setCompactRatio(60); // legacy: use default
         if (typeof data?.compact_keep_recent === 'number') setCompactKeepRecent(data.compact_keep_recent);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const saveCompactionSettings = async (threshold: number, keepRecent: number) => {
+  const saveCompactionSettings = async (ratio: number, keepRecent: number) => {
     setCompactionSaving(true);
     try {
       await fetchAPI('/api/config/compaction', {
         method: 'POST',
-        body: JSON.stringify({ compact_threshold: threshold, compact_keep_recent: keepRecent }),
+        body: JSON.stringify({ compact_ratio: ratio / 100, compact_keep_recent: keepRecent }),
       });
       toast.success('Compaction settings saved');
     } catch {
@@ -2093,53 +2095,36 @@ export default function ConfigPage() {
                     </p>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                      {/* Compact after N messages */}
+                      {/* Compact at X% of context window */}
                       <div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            marginBottom: 6,
-                          }}
-                        >
-                          <label className="label">Compact after</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <label className="label">Compact when context reaches</label>
                           <span className="mono" style={{ fontSize: 11, color: 'var(--acm-accent)' }}>
-                            {compactThreshold} messages
+                            {compactRatio}% of model window
                           </span>
                         </div>
                         <input
                           type="range"
-                          min={5}
-                          max={100}
+                          min={30}
+                          max={90}
                           step={5}
-                          value={compactThreshold}
-                          onChange={(e) => setCompactThreshold(Number(e.target.value))}
+                          value={compactRatio}
+                          onChange={(e) => setCompactRatio(Number(e.target.value))}
                           onMouseUp={(e) =>
-                            saveCompactionSettings(
-                              Number((e.target as HTMLInputElement).value),
-                              compactKeepRecent
-                            )
+                            saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)
                           }
                           onTouchEnd={(e) =>
-                            saveCompactionSettings(
-                              Number((e.target as HTMLInputElement).value),
-                              compactKeepRecent
-                            )
+                            saveCompactionSettings(Number((e.target as HTMLInputElement).value), compactKeepRecent)
                           }
                           style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
                         />
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            fontSize: 10,
-                            color: 'var(--acm-fg-4)',
-                            marginTop: 4,
-                          }}
-                        >
-                          <span>5 — very often</span>
-                          <span>100 — rarely</span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--acm-fg-4)', marginTop: 4 }}>
+                          <span>30% — compact early</span>
+                          <span>90% — compact late</span>
                         </div>
+                        <p style={{ fontSize: 10, color: 'var(--acm-fg-4)', marginTop: 6 }}>
+                          Adapts to the active model: 60% of a 128k model = 76k tokens before compacting.
+                        </p>
                       </div>
 
                       {/* Keep recent N intact */}
@@ -2164,16 +2149,10 @@ export default function ConfigPage() {
                           value={compactKeepRecent}
                           onChange={(e) => setCompactKeepRecent(Number(e.target.value))}
                           onMouseUp={(e) =>
-                            saveCompactionSettings(
-                              compactThreshold,
-                              Number((e.target as HTMLInputElement).value)
-                            )
+                            saveCompactionSettings(compactRatio, Number((e.target as HTMLInputElement).value))
                           }
                           onTouchEnd={(e) =>
-                            saveCompactionSettings(
-                              compactThreshold,
-                              Number((e.target as HTMLInputElement).value)
-                            )
+                            saveCompactionSettings(compactRatio, Number((e.target as HTMLInputElement).value))
                           }
                           style={{ width: '100%', accentColor: 'var(--acm-accent)' }}
                         />

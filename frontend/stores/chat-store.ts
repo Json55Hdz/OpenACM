@@ -47,6 +47,10 @@ interface Message {
     summary: string;
     summarizedMessages: number;
   };
+  // Model internal reasoning/thinking (o1, DeepSeek-R1, Kimi thinking mode)
+  reasoning?: string;
+  // True while reasoning is still being streamed chunk-by-chunk
+  reasoningStreaming?: boolean;
 }
 
 interface Attachment {
@@ -78,7 +82,14 @@ interface ChatState {
   isRouterLearning: boolean;
   activeSkillNames: string[];
   memoryRecall: { status: 'searching' | 'found' | 'empty' | 'saving' | 'saved'; count: number } | null;
+  // Per-conversation context usage stats, keyed by "channel:userId"
+  contextStats: Record<string, { pct_used: number; estimated_tokens: number; context_window: number }>;
+  setContextStats: (key: string, stats: { pct_used: number; estimated_tokens: number; context_window: number }) => void;
 
+  // Append a reasoning chunk to the live streaming reasoning bubble (creates one if needed)
+  appendReasoningChunk: (chunk: string) => void;
+  // Finalize a live streaming reasoning bubble with the full content
+  finalizeReasoning: (content: string) => void;
   // forKey: if provided and different from currentTarget, add to savedMessages instead
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>, forKey?: string) => void;
   setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
@@ -125,9 +136,53 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isRouterLearning: false,
   activeSkillNames: [],
   memoryRecall: null,
+  contextStats: {},
   pendingOnboardingGreeting: null,
   sendMessageFn: null,
   cancelMessageFn: null,
+
+  appendReasoningChunk: (chunk) => {
+    set((state) => {
+      const idx = [...state.messages].findLastIndex(
+        (m) => m.reasoning !== undefined && m.reasoningStreaming === true,
+      );
+      if (idx !== -1) {
+        const updated = [...state.messages];
+        updated[idx] = { ...updated[idx], reasoning: (updated[idx].reasoning || '') + chunk };
+        return { messages: updated };
+      }
+      const newMsg: Message = {
+        id: `reasoning-live-${Date.now()}`,
+        content: '',
+        role: 'system',
+        timestamp: new Date(),
+        reasoning: chunk,
+        reasoningStreaming: true,
+      };
+      return { messages: [...state.messages, newMsg] };
+    });
+  },
+
+  finalizeReasoning: (content) => {
+    set((state) => {
+      const idx = [...state.messages].findLastIndex((m) => m.reasoningStreaming === true);
+      if (idx !== -1) {
+        const updated = [...state.messages];
+        updated[idx] = { ...updated[idx], reasoning: content, reasoningStreaming: false };
+        return { messages: updated };
+      }
+      // No live bubble — add final as a normal reasoning message
+      const newMsg: Message = {
+        id: `reasoning-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        content: '',
+        role: 'system',
+        timestamp: new Date(),
+        reasoning: content,
+        reasoningStreaming: false,
+      };
+      return { messages: [...state.messages, newMsg] };
+    });
+  },
 
   addMessage: (message, forKey) => {
     const state = get();
@@ -275,6 +330,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setWsConnected: (connected) => set({ wsConnected: connected }),
   setRouterLearning: (learning) => set({ isRouterLearning: learning }),
+  setContextStats: (key, stats) => set((s) => ({ contextStats: { ...s.contextStats, [key]: stats } })),
   setActiveSkillNames: (names) => set({ activeSkillNames: names }),
   setMemoryRecall: (state) => set({ memoryRecall: state }),
   setPendingOnboardingGreeting: (content) => set({ pendingOnboardingGreeting: content }),

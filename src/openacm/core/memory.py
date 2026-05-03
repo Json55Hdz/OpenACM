@@ -19,11 +19,14 @@ from openacm.core.events import EventBus, EVENT_MEMORY_COMPACTED
 
 log = structlog.get_logger()
 
-# Maximum estimated tokens for conversation context
-MAX_CONTEXT_TOKENS = 22000  # ~66k chars with //3 estimate ≈ same window as before
+# Default context window used when the model is unknown.
+DEFAULT_CONTEXT_WINDOW = 128_000
 
-# Fallback compaction defaults (used only if config values are missing)
-_DEFAULT_COMPACT_THRESHOLD = 25
+# Hard truncation ceiling: never allow the context to exceed this fraction of the window.
+# Leaves headroom for the compaction summary + new messages.
+TRUNCATE_RATIO = 0.85
+
+# Fallback compaction keep-recent (used only if config value is missing)
 _DEFAULT_COMPACT_KEEP_RECENT = 6
 
 # Prompt used to summarize old messages
@@ -57,6 +60,10 @@ class MemoryManager:
         # Per-conversation workspace override — set by /workspace command, injected into
         # every system prompt for that conversation so the AI never forgets the path.
         self._conversation_workspace: dict[str, str] = {}
+        # Per-conversation context window (tokens) — set by brain when it knows the model.
+        self._context_window: dict[str, int] = {}
+        # Accumulated prompt tokens per conversation (from actual LLM usage).
+        self._tokens_used: dict[str, int] = {}
 
     def _key(self, user_id: str, channel_id: str) -> str:
         """Generate a unique key for a user/channel pair."""
@@ -171,10 +178,12 @@ class MemoryManager:
             # Note: discarded messages are already persisted in SQLite via log_message.
             # RAG (ChromaDB) is reserved for explicit notes/facts, not conversation overflow.
 
-        # Token-based truncation: keep total estimated tokens under budget
-        # Removed messages are already in SQLite — no need to re-ingest into RAG.
+        # Hard truncation: never exceed TRUNCATE_RATIO × context_window.
+        # Uses the per-conversation window if known, otherwise DEFAULT_CONTEXT_WINDOW.
+        _window = self._context_window.get(key, DEFAULT_CONTEXT_WINDOW)
+        _truncate_ceiling = int(_window * TRUNCATE_RATIO)
         while (
-            self._estimate_tokens(self._cache[key]) > MAX_CONTEXT_TOKENS
+            self._estimate_tokens(self._cache[key]) > _truncate_ceiling
             and len(self._cache[key]) > 3
         ):
             if self._cache[key][0]["role"] == "system":
@@ -192,14 +201,17 @@ class MemoryManager:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
 
-        # Flag compact as needed — brain.py will await it synchronously before next LLM call.
-        # Count messages added SINCE the last compact attempt so that a manual /compact
-        # (even a failed one) resets the countdown rather than re-triggering immediately.
-        threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
-        non_system = [m for m in self._cache[key] if m.get("role") != "system"]
-        baseline = self._compact_baseline.get(key, 0)
+        # Trigger compaction when estimated tokens exceed compact_ratio × context_window.
+        # Using the actual model window means a 128k model won't compact every 10 messages,
+        # while a 4k model will compact much earlier.
+        compact_ratio = getattr(self.config, "compact_ratio", 0.60)
+        context_window = self._context_window.get(key, DEFAULT_CONTEXT_WINDOW)
+        compact_threshold = int(context_window * compact_ratio)
+        current_tokens = self._estimate_tokens(self._cache[key])
+        token_baseline = self._compact_baseline.get(key, 0)
         if (
-            len(non_system) - baseline >= threshold
+            current_tokens >= compact_threshold
+            and current_tokens - token_baseline >= max(1000, compact_threshold // 10)
             and key not in self._compacting
             and self._llm_router is not None
         ):
@@ -274,6 +286,38 @@ class MemoryManager:
         """Remove the workspace pin — reverts to global default."""
         self._conversation_workspace.pop(self._key(user_id, channel_id), None)
 
+    # ── Context window & token tracking ──────────────────────────────────────
+
+    def set_context_window(self, user_id: str, channel_id: str, tokens: int) -> None:
+        """Tell the memory manager the active model's max input tokens for this conversation."""
+        self._context_window[self._key(user_id, channel_id)] = tokens
+
+    def get_context_window(self, user_id: str, channel_id: str) -> int:
+        """Return the known context window, or DEFAULT_CONTEXT_WINDOW if not set."""
+        return self._context_window.get(self._key(user_id, channel_id), DEFAULT_CONTEXT_WINDOW)
+
+    def record_tokens(self, user_id: str, channel_id: str, prompt_tokens: int) -> None:
+        """Accumulate prompt tokens from a real LLM call for this conversation."""
+        key = self._key(user_id, channel_id)
+        self._tokens_used[key] = self._tokens_used.get(key, 0) + prompt_tokens
+
+    def get_tokens_used(self, user_id: str, channel_id: str) -> int:
+        """Return accumulated prompt tokens used in this conversation."""
+        return self._tokens_used.get(self._key(user_id, channel_id), 0)
+
+    def get_context_stats(self, user_id: str, channel_id: str) -> dict:
+        """Return token stats for this conversation — used by the frontend."""
+        key = self._key(user_id, channel_id)
+        window = self._context_window.get(key, DEFAULT_CONTEXT_WINDOW)
+        estimated = self._estimate_tokens(self._cache.get(key, []))
+        used = self._tokens_used.get(key, 0)
+        return {
+            "context_window": window,
+            "estimated_tokens": estimated,
+            "tokens_used": used,
+            "pct_used": round(estimated / window * 100, 1) if window else 0,
+        }
+
     def should_compact(self, user_id: str, channel_id: str) -> bool:
         """Return True if a compaction was scheduled and hasn't run yet."""
         return self._key(user_id, channel_id) in self._needs_compact
@@ -304,15 +348,13 @@ class MemoryManager:
             system_msg = [msgs[0]] if has_system else []
             rest = msgs[1:] if has_system else msgs[:]
 
-            threshold = getattr(self.config, "compact_threshold", _DEFAULT_COMPACT_THRESHOLD)
-            if not force and len(rest) < threshold:
-                return None
+
 
             keep_count = getattr(self.config, "compact_keep_recent", _DEFAULT_COMPACT_KEEP_RECENT)
             to_summarize = rest[:-keep_count] if keep_count < len(rest) else []
             to_keep = rest[-keep_count:] if keep_count < len(rest) else rest
 
-            if len(to_summarize) < 4:
+            if len(to_summarize) < 2:
                 return None
 
             # Build a rich transcript — include tool calls and results, don't truncate aggressively
@@ -383,10 +425,9 @@ class MemoryManager:
 
             self._cache[key] = system_msg + [summary_msg] + to_keep
 
-            # Reset the baseline to current non-system count so auto-compact
-            # doesn't re-fire until `threshold` *new* messages accumulate.
-            new_non_system = len([m for m in self._cache[key] if m.get("role") != "system"])
-            self._compact_baseline[key] = new_non_system
+            # Reset the baseline to current token count so auto-compact doesn't
+            # re-fire until at least 2k new tokens accumulate after this compaction.
+            self._compact_baseline[key] = self._estimate_tokens(self._cache[key])
 
             log.info(
                 "Conversation compacted",
@@ -401,6 +442,14 @@ class MemoryManager:
                     "channel_id": channel_id,
                     "summary": summary_text,
                     "summarized_messages": len(to_summarize),
+                })
+                # Push updated context % so the frontend badge drops immediately
+                _stats = self.get_context_stats(user_id, channel_id)
+                await self._event_bus.emit("context:stats", {
+                    "channel_id": channel_id,
+                    "user_id": user_id,
+                    "channel_type": "web",
+                    **_stats,
                 })
 
             return summary_text

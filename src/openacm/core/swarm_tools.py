@@ -27,6 +27,7 @@ def build_swarm_tools(
     all_workers: list[dict],
     database: Any,
     event_bus: Any,
+    swarm_manager: Any = None,
 ) -> list:
     """
     Create a list of swarm communication tool functions bound to the given worker.
@@ -138,6 +139,62 @@ def build_swarm_tools(
                     },
                 },
                 "required": ["message"],
+            },
+        },
+    }
+
+    async def swarm_post_update(update: str, **kwargs) -> str:
+        """
+        Post a progress update to the team bulletin board.
+
+        All teammates will see this update at the start of their next task.
+        Use this to share key decisions, completed work, or blockers.
+
+        Args:
+            update: Short message about what you completed or decided (1-3 sentences).
+        """
+        try:
+            await database.add_swarm_message(
+                swarm_id=swarm_id,
+                from_worker_id=worker_id,
+                to_worker_id=None,
+                content=update,
+                message_type="team_update",
+            )
+            await event_bus.emit(
+                EVENT_SWARM_MESSAGE,
+                {
+                    "swarm_id": swarm_id,
+                    "from_worker_id": worker_id,
+                    "from_worker_name": my_name,
+                    "to_worker_id": None,
+                    "message": update,
+                    "type": "team_update",
+                },
+            )
+            return f"Team update posted."
+        except Exception as e:
+            return f"Failed to post update: {e}"
+
+    swarm_post_update._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_post_update",
+            "description": (
+                "Post a progress update to the shared team bulletin board. "
+                "All workers see these updates at the start of their tasks. "
+                "Call this after completing significant work or making a key decision "
+                "(e.g. 'Finished DB schema at db/schema.sql', 'API contract: POST /items returns {id, name}')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "update": {
+                        "type": "string",
+                        "description": "What you completed or decided. Be specific (file paths, endpoint names, data shapes).",
+                    },
+                },
+                "required": ["update"],
             },
         },
     }
@@ -336,7 +393,9 @@ def build_swarm_tools(
         fix_description = (
             f"**[BUG FIX — {severity_label}]** {title}\n\n"
             f"{description}\n\n"
-            f"Fix the issue described above. When done, end with TASK_STATUS: COMPLETED."
+            f"Apply ONLY the change described above. Read the exact file mentioned, make the exact edit, nothing more. "
+            f"Do NOT refactor, do NOT touch other files, do NOT read unrelated files. "
+            f"When done, end with TASK_STATUS: COMPLETED."
         )
         retest_description = (
             f"**[QA RE-TEST — cycle {cycle}]** {title}\n\n"
@@ -402,9 +461,12 @@ def build_swarm_tools(
         "function": {
             "name": "swarm_report_bug",
             "description": (
-                "Report a bug found during QA/testing. "
-                "Automatically schedules a fix task and a re-test task (QA loop). "
-                "Use this instead of just failing the task — it keeps the swarm self-healing."
+                "Report ONE bug found during QA/testing — ONE call per bug, ONE file per call. "
+                "NEVER bundle multiple bugs into one call. "
+                "Call this immediately for each bug you find; do NOT create a generic 'Bug Fixing' task. "
+                "THIS TOOL IS ALWAYS AVAILABLE — call it immediately when you find a bug in a file you don't own. "
+                "Do NOT attempt to work around the bug in your own files. "
+                "Automatically schedules a fix task for the responsible worker and a re-test task (self-healing QA loop)."
             ),
             "parameters": {
                 "type": "object",
@@ -415,7 +477,14 @@ def build_swarm_tools(
                     },
                     "description": {
                         "type": "string",
-                        "description": "Full bug description: steps to reproduce, expected vs actual behavior.",
+                        "description": (
+                            "Atomic bug report targeting ONE file. REQUIRED format:\n"
+                            "FILE: <exact relative path, e.g. src/foo.py>\n"
+                            "WRONG: <exact wrong value/line/content as it appears now>\n"
+                            "CORRECT: <exact replacement — literal content, not 'fix the variable'>\n"
+                            "REASON: <one sentence why this is wrong>\n"
+                            "Do NOT bundle multiple bugs. Do NOT write 'fix the issue above'."
+                        ),
                     },
                     "severity": {
                         "type": "string",
@@ -435,7 +504,209 @@ def build_swarm_tools(
         },
     }
 
+    # ── Shared Knowledge Cache ────────────────────────────────────────────────
+
+    async def swarm_store_knowledge(fact: str, category: str = "general", **kwargs) -> str:
+        """
+        Store a fact or finding in the shared swarm knowledge base so other workers
+        can discover it via swarm_query_knowledge without needing an explicit dependency.
+
+        Args:
+            fact: The fact, finding, or decision to store.
+            category: Topic label (e.g. "api", "architecture", "schema", "bug").
+        """
+        try:
+            content = f"[{category.strip().lower()}] {fact}"
+            await database.add_swarm_message(
+                swarm_id=swarm_id,
+                from_worker_id=worker_id,
+                to_worker_id=None,
+                content=content,
+                message_type="knowledge",
+            )
+            await event_bus.emit("swarm:knowledge_stored", {
+                "swarm_id": swarm_id,
+                "worker_id": worker_id,
+                "worker_name": my_name,
+                "category": category,
+                "fact_preview": fact[:120],
+            })
+            return f"Knowledge stored under [{category}]."
+        except Exception as e:
+            return f"Failed to store knowledge: {e}"
+
+    swarm_store_knowledge._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_store_knowledge",
+            "description": (
+                "Store a fact, decision, or finding in the shared knowledge base. "
+                "Other workers can retrieve it with swarm_query_knowledge. "
+                "Use this for important discoveries: API shapes, DB schemas, architectural decisions, "
+                "file ownership, agreed interfaces — anything a teammate would need to know."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "The fact or finding to store."},
+                    "category": {
+                        "type": "string",
+                        "description": "Topic label. E.g.: api, schema, architecture, bug, decision, file.",
+                        "default": "general",
+                    },
+                },
+                "required": ["fact"],
+            },
+        },
+    }
+
+    async def swarm_query_knowledge(query: str, **kwargs) -> str:
+        """
+        Search the shared swarm knowledge base for facts stored by any worker.
+
+        Args:
+            query: What you are looking for (keywords or a question).
+        """
+        try:
+            all_messages = await database.get_swarm_messages(swarm_id, to_worker_id=None)
+            knowledge = [m for m in all_messages if m.get("message_type") == "knowledge"]
+            if not knowledge:
+                return "No knowledge stored yet in this swarm."
+
+            query_words = set(query.lower().split())
+            scored = []
+            for entry in knowledge:
+                content = entry.get("content", "")
+                entry_words = set(content.lower().split())
+                score = len(query_words & entry_words)
+                if score > 0:
+                    scored.append((score, content))
+
+            scored.sort(key=lambda x: -x[0])
+            top = scored[:8] if scored else [(0, k.get("content", "")) for k in knowledge[:8]]
+
+            if not top:
+                return "No matching knowledge found."
+
+            lines = "\n".join(f"- {item[1]}" for item in top)
+            return f"Knowledge matches for '{query}':\n{lines}"
+        except Exception as e:
+            return f"Knowledge query failed: {e}"
+
+    swarm_query_knowledge._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_query_knowledge",
+            "description": (
+                "Search facts stored by any worker in the shared knowledge base. "
+                "Call this before starting work to discover what teammates have already decided or built. "
+                "Returns up to 8 matching entries ranked by keyword relevance."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keywords or question describing what you want to know.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    }
+
+    # ── Sub-swarms ────────────────────────────────────────────────────────────
+
+    async def swarm_spawn_subswarm(name: str, goal: str, context: str = "", **kwargs) -> str:
+        """
+        Spawn a child swarm to tackle a complex sub-goal autonomously.
+        Blocks until the child swarm completes (max 5 minutes) and returns its synthesis.
+
+        Args:
+            name: Short name for the child swarm.
+            goal: The specific goal for the child swarm to accomplish.
+            context: Optional background context to pass to child workers.
+        """
+        if swarm_manager is None:
+            return "Sub-swarms are not available in this context."
+        try:
+            import asyncio as _asyncio
+            file_contents = [{"filename": "context.md", "content": context}] if context.strip() else None
+            child_swarm = await swarm_manager.create_swarm(
+                name=name, goal=goal, file_contents=file_contents
+            )
+            child_id = child_swarm["id"]
+
+            # Tag as child of this swarm
+            try:
+                await database._db.execute(
+                    "UPDATE swarms SET parent_swarm_id = ? WHERE id = ?",
+                    (swarm_id, child_id),
+                )
+            except Exception:
+                pass
+
+            await event_bus.emit("swarm:subswarm_created", {
+                "parent_swarm_id": swarm_id,
+                "child_swarm_id": child_id,
+                "child_name": name,
+                "goal": goal,
+            })
+
+            # Plan the child swarm (LLM designs the team + tasks)
+            await swarm_manager.plan_swarm(child_id)
+
+            # Run to completion — 5-minute timeout so parent task doesn't expire
+            await _asyncio.wait_for(
+                swarm_manager._run_swarm(child_id),
+                timeout=300.0,
+            )
+
+            # Read synthesis result
+            from pathlib import Path as _Path
+            child_record = await database.get_swarm(child_id)
+            ws = _Path((child_record or {}).get("workspace_path", ""))
+            result_file = ws / "result.md"
+            if result_file.exists():
+                synthesis = result_file.read_text(encoding="utf-8")
+                return (
+                    f"Sub-swarm '{name}' completed.\n\n"
+                    f"**Synthesis:**\n{synthesis[:4000]}"
+                )
+            return f"Sub-swarm '{name}' completed (no result file produced)."
+        except TimeoutError:
+            return f"Sub-swarm '{name}' timed out after 5 minutes."
+        except Exception as e:
+            return f"Sub-swarm '{name}' failed: {e}"
+
+    swarm_spawn_subswarm._tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "swarm_spawn_subswarm",
+            "description": (
+                "Spawn a child swarm to tackle a complex sub-goal that is too large for a single task. "
+                "The child swarm plans its own team, executes all tasks, and returns a synthesis. "
+                "Use when a sub-goal would need 3+ separate tasks to complete. "
+                "Blocks until done (max 5 minutes)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short descriptive name for the sub-swarm."},
+                    "goal": {"type": "string", "description": "Specific goal for the sub-swarm to achieve."},
+                    "context": {
+                        "type": "string",
+                        "description": "Background context, data, or constraints to pass to child workers.",
+                        "default": "",
+                    },
+                },
+                "required": ["name", "goal"],
+            },
+        },
+    }
+
     return [
-        swarm_send_message, swarm_broadcast, swarm_read_messages,
+        swarm_send_message, swarm_broadcast, swarm_post_update, swarm_read_messages,
         swarm_create_task, swarm_ask_user, swarm_report_bug,
+        swarm_store_knowledge, swarm_query_knowledge, swarm_spawn_subswarm,
     ]

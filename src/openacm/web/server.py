@@ -305,6 +305,12 @@ async def create_web_server(
         "content:rejected",
         # Voice daemon state changes
         "voice:daemon_state",
+        # Live context usage indicator (emitted after every LLM call)
+        "context:stats",
+        # Model internal reasoning/thinking content (o1, DeepSeek, Kimi thinking mode)
+        "message.reasoning",
+        # Streaming reasoning chunks — emitted per-delta during _custom_chat streaming
+        "message.reasoning_stream",
     ]:
         event_bus.on(evt, on_event)
 

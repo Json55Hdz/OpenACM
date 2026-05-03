@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 16
+    _SCHEMA_VERSION = 18
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -682,6 +682,24 @@ class Database:
             except Exception:
                 pass  # column already exists
 
+        if current < 17:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE swarm_tasks ADD COLUMN task_type TEXT DEFAULT 'standard'"
+                )
+                log.info("Migration 17: added task_type to swarm_tasks")
+            except Exception:
+                pass  # column already exists
+
+        if current < 18:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE swarms ADD COLUMN parent_swarm_id INTEGER"
+                )
+                log.info("Migration 18: added parent_swarm_id to swarms")
+            except Exception:
+                pass  # column already exists
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -994,6 +1012,28 @@ class Database:
             },
         }
 
+    async def get_swarm_channel_stats(self, user_id: str) -> list[dict[str, Any]]:
+        """Get channel stats for a specific swarm user_id (e.g. 'swarm_myswarm')."""
+        if not self._db:
+            return []
+        query = """
+            SELECT
+                user_id,
+                channel_id,
+                COUNT(*) as message_count,
+                MAX(timestamp) as last_updated,
+                (SELECT content FROM messages m2
+                 WHERE m2.user_id = messages.user_id AND m2.channel_id = messages.channel_id
+                 ORDER BY timestamp DESC LIMIT 1) as last_message
+            FROM messages
+            WHERE user_id = ?
+            GROUP BY user_id, channel_id
+            ORDER BY last_updated DESC
+        """
+        cursor = await self._db.execute(query, (user_id,))
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def get_channel_stats(self) -> list[dict[str, Any]]:
         """Get message counts and last activity grouped by user and channel."""
         if not self._db:
@@ -1001,16 +1041,17 @@ class Database:
 
         # We use a subquery to fetch the content of the most recent message
         query = """
-            SELECT 
-                user_id, 
-                channel_id, 
-                COUNT(*) as message_count, 
+            SELECT
+                user_id,
+                channel_id,
+                COUNT(*) as message_count,
                 MAX(timestamp) as last_updated,
-                (SELECT content FROM messages m2 
-                 WHERE m2.user_id = messages.user_id AND m2.channel_id = messages.channel_id 
+                (SELECT content FROM messages m2
+                 WHERE m2.user_id = messages.user_id AND m2.channel_id = messages.channel_id
                  ORDER BY timestamp DESC LIMIT 1) as last_message
-            FROM messages 
-            GROUP BY user_id, channel_id 
+            FROM messages
+            WHERE user_id NOT LIKE 'swarm_%'
+            GROUP BY user_id, channel_id
             ORDER BY last_updated DESC
         """
         cursor = await self._db.execute(query)
@@ -2009,13 +2050,14 @@ class Database:
         title: str,
         description: str,
         depends_on: str = "[]",
+        task_type: str = "standard",
     ) -> int:
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO swarm_tasks (swarm_id, worker_id, title, description, depends_on) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (swarm_id, worker_id, title, description, depends_on),
+            "INSERT INTO swarm_tasks (swarm_id, worker_id, title, description, depends_on, task_type) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (swarm_id, worker_id, title, description, depends_on, task_type),
         )
         await self._db.commit()
         return cursor.lastrowid or 0
@@ -2108,6 +2150,21 @@ class Database:
             )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_swarm_team_updates(self, swarm_id: int, limit: int = 20) -> list[dict[str, Any]]:
+        """Get recent team bulletin board updates (posted via swarm_post_update)."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT m.*, fw.name as from_worker_name "
+            "FROM swarm_messages m "
+            "LEFT JOIN swarm_workers fw ON fw.id = m.from_worker_id "
+            "WHERE m.swarm_id = ? AND m.message_type = 'team_update' "
+            "ORDER BY m.id DESC LIMIT ?",
+            (swarm_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return list(reversed([dict(r) for r in rows]))
 
     # ─── Content Queue ────────────────────────────────────────
 

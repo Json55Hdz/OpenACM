@@ -23,7 +23,7 @@ from openacm.tools.base import tool
             },
             "max_lines": {
                 "type": "integer",
-                "description": "Maximum number of lines to read (default: 500). Pass a higher value or 0 for the full file.",
+                "description": "Maximum lines to read. Default 500. Pass max_lines=0 to read the ENTIRE file (use this for log output, test results, or any file where you need everything).",
                 "default": 500,
             },
         },

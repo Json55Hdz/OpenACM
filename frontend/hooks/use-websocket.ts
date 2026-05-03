@@ -41,6 +41,12 @@ interface WebSocketMessage {
   browser_tts_needed?: boolean;
   state?: string;
   count?: number;
+  // context:stats fields
+  pct_used?: number;
+  estimated_tokens?: number;
+  context_window?: number;
+  // message.reasoning_stream fields
+  chunk?: string;
 }
 
 export function useWebSocket() {
@@ -275,6 +281,21 @@ export function useWebSocket() {
         if (status === 'found' || status === 'empty' || status === 'saved') {
           setTimeout(() => storeRef.current.setMemoryRecall(null), 2500);
         }
+      } else if (data.type === 'message.reasoning_stream') {
+        if (data.chunk && (!data.channel_id || data.channel_id === currentTarget.channel)) {
+          storeRef.current.appendReasoningChunk(data.chunk);
+        }
+      } else if (data.type === 'message.reasoning') {
+        if (data.content && (!data.channel_id || data.channel_id === currentTarget.channel)) {
+          storeRef.current.finalizeReasoning(data.content);
+        }
+      } else if (data.type === 'context:stats') {
+        const key = `${data.channel_id}:${data.user_id}`;
+        storeRef.current.setContextStats(key, {
+          pct_used: data.pct_used ?? 0,
+          estimated_tokens: data.estimated_tokens ?? 0,
+          context_window: data.context_window ?? 128000,
+        });
       } else if (data.type === 'router.learned') {
         storeRef.current.setRouterLearning(true);
         setTimeout(() => storeRef.current.setRouterLearning(false), 3000);

@@ -592,9 +592,9 @@ def register_routes(app: FastAPI) -> None:
     async def get_compaction_config():
         """Get conversation auto-compaction settings."""
         if not _state.config:
-            return {"compact_threshold": 25, "compact_keep_recent": 6}
+            return {"compact_ratio": 0.60, "compact_keep_recent": 6}
         return {
-            "compact_threshold": getattr(_state.config.assistant, "compact_threshold", 25),
+            "compact_ratio": getattr(_state.config.assistant, "compact_ratio", 0.60),
             "compact_keep_recent": getattr(_state.config.assistant, "compact_keep_recent", 6),
         }
 
@@ -605,9 +605,9 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=503, detail="Config not available")
         data = await request.json()
 
-        if "compact_threshold" in data:
-            val = int(data["compact_threshold"])
-            _state.config.assistant.compact_threshold = max(5, min(200, val))
+        if "compact_ratio" in data:
+            val = float(data["compact_ratio"])
+            _state.config.assistant.compact_ratio = max(0.20, min(0.95, val))
         if "compact_keep_recent" in data:
             val = int(data["compact_keep_recent"])
             _state.config.assistant.compact_keep_recent = max(2, min(20, val))
@@ -622,13 +622,13 @@ def register_routes(app: FastAPI) -> None:
                 cfg_data = yaml.safe_load(f) or {}
         if "A" not in cfg_data:
             cfg_data["A"] = {}
-        cfg_data["A"]["compact_threshold"] = _state.config.assistant.compact_threshold
+        cfg_data["A"]["compact_ratio"] = _state.config.assistant.compact_ratio
         cfg_data["A"]["compact_keep_recent"] = _state.config.assistant.compact_keep_recent
         with open(config_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg_data, f, default_flow_style=False, allow_unicode=True)
 
         return {
-            "compact_threshold": _state.config.assistant.compact_threshold,
+            "compact_ratio": _state.config.assistant.compact_ratio,
             "compact_keep_recent": _state.config.assistant.compact_keep_recent,
         }
 

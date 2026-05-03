@@ -34,7 +34,7 @@ TRUNCATE_BROWSER_HTML_CHARS = 4_000
 TRUNCATE_TOOL_RESULT_CHARS = 5_000
 
 # Per-task worker output surfaced back to the swarm orchestrator
-TRUNCATE_SWARM_TASK_OUTPUT_CHARS = 3_000
+TRUNCATE_SWARM_TASK_OUTPUT_CHARS = 6_000
 
 # Cron job output stored/returned from scheduler
 TRUNCATE_CRON_OUTPUT_CHARS = 2_000

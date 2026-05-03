@@ -119,6 +119,30 @@ function SkillActiveIndicator({ names }: { names: string[] }) {
   );
 }
 
+function ContextBadge({ pct, tokens, window: win }: { pct: number | null; tokens: number; window: number }) {
+  if (pct === null) {
+    return (
+      <span className="inline-flex items-center px-[8px] py-[3px] rounded-full border border-[var(--acm-border)] mono text-[10px] text-[var(--acm-fg-4)]">
+        — ctx
+      </span>
+    );
+  }
+  const color =
+    pct >= 90 ? 'text-[var(--acm-err)] border-[var(--acm-err)]' :
+    pct >= 75 ? 'text-[var(--acm-warn)] border-[var(--acm-warn)]' :
+    pct >= 50 ? 'text-[oklch(0.75_0.12_55)] border-[oklch(0.75_0.12_55)]' :
+    'text-[var(--acm-fg-4)] border-[var(--acm-border)]';
+  const tip = `~${tokens.toLocaleString()} / ${win.toLocaleString()} tokens (${pct}%)`;
+  return (
+    <span
+      title={tip}
+      className={`inline-flex items-center gap-[4px] px-[8px] py-[3px] rounded-full border mono text-[10px] transition-colors ${color}`}
+    >
+      {pct >= 90 ? '⚠ ' : ''}{pct}% ctx
+    </span>
+  );
+}
+
 function TypingIndicator({ label }: { label?: string | null }) {
   return (
     <div className="flex items-center gap-3 pl-1 py-1">
@@ -577,6 +601,58 @@ function TokenBadge({ usage }: { usage: MessageUsage }) {
   );
 }
 
+function ReasoningBubble({ content, workerName, streaming }: { content: string; workerName?: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+  const lines = content.split('\n').length;
+
+  // Auto-open while streaming and keep scrolled to bottom
+  useEffect(() => {
+    if (streaming) setOpen(true);
+  }, [streaming]);
+
+  useEffect(() => {
+    if (streaming && preRef.current) {
+      preRef.current.scrollTop = preRef.current.scrollHeight;
+    }
+  }, [content, streaming]);
+
+  return (
+    <div className="flex items-start px-2">
+      <div className="w-full border border-[var(--acm-border)] rounded-[6px] overflow-hidden bg-[var(--acm-card)]">
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="w-full flex items-center gap-[8px] px-[12px] py-[7px] text-[11px] hover:bg-[var(--acm-elev)] transition-colors"
+        >
+          {streaming
+            ? <Loader2 size={11} className="text-[oklch(0.75_0.12_280)] flex-shrink-0 animate-spin" />
+            : <Sparkles size={11} className="text-[oklch(0.75_0.12_280)] flex-shrink-0" />
+          }
+          <span className="mono font-medium text-[oklch(0.75_0.12_280)]">
+            {streaming
+              ? (workerName ? `${workerName} — thinking...` : 'Thinking...')
+              : (workerName ? `${workerName} — thinking` : 'Thinking')
+            }
+          </span>
+          {!streaming && (
+            <>
+              <span className="text-[var(--acm-border-strong)]">·</span>
+              <span className="mono text-[var(--acm-fg-4)]">{lines} lines</span>
+            </>
+          )}
+          <span className="ml-auto text-[var(--acm-fg-4)]">{open ? '↑ collapse' : '↓ expand'}</span>
+        </button>
+        {open && (
+          <pre ref={preRef} className="px-[12px] pb-[10px] text-[11px] text-[var(--acm-fg-3)] mono whitespace-pre-wrap leading-relaxed max-h-96 overflow-y-auto border-t border-[var(--acm-border)]">
+            {content}
+            {streaming && <span className="inline-block w-[5px] h-[10px] bg-[oklch(0.75_0.12_280)] animate-pulse ml-[2px] align-middle" />}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CompactionNoteBubble({
   summarizedMessages,
 }: {
@@ -848,6 +924,10 @@ export default function ChatPage() {
   const wsConnected = useChatStore((s) => s.wsConnected);
   const sendMessage = useChatStore((s) => s.sendMessageFn);
   const cancelMessage = useChatStore((s) => s.cancelMessageFn);
+  const ctxStats = useChatStore((s) => {
+    const key = `${s.currentTarget.channel}:${s.currentTarget.user}`;
+    return s.contextStats[key] ?? null;
+  });
   const pendingOnboardingGreeting = useChatStore((s) => s.pendingOnboardingGreeting);
   const setPendingOnboardingGreeting = useChatStore((s) => s.setPendingOnboardingGreeting);
   const { data: conversations } = useConversations();
@@ -1391,8 +1471,11 @@ export default function ChatPage() {
               </div>
             ) : (
               messages
-                .filter((msg) => showToolLogs || msg.compactionNote || (!msg.toolCall && !msg.validation && !msg.toolConfirmation))
+                .filter((msg) => msg.reasoning || msg.compactionNote || showToolLogs || (!msg.toolCall && !msg.validation && !msg.toolConfirmation))
                 .map((msg) => {
+                  if (msg.reasoning) {
+                    return <ReasoningBubble key={msg.id} content={msg.reasoning} streaming={msg.reasoningStreaming} />;
+                  }
                   if (msg.validation) {
                     return (
                       <ValidationBubble
@@ -1487,6 +1570,11 @@ export default function ChatPage() {
               {isCompacting ? <Loader2 size={11} className="animate-spin" /> : <ScrollText size={11} />}
               {isCompacting ? 'Compacting…' : 'Compact'}
             </button>
+            <ContextBadge
+              pct={ctxStats?.pct_used ?? null}
+              tokens={ctxStats?.estimated_tokens ?? 0}
+              window={ctxStats?.context_window ?? 128000}
+            />
           </div>
 
           {/* Terminal Panel */}

@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bug } from 'lucide-react';
+import { MessageBubble } from '@/components/chat/message-bubble';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,25 @@ interface SwarmDetail extends Swarm {
   clarification_answers: string;
   workers: Worker[];
   tasks: Task[];
+}
+
+interface LiveEvent {
+  type: string;
+  ts: number;
+  // task events
+  task_id?: number;
+  task_title?: string;
+  worker_name?: string;
+  reason?: string;
+  // worker_progress
+  channel_id?: string;
+  iteration?: number;
+  tools_called?: string[];
+  // worker_thought — actual LLM text
+  content?: string;
+  pct_used?: number;
+  // misc
+  [key: string]: unknown;
 }
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -300,7 +320,7 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
 // ─── Worker Card ──────────────────────────────────────────────────────────────
 
-function WorkerCard({ worker, swarmId, onUpdate }: { worker: Worker; swarmId: number; onUpdate: () => void }) {
+function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swarmId: number; onUpdate: () => void; ctxPct?: number | null }) {
   const { fetchAPI } = useAPI();
   const [editModel, setEditModel] = useState(false);
   const [modelVal, setModelVal] = useState(worker.model || '');
@@ -335,6 +355,14 @@ function WorkerCard({ worker, swarmId, onUpdate }: { worker: Worker; swarmId: nu
             </span>
             <span className={`dot ${WORKER_DOT[worker.status] || 'dot-idle'} ml-auto`} />
             <span className="mono text-[10px] text-[var(--acm-fg-4)]">{worker.status}</span>
+            {ctxPct != null && (
+              <span className={`mono text-[10px] px-1 py-0.5 rounded border ${
+                ctxPct >= 90 ? 'text-[var(--acm-err)] border-[var(--acm-err)]' :
+                ctxPct >= 75 ? 'text-[var(--acm-warn)] border-[var(--acm-warn)]' :
+                ctxPct >= 50 ? 'text-[oklch(0.75_0.12_55)] border-[oklch(0.75_0.12_55)]' :
+                'text-[var(--acm-fg-4)] border-[var(--acm-border)]'
+              }`}>{ctxPct >= 90 ? '⚠ ' : ''}{ctxPct}% ctx</span>
+            )}
           </div>
           <p className="text-[var(--acm-fg-3)] text-[11px] mt-1 leading-relaxed">{worker.description}</p>
           <div className="flex items-center gap-2 mt-2">
@@ -461,7 +489,7 @@ function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onA
                 onClick={() => setMode('complete')}
                 className="text-[11px] px-2 py-0.5 rounded border border-[var(--acm-ok)] text-[var(--acm-ok)] hover:bg-[oklch(0.55_0.12_160/0.1)] transition-colors"
               >
-                Completar
+                Complete
               </button>
             </>
           )}
@@ -485,11 +513,11 @@ function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onA
       {/* Retry with guidance */}
       {mode === 'retry' && (
         <div className="acm-card mt-3 p-3 space-y-2">
-          <p className="label text-[var(--acm-warn)]">Retry — añade instrucciones para el worker (opcional):</p>
+          <p className="label text-[var(--acm-warn)]">Retry — add instructions for the worker (optional):</p>
           <textarea
             value={notes}
             onChange={e => setNotes(e.target.value)}
-            placeholder="Ej: El archivo ya está en src/foo.py, léelo primero. Usa un enfoque más simple..."
+            placeholder="E.g.: The file is already at src/foo.py, read it first. Use a simpler approach..."
             rows={3}
             className="w-full text-[11px] bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded-lg p-2 text-[var(--acm-fg)] placeholder-[var(--acm-fg-4)] resize-none outline-none focus:border-[var(--acm-accent)] transition-colors"
           />
@@ -500,13 +528,13 @@ function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onA
               className="btn-primary text-[11px] px-3 py-1 disabled:opacity-50 flex items-center gap-1"
             >
               {loading && <Loader2 size={10} className="animate-spin" />}
-              Reintentar
+              Retry
             </button>
             <button
               onClick={() => setMode(null)}
               className="btn-secondary text-[11px] px-3 py-1"
             >
-              Cancelar
+              Cancel
             </button>
           </div>
         </div>
@@ -515,11 +543,11 @@ function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onA
       {/* Manual completion */}
       {mode === 'complete' && (
         <div className="acm-card mt-3 p-3 space-y-2">
-          <p className="label text-[var(--acm-ok)]">Completar manualmente — escribe el resultado:</p>
+          <p className="label text-[var(--acm-ok)]">Complete manually — enter the result:</p>
           <textarea
             value={manualResult}
             onChange={e => setManualResult(e.target.value)}
-            placeholder="Describe lo que se hizo, qué archivos se crearon, y cualquier output relevante para las tareas dependientes..."
+            placeholder="Describe what was done, which files were created, and any output relevant to dependent tasks..."
             rows={5}
             className="w-full text-[11px] bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded-lg p-2 text-[var(--acm-fg)] placeholder-[var(--acm-fg-4)] resize-none outline-none focus:border-[var(--acm-accent)] transition-colors"
           />
@@ -530,13 +558,13 @@ function TaskRow({ task, swarmId, onAction }: { task: Task; swarmId: number; onA
               className="btn-primary text-[11px] px-3 py-1 disabled:opacity-50 flex items-center gap-1"
             >
               {loading && <Loader2 size={10} className="animate-spin" />}
-              Marcar completada
+              Mark as completed
             </button>
             <button
               onClick={() => setMode(null)}
               className="btn-secondary text-[11px] px-3 py-1"
             >
-              Cancelar
+              Cancel
             </button>
           </div>
         </div>
@@ -574,6 +602,71 @@ function SwarmMarkdown({ content, textColor }: { content: string; textColor: str
     >
       {content}
     </ReactMarkdown>
+  );
+}
+
+// ─── Live Event Row ───────────────────────────────────────────────────────────
+
+function LiveEventRow({ event }: { event: LiveEvent }) {
+  const { type, task_title, worker_name, tools_called, iteration, content, pct_used: pct } = event;
+  const [expanded, setExpanded] = useState(false);
+
+  const cfg: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+    'swarm:task_started':    { icon: <Play size={10} />,         color: 'text-[var(--acm-accent)]', label: 'started' },
+    'swarm:task_completed':  { icon: <CheckCircle2 size={10} />, color: 'text-[var(--acm-ok)]',     label: 'done' },
+    'swarm:task_failed':     { icon: <AlertCircle size={10} />,  color: 'text-[var(--acm-err)]',    label: 'failed' },
+    'swarm:started':         { icon: <Play size={10} />,         color: 'text-[var(--acm-ok)]',     label: 'swarm started' },
+    'swarm:paused':          { icon: <Pause size={10} />,        color: 'text-[var(--acm-warn)]',   label: 'swarm paused' },
+    'swarm:completed':       { icon: <CheckCircle2 size={10} />, color: 'text-[var(--acm-ok)]',     label: 'swarm completed' },
+    'swarm:failed':          { icon: <AlertCircle size={10} />,  color: 'text-[var(--acm-err)]',    label: 'swarm failed' },
+    'swarm:contract_ready':  { icon: <FileText size={10} />,     color: 'text-[var(--acm-fg-3)]',   label: 'contract ready' },
+    'swarm:worker_progress': { icon: <Loader2 size={10} className="animate-spin" />, color: 'text-[var(--acm-accent)]', label: 'working' },
+    'swarm:worker_thought':  { icon: <MessageSquare size={10} />, color: 'text-[var(--acm-fg-2)]',  label: 'thinking' },
+  };
+
+  const c = cfg[type] ?? { icon: <Radio size={10} />, color: 'text-[var(--acm-fg-4)]', label: type };
+  const pctColor = pct == null ? '' : pct >= 90 ? 'text-[var(--acm-err)]' : pct >= 75 ? 'text-[var(--acm-warn)]' : 'text-[var(--acm-fg-4)]';
+
+  // worker_thought: show collapsible text block
+  if (type === 'swarm:worker_thought' && content) {
+    const preview = content.length > 120 ? content.slice(0, 120) + '…' : content;
+    return (
+      <div className="py-0.5">
+        <div className="flex items-center gap-2 text-[11px] cursor-pointer" onClick={() => setExpanded(v => !v)}>
+          <span className={c.color}>{c.icon}</span>
+          {worker_name && <span className="mono text-[var(--acm-fg-2)] font-medium">{worker_name}</span>}
+          <span className="text-[var(--acm-fg-4)]">{c.label}</span>
+          {iteration !== undefined && <span className="mono text-[var(--acm-fg-4)]">#{iteration}</span>}
+          <span className="text-[var(--acm-fg-3)] truncate flex-1">{preview}</span>
+          {expanded ? <ChevronUp size={10} className="shrink-0 text-[var(--acm-fg-4)]" /> : <ChevronDown size={10} className="shrink-0 text-[var(--acm-fg-4)]" />}
+        </div>
+        {expanded && (
+          <pre className="mt-1 ml-4 text-[11px] text-[var(--acm-fg-3)] bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded-lg p-2 whitespace-pre-wrap max-h-64 overflow-y-auto mono">
+            {content}
+          </pre>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 text-[11px] py-0.5">
+      <span className={c.color}>{c.icon}</span>
+      {worker_name && <span className="mono text-[var(--acm-fg-2)] font-medium truncate max-w-[120px]">{worker_name}</span>}
+      <span className={`${c.color} shrink-0`}>{c.label}</span>
+      {task_title && <span className="text-[var(--acm-fg-3)] truncate flex-1">{task_title}</span>}
+      {tools_called && tools_called.length > 0 && (
+        <span className="text-[var(--acm-fg-4)] mono truncate flex-1">
+          {tools_called.slice(0, 3).join(', ')}{tools_called.length > 3 ? ` +${tools_called.length - 3}` : ''}
+        </span>
+      )}
+      {iteration !== undefined && (
+        <span className="text-[var(--acm-fg-4)] mono shrink-0">#{iteration}</span>
+      )}
+      {pct != null && (
+        <span className={`mono shrink-0 ${pctColor}`}>{pct}% ctx</span>
+      )}
+    </div>
   );
 }
 
@@ -722,6 +815,118 @@ function ActivityEntry({ msg, onReply }: { msg: SwarmMessage; onReply?: (prefix:
   );
 }
 
+// ─── Swarm Chats Tab ──────────────────────────────────────────────────────────
+
+interface ChannelStat { channel_id: string; user_id: string; message_count: number; last_updated: string; last_message: string; }
+interface ChannelMessage { role: string; content: string; timestamp: string; }
+
+function sanitizeSwarmMessage(content: string): { text: string; truncated: boolean } {
+  // Strip binary/non-printable chars (PDF bytes, etc.)
+  const clean = content.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')
+    // Collapse runs of replacement chars and whitespace left by binary removal
+    .replace(/�{3,}/g, '[binary data]')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+
+  // Task context messages are huge (workspace + context + PDF). Show a compact preview.
+  const MAX = 800;
+  if (clean.length > MAX) {
+    return { text: clean.slice(0, MAX) + `\n\n… [${clean.length.toLocaleString()} chars total]`, truncated: true };
+  }
+  return { text: clean, truncated: false };
+}
+
+function SwarmChatsTab({ swarmId, selectedChannel, onSelect, fetchAPI }: {
+  swarmId: number;
+  selectedChannel: { channel_id: string; user_id: string } | null;
+  onSelect: (ch: { channel_id: string; user_id: string } | null) => void;
+  fetchAPI: (url: string, opts?: RequestInit) => Promise<any>;
+}) {
+  const { data: channels = [] } = useQuery<ChannelStat[]>({
+    queryKey: ['swarm-chats', swarmId],
+    queryFn: () => fetchAPI(`/api/swarms/${swarmId}/conversations`),
+    refetchInterval: 5000,
+  });
+
+  const { data: messages = [] } = useQuery<ChannelMessage[]>({
+    queryKey: ['swarm-chat-msgs', swarmId, selectedChannel?.channel_id],
+    queryFn: () => selectedChannel
+      ? fetchAPI(`/api/swarms/${swarmId}/conversations/${encodeURIComponent(selectedChannel.channel_id)}/${encodeURIComponent(selectedChannel.user_id)}`)
+      : Promise.resolve([]),
+    enabled: !!selectedChannel,
+    refetchInterval: selectedChannel ? 3000 : false,
+  });
+
+  const token = useAuthStore(s => s.token);
+  const msgsEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { msgsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  if (channels.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-[var(--acm-fg-4)]">
+        <MessageSquare size={28} className="mb-3" />
+        <p className="text-[13px]">No worker conversations yet.</p>
+      </div>
+    );
+  }
+
+  const workerLabel = (ch: ChannelStat) => {
+    const parts = ch.channel_id.split('__');
+    return parts.length >= 2 ? parts[1].replace(/_/g, ' ') : ch.channel_id;
+  };
+
+  return (
+    <div className="flex gap-3 h-[520px]">
+      {/* Channel list */}
+      <div className="w-48 shrink-0 flex flex-col gap-1 overflow-y-auto">
+        {channels.map(ch => (
+          <button
+            key={ch.channel_id}
+            onClick={() => onSelect(selectedChannel?.channel_id === ch.channel_id ? null : { channel_id: ch.channel_id, user_id: ch.user_id })}
+            className={`text-left p-2.5 rounded-[6px] border transition-colors ${
+              selectedChannel?.channel_id === ch.channel_id
+                ? 'bg-[var(--acm-accent)] border-[var(--acm-accent)] text-[oklch(0.18_0.015_80)]'
+                : 'bg-[var(--acm-card)] border-[var(--acm-border)] text-[var(--acm-fg-2)] hover:border-[var(--acm-accent)]'
+            }`}
+          >
+            <div className="text-[11px] font-medium capitalize truncate">{workerLabel(ch)}</div>
+            <div className="text-[10px] opacity-60 mt-0.5 truncate">{ch.message_count} msgs</div>
+            {ch.last_message && (
+              <div className="text-[10px] opacity-50 mt-0.5 truncate">
+                {sanitizeSwarmMessage(ch.last_message).text.slice(0, 40)}
+              </div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Messages panel */}
+      <div className="flex-1 acm-card overflow-y-auto px-4 py-4 flex flex-col gap-4">
+        {!selectedChannel ? (
+          <div className="flex items-center justify-center h-full text-[var(--acm-fg-4)] text-[12px]">Select a worker to view its conversation</div>
+        ) : messages.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-[var(--acm-fg-4)] text-[12px]">No messages yet</div>
+        ) : (
+          messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .map((m, i) => {
+              const { text } = sanitizeSwarmMessage(m.content);
+              return (
+                <MessageBubble
+                  key={i}
+                  content={text}
+                  role={m.role as 'user' | 'assistant'}
+                  token={token}
+                />
+              );
+            })
+        )}
+        <div ref={msgsEndRef} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Swarm Detail ─────────────────────────────────────────────────────────────
 
 function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void }) {
@@ -729,7 +934,8 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
   const token = useAuthStore(s => s.token);
   const qc = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
-  const [activeTab, setActiveTab] = useState<'workers' | 'tasks' | 'messages' | 'context'>('workers');
+  const [activeTab, setActiveTab] = useState<'workers' | 'tasks' | 'messages' | 'context' | 'chats'>('workers');
+  const [selectedChannel, setSelectedChannel] = useState<{ channel_id: string; user_id: string } | null>(null);
   const [userMsg, setUserMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [showReuseForm, setShowReuseForm] = useState(false);
@@ -748,25 +954,84 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
   const prevMsgCountRef = useRef(0);
   const [unseenQuestions, setUnseenQuestions] = useState(0);
 
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [workerCtx, setWorkerCtx] = useState<Record<string, number>>({});
+  const [plannerText, setPlannerText] = useState('');
+  const prevStatusRef = useRef<string>('');
+
   const { data: swarm, refetch } = useQuery<SwarmDetail>({
     queryKey: ['swarm', swarmId],
     queryFn: () => fetchAPI(`/api/swarms/${swarmId}`),
-    refetchInterval: 2000,
+    refetchInterval: 10000,
   });
 
   const { data: messages = [], refetch: refetchMsgs } = useQuery<SwarmMessage[]>({
     queryKey: ['swarm-messages', swarmId],
     queryFn: () => fetchAPI(`/api/swarms/${swarmId}/messages`),
-    refetchInterval: 3000,
+    refetchInterval: 10000,
   });
 
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${window.location.host}/ws/swarms/${swarmId}?token=${token || ''}`);
     wsRef.current = ws;
-    ws.onmessage = () => { refetch(); refetchMsgs(); };
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data as string);
+        const type: string | undefined = msg.type;
+        if (type === 'state') {
+          if (msg.swarm) {
+            qc.setQueryData(['swarm', swarmId], (old: SwarmDetail | undefined) => ({
+              ...(old || {} as SwarmDetail),
+              ...msg.swarm,
+              workers: msg.workers ?? old?.workers ?? [],
+              tasks: msg.tasks ?? old?.tasks ?? [],
+            }));
+          }
+          if (msg.messages) {
+            qc.setQueryData(['swarm-messages', swarmId], msg.messages);
+          }
+        } else if (type === 'swarm:planning_thought') {
+          setPlannerText(msg.accumulated as string ?? '');
+        } else if (type === 'message.reasoning' && msg.worker_name) {
+          // Model reasoning from a swarm worker — show in live feed
+          setLiveEvents(prev => [{
+            ...msg, type: 'swarm:worker_thought',
+            content: `[reasoning]\n${msg.content}`,
+            ts: Date.now(),
+          } as LiveEvent, ...prev].slice(0, 60));
+        } else if (type?.startsWith('swarm:')) {
+          setLiveEvents(prev => [{ ...msg, ts: Date.now() } as LiveEvent, ...prev].slice(0, 60));
+          if (type === 'swarm:worker_progress' && msg.worker_name && msg.pct_used != null) {
+            setWorkerCtx(prev => ({ ...prev, [msg.worker_name as string]: msg.pct_used as number }));
+          }
+        } else {
+          refetch(); refetchMsgs();
+        }
+      } catch {
+        refetch(); refetchMsgs();
+      }
+    };
     return () => ws.close();
   }, [swarmId, token]);
+
+  // Auto-switch to Activity tab when swarm starts running
+  useEffect(() => {
+    if (!swarm) return;
+    const prev = prevStatusRef.current;
+    if (prev !== 'running' && swarm.status === 'running') {
+      setActiveTab('messages');
+    }
+    // Clear live events when swarm stops
+    if (prev === 'running' && swarm.status !== 'running') {
+      setLiveEvents([]);
+    }
+    // Clear planner stream once planning finishes
+    if (prev === 'planning' && swarm.status !== 'planning') {
+      setPlannerText('');
+    }
+    prevStatusRef.current = swarm.status;
+  }, [swarm?.status]);
 
   // Track new question messages and badge the Activity tab when not viewing it
   useEffect(() => {
@@ -1203,6 +1468,27 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
         </div>
       )}
 
+      {/* Planning live stream banner */}
+      {swarm.status === 'planning' && (
+        <div className="mb-5 border border-[var(--acm-accent)] rounded-xl overflow-hidden bg-[oklch(0.84_0.16_82/0.03)]">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--acm-accent)] bg-[oklch(0.84_0.16_82/0.06)]">
+            <Loader2 size={14} className="animate-spin text-[var(--acm-accent)] shrink-0" />
+            <span className="text-[13px] font-medium text-[var(--acm-fg)]">Designing your team…</span>
+            <span className="text-[11px] text-[var(--acm-fg-4)] ml-1">streaming planner output</span>
+            <span className="dot dot-accent acm-pulse ml-auto" />
+          </div>
+          {plannerText ? (
+            <pre className="p-3 text-[11px] text-[var(--acm-fg-3)] mono whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
+              {plannerText}
+            </pre>
+          ) : (
+            <p className="px-4 py-3 text-[11px] text-[var(--acm-fg-4)] italic">
+              Waiting for model to start generating…
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Progress bar */}
       {totalTasks > 0 && (
         <div className="mb-5 h-1.5 rounded-full overflow-hidden flex bg-[var(--acm-border)]">
@@ -1246,7 +1532,8 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
         {([
           { id: 'workers', label: 'Workers', icon: <Users size={14} /> },
           { id: 'tasks', label: 'Tasks', icon: <ListTodo size={14} />, badge: waiting.length > 0 ? waiting.length : 0 },
-          { id: 'messages', label: 'Activity', icon: <Activity size={14} />, badge: unseenQuestions },
+          { id: 'messages', label: 'Activity', icon: <Activity size={14} />, badge: unseenQuestions + (activeTab !== 'messages' && liveEvents.length > 0 && swarm.status === 'running' ? 1 : 0) },
+          { id: 'chats', label: 'Chats', icon: <MessageSquare size={14} /> },
           { id: 'context', label: 'Context', icon: <FileText size={14} /> },
         ] as const).map(tab => (
           <button
@@ -1274,7 +1561,7 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(swarm.workers || []).length === 0
             ? <div className="col-span-2 text-center py-10 text-[var(--acm-fg-4)] text-[13px]">No workers yet.</div>
-            : (swarm.workers || []).map(w => <WorkerCard key={w.id} worker={w} swarmId={swarmId} onUpdate={refetch} />)
+            : (swarm.workers || []).map(w => <WorkerCard key={w.id} worker={w} swarmId={swarmId} onUpdate={refetch} ctxPct={workerCtx[w.name] ?? null} />)
           }
         </div>
       )}
@@ -1290,6 +1577,30 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
 
       {activeTab === 'messages' && (
         <div className="flex flex-col gap-2">
+          {/* Live activity strip — shows real-time worker events */}
+          {(['running', 'planning', 'clarifying'].includes(swarm.status) || liveEvents.length > 0) && (
+            <div className="acm-card p-3 mb-1">
+              <div className="flex items-center gap-2 mb-2">
+                <Radio size={12} className="text-[var(--acm-accent)]" />
+                <span className="label text-[var(--acm-fg-3)]">Live</span>
+                {['running', 'planning', 'clarifying'].includes(swarm.status) && (
+                  <span className="dot dot-accent acm-pulse ml-auto" />
+                )}
+              </div>
+              {liveEvents.length === 0 ? (
+                <p className="text-[11px] text-[var(--acm-fg-4)] italic">
+                  {swarm.status === 'planning'   ? 'Planning team — LLM thinking…' :
+                   swarm.status === 'clarifying' ? 'Generating clarification questions…' :
+                   'Waiting for worker activity…'}
+                </p>
+              ) : (
+                <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                  {liveEvents.map((e, i) => <LiveEventRow key={i} event={e} />)}
+                </div>
+              )}
+            </div>
+          )}
+
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-[var(--acm-fg-4)]">
               <Activity size={28} className="mb-3 text-[var(--acm-fg-4)]" />
@@ -1310,6 +1621,10 @@ function SwarmDetail({ swarmId, onBack }: { swarmId: number; onBack: () => void 
           )}
           <div ref={msgEndRef} />
         </div>
+      )}
+
+      {activeTab === 'chats' && (
+        <SwarmChatsTab swarmId={swarmId} selectedChannel={selectedChannel} onSelect={setSelectedChannel} fetchAPI={fetchAPI} />
       )}
 
       {activeTab === 'context' && (

@@ -13,6 +13,20 @@ from typing import Any
 from fastapi import WebSocket
 
 
+# Comprehensive ANSI/VT escape-sequence pattern:
+#   CSI: ESC [ <params (digits, ;, ?)> <any letter>      — covers ?7h, 1t, c, etc.
+#   OSC: ESC ] <text> BEL or ST
+#   Character-set designations: ESC ( / ) <letter>
+#   2-char sequences: ESC <single printable>
+_ANSI_RE = re.compile(
+    r'\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|[@-Z\\-_~])'
+)
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text).replace("\r", "")
+
+
 class ChannelShell:
     """Persistent PTY shell for one channel. Survives WS reconnects."""
 
@@ -137,14 +151,10 @@ class ChannelShell:
     async def run_command_capture(self, command: str, timeout: float = 30.0) -> str:
         """Write a command to the PTY and capture output. Serialized — one command at a time."""
 
-        _ANSI = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
         MAX_CAPTURE_CHARS = 80_000
 
-        def strip_ansi(t: str) -> str:
-            return _ANSI.sub("", t).replace("\r", "")
-
         def looks_like_prompt(text: str) -> bool:
-            clean = strip_ansi(text).rstrip()
+            clean = _strip_ansi(text).rstrip()
             if not clean:
                 return False
             last = clean.splitlines()[-1] if "\n" in clean else clean
@@ -188,7 +198,7 @@ class ChannelShell:
                                 break
 
                             combined = "".join(parts)
-                            if looks_like_prompt(combined) and len(strip_ansi(combined).strip()) > len(command) + 2:
+                            if looks_like_prompt(combined) and len(_strip_ansi(combined).strip()) > len(command) + 2:
                                 prompt_seen = True
                                 break
                     except asyncio.TimeoutError:
@@ -201,7 +211,7 @@ class ChannelShell:
                 except ValueError:
                     pass
 
-            combined = strip_ansi("".join(parts)).strip()
+            combined = _strip_ansi("".join(parts)).strip()
             if combined.lower().startswith(command.strip().lower()):
                 combined = combined[len(command.strip()):].strip()
 
@@ -218,13 +228,8 @@ class ChannelShell:
         - Waits until the shell prompt returns (user typed exit/Ctrl+D) or timeout
         - Returns the captured output for the brain
         """
-        _ANSI = re.compile(r'\x1b(?:\[[0-9;]*[mGKHFABCDJsSu]|\][^\x07]*\x07|[()][AB012])')
-
-        def strip_ansi(t: str) -> str:
-            return _ANSI.sub("", t).replace("\r", "")
-
         def looks_like_prompt(text: str) -> bool:
-            clean = strip_ansi(text).rstrip()
+            clean = _strip_ansi(text).rstrip()
             if not clean:
                 return False
             last = clean.splitlines()[-1] if "\n" in clean else clean
@@ -254,7 +259,7 @@ class ChannelShell:
                             chunk = msg.get("data", "")
                             parts.append(chunk)
                             combined = "".join(parts)
-                            if looks_like_prompt(combined) and len(strip_ansi(combined).strip()) > len(command) + 2:
+                            if looks_like_prompt(combined) and len(_strip_ansi(combined).strip()) > len(command) + 2:
                                 break
                     except asyncio.TimeoutError:
                         combined = "".join(parts)
@@ -271,7 +276,7 @@ class ChannelShell:
             "data": "\r\n\x1b[33m[ACM ← control returned]\x1b[0m\r\n",
         })
 
-        combined = strip_ansi("".join(parts)).strip()
+        combined = _strip_ansi("".join(parts)).strip()
         if combined.lower().startswith(command.strip().lower()):
             combined = combined[len(command.strip()):].strip()
         return combined or "(no output)"

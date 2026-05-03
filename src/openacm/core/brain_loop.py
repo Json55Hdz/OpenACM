@@ -432,6 +432,13 @@ class BrainLoopMixin:
         _last_tool_signature: str | None = None  # For repeated-call loop detection
         _repeated_call_count: int = 0
         _empty_response_retried: bool = False  # Guard: only inject the "write now" turn once
+        _consecutive_read_only_iters: int = 0  # Analysis-paralysis detector
+        # Tools that constitute "real work" in a swarm — any write/mutate/output action
+        _SWARM_WRITE_TOOLS = frozenset({
+            "write_file", "edit_file", "create_file", "delete_file",
+            "run_command", "bash", "swarm_post_update", "swarm_store_knowledge",
+            "swarm_report_bug", "swarm_create_task", "swarm_ask_user",
+        })
         _task_key_for_cancel = f"{channel_type}:{channel_id}"
         _cancel_event = self._cancel_flags.setdefault(_task_key_for_cancel, asyncio.Event())
 
@@ -472,6 +479,27 @@ class BrainLoopMixin:
                 },
             )
 
+            # For swarm workers: inject a budget countdown so the model knows how many
+            # iterations remain and stops wasting them on reads when it should be writing.
+            if channel_type == "swarm" and max_iterations > 3 and iterations > 1:
+                _remaining = max_iterations - iterations
+                _pct_used = iterations / max_iterations
+                if _pct_used >= 0.9:
+                    messages = list(messages) + [{"role": "system", "content": (
+                        f"[SWARM BUDGET] CRITICAL — only {_remaining} iteration(s) left. "
+                        "Call write_file or edit_file RIGHT NOW if you haven't written your output. "
+                        "Stop reading files. Finish with TASK_STATUS."
+                    )}]
+                elif _pct_used >= 0.75:
+                    messages = list(messages) + [{"role": "system", "content": (
+                        f"[SWARM BUDGET] WARNING — {_remaining} iterations remaining. "
+                        "Stop reading/planning. Write your output files now."
+                    )}]
+                elif _pct_used >= 0.55:
+                    messages = list(messages) + [{"role": "system", "content": (
+                        f"[SWARM BUDGET] {iterations}/{max_iterations} iterations used — {_remaining} remaining."
+                    )}]
+
             # Build a copy with optional tool-enforcement injection
             prepared_messages = self._prepare_messages_for_llm(messages, tools, is_tool_loop)
 
@@ -500,6 +528,7 @@ class BrainLoopMixin:
 
             try:
                 _ctx_token = current_channel_id.set(channel_id)
+                self.llm_router._active_stream_ctx = (user_id, channel_id, channel_type)
                 try:
                     response = await self.llm_router.chat(
                         messages=prepared_messages,
@@ -508,7 +537,40 @@ class BrainLoopMixin:
                     )
                 finally:
                     current_channel_id.reset(_ctx_token)
+                    self.llm_router._active_stream_ctx = None
                 _iter_trace["llm_elapsed_ms"] = int((_time.monotonic() - _llm_t0) * 1000)
+                # Track token usage and inform memory about the model's context window
+                # so compaction fires at the right threshold (not a hardcoded constant).
+                _usage = response.get("usage", {})
+                _pt = _usage.get("prompt_tokens", 0)
+                if _pt:
+                    self.memory.record_tokens(user_id, channel_id, _pt)
+                if iterations == 1:
+                    _cw = self.llm_router.get_context_window(response.get("model"))
+                    if _cw:
+                        self.memory.set_context_window(user_id, channel_id, _cw)
+                # Emit context stats so the frontend can show a live usage indicator.
+                _ctx_stats = self.memory.get_context_stats(user_id, channel_id)
+                await self.event_bus.emit("context:stats", {
+                    "channel_id": channel_id,
+                    "user_id": user_id,
+                    "channel_type": channel_type,
+                    **_ctx_stats,
+                })
+                # Emit model reasoning/thinking content so the frontend can show it.
+                _reasoning = (response.get("reasoning_content") or "").strip()
+                if _reasoning:
+                    _reasoning_data: dict = {
+                        "content": _reasoning,
+                        "user_id": user_id,
+                        "channel_id": channel_id,
+                        "channel_type": channel_type,
+                        "iteration": iterations,
+                    }
+                    if channel_type == "swarm":
+                        _reasoning_data["swarm_id"] = getattr(self, "_swarm_id", None)
+                        _reasoning_data["worker_name"] = getattr(self, "_swarm_worker_name", None)
+                    await self.event_bus.emit("message.reasoning", _reasoning_data)
             except Exception as e:
                 _iter_trace["llm_elapsed_ms"] = int((_time.monotonic() - _llm_t0) * 1000)
                 _iter_trace["error"] = f"{type(e).__name__}: {e}"
@@ -738,6 +800,28 @@ class BrainLoopMixin:
 
             messages = await self.memory.get_messages(user_id, channel_id)
 
+            # Analysis-paralysis guard: track consecutive iterations with no write actions.
+            # After 3 read-only iterations, force the worker to act or declare failure.
+            if channel_type == "swarm" and response["tool_calls"]:
+                _iter_tool_names = {tc["function"]["name"] for tc in response["tool_calls"]}
+                if _iter_tool_names & _SWARM_WRITE_TOOLS:
+                    _consecutive_read_only_iters = 0
+                else:
+                    _consecutive_read_only_iters += 1
+                if _consecutive_read_only_iters >= 3:
+                    messages = list(messages) + [{"role": "system", "content": (
+                        f"[SWARM ACTION REQUIRED] {_consecutive_read_only_iters} consecutive iterations "
+                        "reading files without writing anything. You have enough information. "
+                        "Call write_file or edit_file NOW to produce your output. "
+                        "If you genuinely cannot complete this task, output TASK_STATUS: FAILED immediately — "
+                        "do NOT keep reading."
+                    )}]
+                    log.warning(
+                        "Swarm worker stuck in read-only loop — action forced",
+                        consecutive=_consecutive_read_only_iters,
+                        worker=getattr(self, "_swarm_worker_name", None),
+                    )
+
             # Reflection: if any tool raised an exception, inject a one-shot hint so the
             # LLM can reason about the failure before its next call. This message is NOT
             # persisted to the DB — it lives only for the current LLM iteration and
@@ -767,27 +851,55 @@ class BrainLoopMixin:
 
             _trace["iterations"].append(_iter_trace)
 
+            # Per-iteration progress heartbeat for swarm workers so the UI shows live activity
+            # without the worker being a black box between start and finish events.
+            if channel_type == "swarm":
+                _progress: dict = {
+                    "channel_id": channel_id,
+                    "iteration": iterations,
+                    "tools_called": [tc["tool"] for tc in _iter_trace["tool_calls"]],
+                    "pct_used": self.memory.get_context_stats(user_id, channel_id).get("pct_used", 0),
+                }
+                if hasattr(self, "_swarm_id"):
+                    _progress["swarm_id"] = self._swarm_id
+                if hasattr(self, "_swarm_worker_name"):
+                    _progress["worker_name"] = self._swarm_worker_name
+                if _iter_trace["tool_calls"]:
+                    await self.event_bus.emit("swarm:worker_progress", _progress)
+                # Emit the actual LLM text so the frontend can show what the worker is thinking
+                _iter_content = response.get("content", "") or ""
+                if _iter_content and _iter_content.strip():
+                    _thought: dict = {
+                        "swarm_id": getattr(self, "_swarm_id", None),
+                        "worker_name": getattr(self, "_swarm_worker_name", None),
+                        "iteration": iterations,
+                        "content": _iter_content.strip(),
+                    }
+                    await self.event_bus.emit("swarm:worker_thought", _thought)
+
         # If we hit max iterations OR the model returned empty content twice, make one final
         # LLM call with tools=None to force a plain-text summary of what was done.
         try:
             log.warning("Making final summary LLM call (no tools)")
 
-            # Build a context-aware forcing prompt
-            _swarm_status_reminder = (
-                "\n\nCRITICAL: You MUST end your response with exactly one of:\n"
-                "  TASK_STATUS: COMPLETED\n"
-                "  TASK_STATUS: FAILED: <brief reason>"
-                if channel_type == "swarm" else ""
-            )
-            summary_messages = list(messages) + [{
-                "role": "user",
-                "content": (
+            # Build a context-aware forcing prompt — swarm workers get a terse directive
+            # that does NOT invite lengthy analysis (which caused analysis-paralysis failures).
+            if channel_type == "swarm":
+                _stop_content = (
+                    "Iteration budget exhausted. In 1-2 sentences state what you completed "
+                    "or why you could not finish. "
+                    "Then end with exactly one of:\n"
+                    "  TASK_STATUS: COMPLETED\n"
+                    "  TASK_STATUS: FAILED: <brief reason>\n"
+                    "Do NOT write analysis. Do NOT call tools."
+                )
+            else:
+                _stop_content = (
                     "Write your final response now as plain text. "
                     "Summarize what you accomplished, what worked, and what the outcome is. "
                     "Do NOT call any tools."
-                    + _swarm_status_reminder
-                ),
-            }]
+                )
+            summary_messages = list(messages) + [{"role": "user", "content": _stop_content}]
             _ctx_token2 = current_channel_id.set(channel_id)
             try:
                 final_response = await self.llm_router.chat(

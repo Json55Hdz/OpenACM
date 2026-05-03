@@ -150,6 +150,41 @@ class LLMRouter:
         """Expose the current provider name."""
         return self._current_provider
 
+    def get_context_window(self, model: str | None = None) -> int | None:
+        """Return the max input tokens for a model.
+
+        Priority: manual config overrides → litellm database → parse from model name.
+        Returns None if nothing matches so callers can fall back to a default.
+        """
+        import re
+        m = (model or self.current_model or "").strip()
+        if not m:
+            return None
+
+        # 1. Manual overrides configured by the user (substring match, case-insensitive)
+        overrides: dict[str, int] = getattr(self.config, "model_context_overrides", {})
+        m_lower = m.lower()
+        for pattern, tokens in overrides.items():
+            if pattern.lower() in m_lower:
+                return tokens
+
+        # 2. litellm model database
+        try:
+            info = litellm.get_model_info(m)
+            tokens = info.get("max_input_tokens") or info.get("max_tokens")
+            if tokens:
+                return int(tokens)
+        except Exception:
+            pass
+
+        # 3. Parse suffix from model name: "128k" → 131072, "1m" → 1048576, "200k" → 204800
+        match = re.search(r"(\d+(?:\.\d+)?)\s*([mk])", m_lower)
+        if match:
+            num, unit = float(match.group(1)), match.group(2)
+            return int(num * (1024 if unit == "k" else 1024 * 1024))
+
+        return None
+
     def get_provider_profile(self) -> ProviderProfile:
         """Return a capability profile for the current provider."""
         provider = self._current_provider.lower()
@@ -327,11 +362,28 @@ class LLMRouter:
             return self.config.providers[provider].get("base_url")
         return None
 
+    # Models known to support thinking/reasoning mode via the `thinking` API param.
+    # Pattern matched case-insensitively against the model name.
+    _THINKING_MODEL_PATTERNS = [
+        "kimi", "moonshot", "deepseek-r1", "deepseek/r1",
+        "qwq", "o1", "o3", "claude-3-7",
+        "grok-3-mini", "gemini-2.0-flash-thinking", "gemini-2.5", "gemini-3",
+    ]
+
     def _get_model_params(self) -> dict:
-        """Get stored params for current provider+model."""
+        """Get stored params for current provider+model, auto-injecting thinking for known models."""
         provider_cfg = self.config.providers.get(self._current_provider, {})
         model = self._current_model or provider_cfg.get("default_model", "")
-        return provider_cfg.get("model_params", {}).get(model, {})
+        params = dict(provider_cfg.get("model_params", {}).get(model, {}))
+
+        # Auto-inject thinking params for models known to support it,
+        # unless the caller already set a `thinking` key (either enabled or disabled).
+        if "thinking" not in params:
+            m_lower = model.lower()
+            if any(p in m_lower for p in self._THINKING_MODEL_PATTERNS):
+                params["thinking"] = {"type": "enabled", "budget_tokens": 8000}
+
+        return params
 
     def set_model_params(self, provider: str, model: str, params: dict) -> None:
         """Persist params for a provider+model into live config."""
@@ -520,6 +572,12 @@ class LLMRouter:
         if top_p is not None:
             payload["top_p"] = top_p
 
+        # Inject extra model params (e.g. thinking mode) — skip standard keys already set above
+        _STANDARD_KEYS = {"temperature", "max_tokens", "top_p", "model", "messages", "stream", "tools", "tool_choice"}
+        for _k, _v in self._get_model_params().items():
+            if _k not in _STANDARD_KEYS:
+                payload[_k] = _v
+
         # Debug: log exactly what we're sending
         tool_names = [t["function"]["name"] for t in tools] if tools else []
         log.info(
@@ -594,21 +652,44 @@ class LLMRouter:
                     if fr:
                         finish_reason = fr
 
-                    # Accumulate reasoning content (Kimi thinking mode).
-                    # Check both delta-level and choices-level since providers differ.
+                    # Accumulate reasoning content — check every known field name.
+                    # kimi-k2.6 uses "reasoning" (plain string per delta)
+                    # deepseek/other proxies use "reasoning_content" or "thinking_content"
+                    # some models embed it in content as <think>…</think>
                     rc = (
-                        delta.get("reasoning_content")
+                        delta.get("reasoning")
+                        or delta.get("reasoning_content")
+                        or delta.get("thinking_content")
                         or delta.get("thinking")
+                        or choices[0].get("reasoning")
                         or choices[0].get("reasoning_content")
+                        or choices[0].get("thinking_content")
                         or choices[0].get("thinking")
                         or ""
                     )
                     if rc:
                         reasoning_parts.append(rc)
+                        # Stream reasoning chunk to frontend in real-time
+                        _sctx = getattr(self, "_active_stream_ctx", None)
+                        if _sctx and self.event_bus:
+                            _uid, _cid, _ctype = _sctx
+                            await self.event_bus.emit("message.reasoning_stream", {
+                                "chunk": rc,
+                                "user_id": _uid,
+                                "channel_id": _cid,
+                                "channel_type": _ctype,
+                                "swarm_id": None,
+                                "worker_name": None,
+                            })
 
-                    # Accumulate content
-                    if delta.get("content"):
-                        content_parts.append(delta["content"])
+                    # Accumulate content; extract <think>…</think> blocks if present
+                    raw_content = delta.get("content") or ""
+                    if raw_content:
+                        content_parts.append(raw_content)
+
+                    # Log raw delta keys once (first non-empty delta) for debugging
+                    if not reasoning_parts and not content_parts and (delta or choices[0]):
+                        log.debug("First delta keys", delta_keys=list(delta.keys()), choice_keys=list(choices[0].keys()))
 
                     # Accumulate tool calls
                     for tc in (delta.get("tool_calls") or []):
@@ -645,6 +726,22 @@ class LLMRouter:
 
         captured_reasoning = "".join(reasoning_parts)
         full_content = "".join(content_parts)
+
+        # If no dedicated reasoning field was found, try extracting <think>…</think> from content.
+        # Some models (DeepSeek, QwQ via certain proxies) embed thinking in the content stream.
+        if not captured_reasoning and full_content:
+            import re as _re
+            _think_match = _re.search(r"<think(?:ing)?>(.*?)</think(?:ing)?>", full_content, _re.DOTALL)
+            if _think_match:
+                captured_reasoning = _think_match.group(1).strip()
+                full_content = _re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>\s*", "", full_content, flags=_re.DOTALL).strip()
+
+        log.debug(
+            "Custom provider stream assembled",
+            reasoning_chars=len(captured_reasoning),
+            content_chars=len(full_content),
+            tool_calls=len(assembled_tool_calls),
+        )
 
         # Build token usage from stream data; use litellm token_counter when missing.
         prompt_tokens = stream_usage.get("prompt_tokens", 0)
@@ -684,6 +781,14 @@ class LLMRouter:
 
         return result
 
+    @staticmethod
+    def _enforce_model_temperature(model: str, temperature: float) -> float:
+        """Some models require a specific temperature range. Clamp silently."""
+        # Gemini 3.x requires temperature == 1.0; lower values cause infinite loops.
+        if "gemini-3" in model.lower() or "gemini-3." in model.lower():
+            return 1.0
+        return temperature
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -713,6 +818,7 @@ class LLMRouter:
 
         model = model_override or self._build_model_string()
         api_base = None if model_override else self._get_api_base()
+        temperature = self._enforce_model_temperature(model, temperature)
 
         start_time = time.time()
         self._total_requests += 1
@@ -789,6 +895,7 @@ class LLMRouter:
         top_p: float | None = None,
     ) -> dict[str, Any]:
         """Single chat attempt."""
+        temperature = self._enforce_model_temperature(model, temperature)
         profile = self.get_provider_profile()
         effective_tool_choice = tool_choice_override or profile.tool_choice_mode
 
@@ -908,8 +1015,28 @@ class LLMRouter:
                             cached_msgs[last_user_idx] = {**u_msg, "content": new_blocks}
                     kwargs["messages"] = cached_msgs
 
+                # Inject extra model params (thinking mode, etc.) into litellm kwargs.
+                # Gemini uses a native thinkingConfig (not the OpenAI-style thinking param).
+                _LITELLM_STD = {"temperature", "max_tokens", "top_p", "model", "messages",
+                                "stream", "tools", "tool_choice", "api_base", "api_key",
+                                "extra_headers", "extra_body"}
+                _model_lower = model.lower()
+                for _ek, _ev in self._get_model_params().items():
+                    if _ek in _LITELLM_STD or _ek in ("temperature", "max_tokens", "top_p"):
+                        continue
+                    if _ek == "thinking" and "gemini" in _model_lower:
+                        # Gemini needs includeThoughts:True to expose the reasoning text
+                        _budget = _ev.get("budget_tokens", 8000) if isinstance(_ev, dict) else 8000
+                        _eb = kwargs.setdefault("extra_body", {})
+                        _eb.setdefault("generationConfig", {})["thinkingConfig"] = {
+                            "thinkingBudget": _budget,
+                            "includeThoughts": True,
+                        }
+                    else:
+                        kwargs[_ek] = _ev
+
                 response = await asyncio.wait_for(
-                    litellm.acompletion(**kwargs),
+                    litellm.acompletion(**kwargs, drop_params=True),
                     timeout=_llm_timeout,
                 )
 
@@ -935,8 +1062,24 @@ class LLMRouter:
                 if api_tt == 0:
                     api_tt = api_pt + api_ct
 
+                _raw_content = message.content or ""
+                # Extract reasoning from dedicated field or <think> tags in content
+                _reasoning = (
+                    getattr(message, "reasoning_content", None)
+                    or getattr(message, "thinking_content", None)
+                    or getattr(message, "thinking", None)
+                    or ""
+                )
+                if not _reasoning and _raw_content:
+                    import re as _re2
+                    _tm = _re2.search(r"<think(?:ing)?>(.*?)</think(?:ing)?>", _raw_content, _re2.DOTALL)
+                    if _tm:
+                        _reasoning = _tm.group(1).strip()
+                        _raw_content = _re2.sub(r"<think(?:ing)?>.*?</think(?:ing)?>\s*", "", _raw_content, flags=_re2.DOTALL).strip()
+
                 result = {
-                    "content": message.content or "",
+                    "content": _raw_content,
+                    "reasoning_content": _reasoning,
                     "tool_calls": [],
                     "usage": {
                         "prompt_tokens": api_pt,
@@ -1025,6 +1168,7 @@ class LLMRouter:
         messages: list[dict[str, Any]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        model_override: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream a chat completion response, yielding text chunks."""
         # Resolve per-model param defaults (config overrides hardcoded defaults)
@@ -1035,8 +1179,9 @@ class LLMRouter:
             max_tokens = int(_mp["max_tokens"])
         _top_p: float | None = _mp.get("top_p") or None
 
-        model = self._build_model_string()
+        model = model_override if model_override else self._build_model_string()
         api_base = self._get_api_base()
+        temperature = self._enforce_model_temperature(model, temperature)
 
         messages = self._normalize_messages(messages)
 

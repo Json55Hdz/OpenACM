@@ -49,16 +49,15 @@ def register_routes(app: FastAPI) -> None:
         if not goal.strip():
             raise HTTPException(400, "goal is required")
 
-        # Collect uploaded files
+        # Collect uploaded files — pass raw bytes so the manager decides encoding
         file_contents: list[dict] = []
         for field_name, field_value in form.multi_items():
             if hasattr(field_value, "read"):
                 raw = await field_value.read()
-                try:
-                    content = raw.decode("utf-8", errors="replace")
-                except Exception:
-                    content = "(binary file — skipped)"
-                file_contents.append({"filename": field_value.filename or field_name, "content": content})
+                file_contents.append({
+                    "filename": field_value.filename or field_name,
+                    "raw": raw,
+                })
 
         swarm = await _state.swarm_manager.create_swarm(
             name=name,
@@ -203,14 +202,20 @@ def register_routes(app: FastAPI) -> None:
         swarm = await _state.database.get_swarm(swarm_id)
         if not swarm:
             raise HTTPException(404, "Swarm not found")
-        startable = {"planned", "paused", "failed"}
+        startable = {"planned", "paused", "failed", "idle"}
         if force:
             startable.add("running")  # allow force-restart of stuck swarms
         if swarm["status"] not in startable:
             raise HTTPException(400, f"Cannot start swarm in '{swarm['status']}' status. Plan it first.")
-        # Reset failed/stuck-running swarms back to paused before starting
-        if swarm["status"] in ("failed", "running") and force or swarm["status"] == "failed":
+        # Reset failed/stuck-running/idle swarms back to paused before starting
+        if swarm["status"] in ("failed", "running") and force or swarm["status"] in ("failed", "idle"):
             await _state.database.update_swarm(swarm_id, status="paused")
+            # Also reset any failed tasks to pending so they can be retried
+            if swarm["status"] in ("failed", "idle"):
+                tasks = await _state.database.get_swarm_tasks(swarm_id)
+                for t in tasks:
+                    if t["status"] == "failed":
+                        await _state.database.update_swarm_task(t["id"], status="pending", result="")
         await _state.swarm_manager.start_swarm(swarm_id)
         return {"ok": True, "status": "running"}
 
@@ -261,11 +266,44 @@ def register_routes(app: FastAPI) -> None:
         if hasattr(_state.swarm_manager, "_task_retries"):
             _state.swarm_manager._task_retries.get(swarm_id, {}).pop(task_id, None)
 
-        # Resume swarm
+        # Resume swarm — handle all terminal/running states gracefully
         swarm = await _state.database.get_swarm(swarm_id)
-        if swarm and swarm["status"] in ("paused", "failed", "idle"):
-            await _state.database.update_swarm(swarm_id, status="paused")
-            await _state.swarm_manager.start_swarm(swarm_id)
+        if swarm:
+            already_running = swarm_id in _state.swarm_manager._running
+            if already_running:
+                # Loop is still executing (or in cleanup). The pending task will be
+                # picked up in the next round IF the rounds loop hasn't exited yet.
+                # To be safe, schedule a delayed restart that fires after the current
+                # run completes and checks whether there are still pending tasks.
+                import asyncio as _asyncio
+
+                async def _resume_after_current_run():
+                    running_task = _state.swarm_manager._running.get(swarm_id)
+                    if running_task:
+                        try:
+                            await _asyncio.wait_for(_asyncio.shield(running_task), timeout=120)
+                        except Exception:
+                            pass
+                    _sw = await _state.database.get_swarm(swarm_id)
+                    _tasks = await _state.database.get_swarm_tasks(swarm_id)
+                    if (
+                        any(t["status"] == "pending" for t in _tasks)
+                        and swarm_id not in _state.swarm_manager._running
+                        and _sw and _sw["status"] not in ("running",)
+                    ):
+                        await _state.database.update_swarm(swarm_id, status="paused")
+                        try:
+                            await _state.swarm_manager.start_swarm(swarm_id)
+                        except ValueError:
+                            pass
+
+                _asyncio.ensure_future(_resume_after_current_run())
+            elif swarm["status"] not in ("draft", "clarifying", "planning", "planned"):
+                await _state.database.update_swarm(swarm_id, status="paused")
+                try:
+                    await _state.swarm_manager.start_swarm(swarm_id)
+                except ValueError:
+                    pass  # Race: started between check and call — running loop picks it up
         return {"ok": True, "reset_tasks": [t["title"] for t in to_reset]}
 
     @app.post("/api/swarms/{swarm_id}/tasks/{task_id}/complete")
@@ -332,6 +370,22 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(503, "Database not available")
         return await _state.database.get_swarm_messages(swarm_id)
+
+    @app.get("/api/swarms/{swarm_id}/conversations")
+    async def get_swarm_conversations(swarm_id: int):
+        """Return channel stats for all worker conversations belonging to this swarm."""
+        if not _state.database:
+            raise HTTPException(503, "Database not available")
+        if not await _state.database.get_swarm(swarm_id):
+            raise HTTPException(404, "Swarm not found")
+        return await _state.database.get_swarm_channel_stats(f"swarm_{swarm_id}")
+
+    @app.get("/api/swarms/{swarm_id}/conversations/{channel_id}/{user_id}")
+    async def get_swarm_conversation_messages(swarm_id: int, channel_id: str, user_id: str, limit: int = 200):
+        """Return messages for a specific worker channel."""
+        if not _state.database:
+            raise HTTPException(503, "Database not available")
+        return await _state.database.get_conversation(user_id, channel_id, limit)
 
     @app.post("/api/swarms/{swarm_id}/complete")
     async def complete_swarm(swarm_id: int):
@@ -418,30 +472,69 @@ def register_routes(app: FastAPI) -> None:
         result = await _state.swarm_manager.send_user_message(swarm_id, message)
         return {"ok": True, "result": result}
 
+    _SWARM_LIVE_EVENTS = [
+        "swarm:started", "swarm:paused", "swarm:completed", "swarm:failed",
+        "swarm:task_started", "swarm:task_completed", "swarm:task_failed",
+        "swarm:contract_ready", "swarm:worker_progress", "swarm:message",
+        "swarm:worker_thought", "swarm:planning_thought", "message.reasoning",
+    ]
+
     @app.websocket("/ws/swarms/{swarm_id}")
     async def ws_swarm(websocket: WebSocket, swarm_id: int):
-        """Real-time updates for a specific swarm."""
+        """Event-driven real-time updates for a specific swarm."""
         if not _verify_ws_token(websocket):
             await websocket.close(code=4001, reason="Unauthorized")
             return
         await websocket.accept()
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def on_event(event_type: str, data: dict) -> None:
+            if data.get("swarm_id") == swarm_id:
+                await queue.put({"type": event_type, **data})
+
+        event_bus = getattr(_state.swarm_manager, "event_bus", None) if _state.swarm_manager else None
+        if event_bus:
+            for _evt in _SWARM_LIVE_EVENTS:
+                event_bus.on(_evt, on_event)
+
+        async def _send_state() -> None:
+            if not _state.database:
+                return
+            swarm = await _state.database.get_swarm(swarm_id)
+            workers = await _state.database.get_swarm_workers(swarm_id)
+            tasks = await _state.database.get_swarm_tasks(swarm_id)
+            messages = await _state.database.get_swarm_messages(swarm_id)
+            await _safe_ws_send(websocket, {
+                "type": "state",
+                "swarm": swarm,
+                "workers": workers,
+                "tasks": tasks,
+                "messages": messages,
+            })
+
         try:
+            await _send_state()
             while True:
-                swarm = await _state.database.get_swarm(swarm_id) if _state.database else None
-                workers = await _state.database.get_swarm_workers(swarm_id) if _state.database else []
-                tasks = await _state.database.get_swarm_tasks(swarm_id) if _state.database else []
-                messages = await _state.database.get_swarm_messages(swarm_id) if _state.database else []
-                await websocket.send_json({
-                    "swarm": swarm,
-                    "workers": workers,
-                    "tasks": tasks,
-                    "messages": messages,
-                })
-                await asyncio.sleep(2)
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    await _safe_ws_send(websocket, event)
+                    # Push a fresh state snapshot after events that mutate DB rows
+                    if event.get("type") in (
+                        "swarm:task_completed", "swarm:task_failed",
+                        "swarm:completed", "swarm:failed", "swarm:message",
+                    ):
+                        await _send_state()
+                except asyncio.TimeoutError:
+                    await _send_state()
         except WebSocketDisconnect:
             pass
         except Exception:
             pass
+        finally:
+            if event_bus:
+                for _evt in _SWARM_LIVE_EVENTS:
+                    event_bus.off(_evt, on_event)
 
     # ─── Content Queue ────────────────────────────────────────
 

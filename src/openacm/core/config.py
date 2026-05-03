@@ -34,7 +34,7 @@ class AssistantConfig(BaseModel):
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
     rag_relevance_threshold: float = 0.5  # Cosine distance cutoff for RAG recall (0=identical, 1=unrelated)
-    compact_threshold: int = 25       # Auto-compact when conversation exceeds this many messages
+    compact_ratio: float = 0.60       # Compact when context reaches this fraction of the model's context window (0.0–1.0)
     compact_keep_recent: int = 6      # Number of recent messages to keep verbatim after compaction
 
 
@@ -44,6 +44,10 @@ class LLMConfig(BaseModel):
     default_provider: str = "ollama"
     providers: dict[str, dict[str, Any]] = Field(default_factory=dict)
     timeout: float = 0  # seconds to wait for any LLM response; 0 = no timeout
+    # Manual context-window overrides for models litellm doesn't know about.
+    # Keys are model name substrings (matched case-insensitively), values are token counts.
+    # Example: {"kimi": 131072, "deepseek-r1": 65536}
+    model_context_overrides: dict[str, int] = Field(default_factory=dict)
 
 
 class SecurityConfig(BaseModel):
