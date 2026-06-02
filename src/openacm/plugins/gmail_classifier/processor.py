@@ -95,37 +95,62 @@ def _parse_sender(from_header: str) -> tuple[str, str]:
 
 
 def _extract_body(payload: dict) -> tuple[str, str]:
-    """Extract (plain_text, html) from a Gmail message payload (handles multipart)."""
-    import base64
+    """Extract (plain_text, html) from a Gmail message payload.
+
+    Handles:
+    - text/plain and text/html direct parts
+    - multipart/alternative, multipart/mixed, multipart/related (all recursed)
+    - Large bodies returned as base64 in body.data
+    """
+    import base64 as _b64
 
     def _decode(data: str) -> str:
         try:
-            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+            # Gmail uses URL-safe base64; pad to multiple of 4
+            padded = data + "=" * (-len(data) % 4)
+            return _b64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
         except Exception:
             return ""
 
-    def _collect(part: dict, texts: list, htmls: list) -> None:
+    def _collect(part: dict, texts: list, htmls: list, depth: int = 0) -> None:
+        if depth > 10:
+            return
         mime = part.get("mimeType", "")
-        body_data = part.get("body", {}).get("data", "")
+        body = part.get("body", {})
+        body_data = body.get("data", "")
         parts = part.get("parts", [])
 
-        if mime == "text/plain" and body_data:
-            texts.append(_decode(body_data))
-        elif mime == "text/html" and body_data:
-            htmls.append(_decode(body_data))
-        for p in parts:
-            _collect(p, texts, htmls)
+        if mime == "text/plain":
+            if body_data:
+                texts.append(_decode(body_data))
+        elif mime == "text/html":
+            if body_data:
+                htmls.append(_decode(body_data))
+        elif mime.startswith("multipart/"):
+            # Prefer alternative: try to collect html first from alternatives
+            for p in parts:
+                _collect(p, texts, htmls, depth + 1)
+        else:
+            # Unknown/attachment — skip but recurse into sub-parts if any
+            for p in parts:
+                _collect(p, texts, htmls, depth + 1)
 
     texts: list[str] = []
     htmls: list[str] = []
     _collect(payload, texts, htmls)
 
-    plain = "\n\n".join(texts).strip()
-    html = "\n".join(htmls).strip()
+    plain = "\n\n".join(t for t in texts if t.strip()).strip()
+    html = "\n".join(h for h in htmls if h.strip()).strip()
 
-    # If only HTML, derive plain text as fallback
+    # If plain looks like HTML/CSS, move it to html bucket
+    _html_markers = re.compile(r"<!DOCTYPE|<html|<body|<div|<table|@media", re.IGNORECASE)
+    if plain and not html and _html_markers.search(plain[:500]):
+        html, plain = plain, ""
+
+    # Derive plain text from HTML if we only have HTML
     if not plain and html:
-        plain = re.sub(r"<[^>]+>", " ", html)
+        plain = re.sub(r"<style[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        plain = re.sub(r"<[^>]+>", " ", plain)
         plain = re.sub(r"\s{2,}", " ", plain).strip()
 
     return plain, html

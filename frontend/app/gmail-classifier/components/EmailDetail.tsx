@@ -130,7 +130,12 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       })
     : '';
 
-  const hasHtml = !!email.body_html;
+  // Use HTML renderer if we have stored HTML, OR if body_text looks like HTML/CSS
+  const looksLikeHtml = (s: string) =>
+    /<!DOCTYPE|<html|<body|<div|<table|<td|<span|<p\s|<br|@media|\.u-row/i.test(s.slice(0, 500));
+
+  const htmlToRender = email.body_html || (looksLikeHtml(email.body_text) ? email.body_text : '');
+  const hasHtml = !!htmlToRender;
   const bodyContent = email.body_text || email.snippet;
 
   return (
@@ -173,7 +178,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       {/* ── Body ──────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto acm-scroll min-h-0 px-4 py-4">
         {hasHtml ? (
-          <HtmlEmail html={email.body_html} />
+          <HtmlEmail html={htmlToRender} />
         ) : bodyContent ? (
           <PlainTextBody text={bodyContent} />
         ) : (
