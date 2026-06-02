@@ -3,10 +3,12 @@
 interface Email {
   id: number;
   gmail_id: string;
+  thread_id: string;
   subject: string;
   sender_name: string;
   sender_email: string;
   snippet: string;
+  body_text: string;
   category_id: number;
   category_name: string;
   category_color: string;

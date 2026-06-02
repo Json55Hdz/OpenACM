@@ -41,6 +41,36 @@ def _parse_sender(from_header: str) -> tuple[str, str]:
     return from_header.strip(), from_header.strip()
 
 
+def _extract_body(payload: dict) -> str:
+    """Extract plain-text body from a Gmail message payload (handles multipart)."""
+    import base64
+
+    def _decode(data: str) -> str:
+        try:
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    def _walk(part: dict) -> str:
+        mime = part.get("mimeType", "")
+        parts = part.get("parts", [])
+        body_data = part.get("body", {}).get("data", "")
+
+        if mime == "text/plain" and body_data:
+            return _decode(body_data)
+        if mime == "text/html" and body_data and not parts:
+            # Strip tags as fallback
+            html = _decode(body_data)
+            return re.sub(r"<[^>]+>", " ", html).strip()
+        for p in parts:
+            result = _walk(p)
+            if result:
+                return result
+        return ""
+
+    return _walk(payload)
+
+
 def _internaldate_to_iso(ms_str: str) -> str:
     try:
         ts = int(ms_str) / 1000
@@ -149,8 +179,7 @@ class GmailBatchProcessor:
         for msg_id in ids:
             try:
                 msg = service.users().messages().get(
-                    userId="me", id=msg_id, format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
+                    userId="me", id=msg_id, format="full",
                 ).execute()
                 headers = _parse_headers(msg.get("payload", {}).get("headers", []))
                 from_header = headers.get("From", "")
@@ -174,6 +203,7 @@ class GmailBatchProcessor:
                     pass
 
                 is_read = 0 if "UNREAD" in msg.get("labelIds", []) else 1
+                body_text = _extract_body(msg.get("payload", {}))
                 emails.append({
                     "gmail_id": msg_id,
                     "thread_id": thread_id,
@@ -181,6 +211,7 @@ class GmailBatchProcessor:
                     "sender_name": sender_name,
                     "sender_email": sender_email,
                     "snippet": msg.get("snippet", "")[:200],
+                    "body_text": body_text,
                     "is_read": is_read,
                     "is_replied": is_replied,
                     "received_at": _internaldate_to_iso(msg.get("internalDate", "0")),
@@ -254,14 +285,15 @@ class GmailBatchProcessor:
                 """
                 INSERT INTO gmail_emails
                     (gmail_id, thread_id, subject, sender_name, sender_email,
-                     snippet, category_id, is_read, is_replied, ai_classified, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                     snippet, body_text, category_id, is_read, is_replied, ai_classified, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(gmail_id) DO UPDATE SET
                     thread_id     = excluded.thread_id,
                     subject       = excluded.subject,
                     sender_name   = excluded.sender_name,
                     sender_email  = excluded.sender_email,
                     snippet       = excluded.snippet,
+                    body_text     = excluded.body_text,
                     category_id   = excluded.category_id,
                     is_replied    = excluded.is_replied,
                     ai_classified = 1,
@@ -274,6 +306,7 @@ class GmailBatchProcessor:
                     email["sender_name"],
                     email["sender_email"],
                     email["snippet"],
+                    email.get("body_text", ""),
                     cat_id,
                     email["is_read"],
                     email["is_replied"],

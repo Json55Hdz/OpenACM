@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 19
+    _SCHEMA_VERSION = 20
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -742,6 +742,15 @@ class Database:
                 "VALUES ('Otros', 'Correos que no encajan en ninguna categoría', '#6b7280', 'Inbox')"
             )
             log.info("Migration 19: created gmail_classifier tables")
+
+        if current < 20:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE gmail_emails ADD COLUMN body_text TEXT NOT NULL DEFAULT ''"
+                )
+                log.info("Migration 20: added body_text to gmail_emails")
+            except Exception:
+                pass  # column already exists
 
         # Save new version
         await self._db.execute(

@@ -1,14 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, MailOpen, ChevronDown, CornerUpLeft } from 'lucide-react';
+import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink } from 'lucide-react';
 
 interface Email {
   id: number;
+  gmail_id: string;
+  thread_id: string;
   subject: string;
   sender_name: string;
   sender_email: string;
   snippet: string;
+  body_text: string;
   category_id: number;
   is_read: number;
   is_replied: number;
@@ -88,11 +91,13 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       {/* Body */}
       <div className="flex-1 overflow-y-auto acm-scroll px-6 py-4">
         <p className="text-[13px] text-[var(--acm-fg-2)] leading-relaxed whitespace-pre-wrap">
-          {email.snippet}
+          {email.body_text || email.snippet}
         </p>
-        <p className="text-[11px] text-[var(--acm-fg-4)] mt-4 italic">
-          Vista previa — abre Gmail para ver el mensaje completo
-        </p>
+        {!email.body_text && (
+          <p className="text-[11px] text-[var(--acm-fg-4)] mt-4 italic">
+            Cuerpo no disponible — reprocesa para cargarlo
+          </p>
+        )}
       </div>
 
       {/* Controls bar */}
@@ -134,6 +139,16 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
             Respondido
           </span>
         )}
+
+        {/* Ver en Gmail */}
+        <a
+          href={`https://mail.google.com/mail/u/0/#all/${email.gmail_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-secondary text-[11px] py-[5px] px-2.5 ml-auto"
+        >
+          <ExternalLink size={12} /> Ver en Gmail
+        </a>
       </div>
 
       {/* Reply composer */}
