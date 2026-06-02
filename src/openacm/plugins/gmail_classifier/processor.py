@@ -29,6 +29,59 @@ async def _get_authenticated_email(service) -> str:
     return profile.get("emailAddress", "")
 
 
+async def _get_or_create_label(service, name: str, cache: dict) -> str | None:
+    """Return Gmail label ID for `name`, creating it if it doesn't exist."""
+    if name in cache:
+        return cache[name]
+    try:
+        # List existing labels
+        result = service.users().labels().list(userId="me").execute()
+        for lbl in result.get("labels", []):
+            if lbl["name"].lower() == name.lower():
+                cache[name] = lbl["id"]
+                return lbl["id"]
+        # Create it
+        created = service.users().labels().create(
+            userId="me",
+            body={"name": name, "labelListVisibility": "labelShow", "messageListVisibility": "show"},
+        ).execute()
+        cache[name] = created["id"]
+        return created["id"]
+    except Exception as exc:
+        log.warning("Failed to get/create Gmail label", name=name, error=str(exc))
+        return None
+
+
+async def apply_gmail_actions(
+    service,
+    gmail_id: str,
+    mark_read: bool,
+    label_name: str | None,
+    label_cache: dict,
+) -> None:
+    """Apply mark-as-read and/or label to a single Gmail message."""
+    add_labels: list[str] = []
+    remove_labels: list[str] = []
+
+    if mark_read:
+        remove_labels.append("UNREAD")
+
+    if label_name:
+        label_id = await _get_or_create_label(service, label_name, label_cache)
+        if label_id:
+            add_labels.append(label_id)
+
+    if add_labels or remove_labels:
+        try:
+            service.users().messages().modify(
+                userId="me",
+                id=gmail_id,
+                body={"addLabelIds": add_labels, "removeLabelIds": remove_labels},
+            ).execute()
+        except Exception as exc:
+            log.warning("Failed to modify Gmail message", gmail_id=gmail_id, error=str(exc))
+
+
 def _parse_headers(headers: list[dict]) -> dict[str, str]:
     return {h["name"]: h["value"] for h in headers}
 
@@ -119,6 +172,10 @@ class GmailBatchProcessor:
             service = await _get_gmail_service()
             auth_email = await _get_authenticated_email(service)
             categories = await self._load_categories()
+            settings = await self._load_settings()
+            auto_mark_read = settings.get("auto_mark_read") == "true"
+            auto_apply_label = settings.get("auto_apply_label") == "true"
+            label_cache: dict = {}
 
             # 1. Collect all message IDs
             msg_ids = await self._fetch_all_ids(service, since_date)
@@ -126,6 +183,7 @@ class GmailBatchProcessor:
             await self._emit("gmail_classifier.progress", {"processed": 0, "total": self._total})
 
             # 2. Process in batches
+            cat_by_id: dict[int, str] = {c["id"]: c["name"] for c in categories}
             for i in range(0, len(msg_ids), BATCH_SIZE):
                 if self._stop_requested:
                     log.info("Gmail classification stopped by user request")
@@ -133,7 +191,20 @@ class GmailBatchProcessor:
                 batch_ids = msg_ids[i: i + BATCH_SIZE]
                 emails = await self._fetch_details(service, batch_ids, auth_email)
                 classifications = await self._classify(emails, categories)
-                await self._upsert(emails, classifications, categories)
+                saved = await self._upsert(emails, classifications, categories)
+
+                # Apply Gmail actions if enabled
+                if auto_mark_read or auto_apply_label:
+                    for email, cat_id in saved:
+                        label_name = cat_by_id.get(cat_id) if auto_apply_label else None
+                        await apply_gmail_actions(
+                            service, email["gmail_id"],
+                            mark_read=auto_mark_read,
+                            label_name=label_name,
+                            label_cache=label_cache,
+                        )
+                        await asyncio.sleep(0.05)
+
                 self._processed += len(emails)
                 await self._emit("gmail_classifier.progress", {
                     "processed": self._processed,
@@ -226,6 +297,11 @@ class GmailBatchProcessor:
                 self._errors += 1
         return emails
 
+    async def _load_settings(self) -> dict:
+        cursor = await self._db._db.execute("SELECT key, value FROM gmail_classifier_settings")
+        rows = await cursor.fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
     async def _load_categories(self) -> list[dict]:
         cursor = await self._db._db.execute(
             "SELECT id, name, description FROM gmail_categories ORDER BY id"
@@ -277,9 +353,10 @@ class GmailBatchProcessor:
         emails: list[dict],
         classifications: dict[str, str],
         categories: list[dict],
-    ) -> None:
+    ) -> list[tuple[dict, int]]:
         cat_by_name = {c["name"]: c["id"] for c in categories}
         otros_id = cat_by_name.get("Otros")
+        saved: list[tuple[dict, int]] = []
 
         for email in emails:
             cat_name = classifications.get(email["gmail_id"], "Otros")
@@ -317,7 +394,42 @@ class GmailBatchProcessor:
                     email["received_at"],
                 ),
             )
+            if cat_id is not None:
+                saved.append((email, cat_id))
         await self._db._db.commit()
+        return saved
+
+    async def apply_retroactive(self, mark_read: bool, apply_label: bool) -> dict:
+        """Apply Gmail actions to all already-classified emails in the DB."""
+        if not mark_read and not apply_label:
+            return {"applied": 0}
+
+        service = await _get_gmail_service()
+        label_cache: dict = {}
+
+        cursor = await self._db._db.execute(
+            "SELECT ge.gmail_id, gc.name as category_name "
+            "FROM gmail_emails ge "
+            "LEFT JOIN gmail_categories gc ON ge.category_id = gc.id "
+            "WHERE ge.ai_classified = 1"
+        )
+        rows = await cursor.fetchall()
+        count = 0
+        for row in rows:
+            await apply_gmail_actions(
+                service,
+                row["gmail_id"],
+                mark_read=mark_read,
+                label_name=row["category_name"] if apply_label else None,
+                label_cache=label_cache,
+            )
+            count += 1
+            await asyncio.sleep(0.05)
+            if count % 50 == 0:
+                await self._emit("gmail_classifier.retroactive_progress", {"applied": count, "total": len(rows)})
+
+        await self._emit("gmail_classifier.retroactive_progress", {"applied": count, "total": len(rows)})
+        return {"applied": count}
 
     async def _emit(self, event: str, data: dict) -> None:
         if self._event_bus:

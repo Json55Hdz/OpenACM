@@ -44,6 +44,7 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [applyingRetro, setApplyingRetro] = useState(false);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -53,6 +54,20 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
       .then(data => setSettings(s => ({ ...s, ...data })))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveKey = async (key: string, value: string) => {
+    const res = await fetch(`${API}/settings`, {
+      method: 'PUT', headers,
+      body: JSON.stringify({ [key]: value }),
+    });
+    if (res.ok) {
+      // If a Gmail-action was just turned ON, show retroactive indicator
+      if (value === 'true' && (key === 'auto_mark_read' || key === 'auto_apply_label')) {
+        setApplyingRetro(true);
+        setTimeout(() => setApplyingRetro(false), 8000);
+      }
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -106,7 +121,11 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
                 </p>
               </div>
               <div
-                onClick={() => setSettings(s => ({ ...s, auto_mark_read: s.auto_mark_read === 'true' ? 'false' : 'true' }))}
+                onClick={async () => {
+                  const next = settings.auto_mark_read === 'true' ? 'false' : 'true';
+                  setSettings(s => ({ ...s, auto_mark_read: next }));
+                  await saveKey('auto_mark_read', next);
+                }}
                 className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 relative cursor-pointer ${
                   settings.auto_mark_read === 'true' ? 'bg-[var(--acm-accent)]' : 'bg-[var(--acm-elev)]'
                 }`}
@@ -128,7 +147,11 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
                 </p>
               </div>
               <div
-                onClick={() => setSettings(s => ({ ...s, auto_apply_label: s.auto_apply_label === 'true' ? 'false' : 'true' }))}
+                onClick={async () => {
+                  const next = settings.auto_apply_label === 'true' ? 'false' : 'true';
+                  setSettings(s => ({ ...s, auto_apply_label: next }));
+                  await saveKey('auto_apply_label', next);
+                }}
                 className={`w-9 h-5 rounded-full transition-colors flex-shrink-0 mt-0.5 relative cursor-pointer ${
                   settings.auto_apply_label === 'true' ? 'bg-[var(--acm-accent)]' : 'bg-[var(--acm-elev)]'
                 }`}
@@ -138,6 +161,14 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
                 }`} />
               </div>
             </label>
+
+            {/* Retroactive indicator */}
+            {applyingRetro && (
+              <div className="flex items-center gap-2 text-[11px] text-[var(--acm-accent)] acm-pulse">
+                <span className="dot dot-accent" />
+                Aplicando a correos ya clasificados…
+              </div>
+            )}
 
             <div className="acm-rule" />
 

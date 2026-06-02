@@ -300,6 +300,11 @@ async def get_settings():
 @router.put("/settings")
 async def update_settings(body: SettingsBody):
     db = _require_db()
+
+    # Read current values to detect changes
+    cursor = await db._db.execute("SELECT key, value FROM gmail_classifier_settings")
+    old = {r["key"]: r["value"] for r in await cursor.fetchall()}
+
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     for key, value in updates.items():
         await db._db.execute(
@@ -308,8 +313,20 @@ async def update_settings(body: SettingsBody):
             (key, value),
         )
     await db._db.commit()
-    cursor = await db._db.execute("SELECT key, value FROM gmail_classifier_settings")
-    rows = await cursor.fetchall()
+
+    # If a Gmail-action setting was just turned ON, apply retroactively in background
+    proc = _processor
+    if proc:
+        mark_read_on  = updates.get("auto_mark_read")  == "true" and old.get("auto_mark_read")  != "true"
+        apply_label_on = updates.get("auto_apply_label") == "true" and old.get("auto_apply_label") != "true"
+        if mark_read_on or apply_label_on:
+            asyncio.create_task(proc.apply_retroactive(
+                mark_read=mark_read_on,
+                apply_label=apply_label_on,
+            ))
+
+    cursor2 = await db._db.execute("SELECT key, value FROM gmail_classifier_settings")
+    rows = await cursor2.fetchall()
     return {r["key"]: r["value"] for r in rows}
 
 
