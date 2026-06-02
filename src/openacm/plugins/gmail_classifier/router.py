@@ -278,6 +278,15 @@ async def process_status():
     return proc.status
 
 
+@router.post("/process/stop")
+async def stop_process():
+    proc = _require_processor()
+    if not proc.is_running:
+        return {"stopped": False, "message": "No hay proceso en curso"}
+    proc._stop_requested = True
+    return {"stopped": True, "message": "Deteniendo al finalizar el lote actual…"}
+
+
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
 @router.get("/settings")

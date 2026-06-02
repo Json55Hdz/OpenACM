@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square } from 'lucide-react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
 import { CategoryTabs } from './components/CategoryTabs';
@@ -265,14 +265,25 @@ export default function GmailClassifierPage() {
                   onChange={e => setSinceDate(e.target.value)}
                   className="bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[12px] rounded-[var(--acm-radius)] px-3 py-1.5 outline-none focus:border-[var(--acm-accent)] transition-colors"
                 />
-                <button
-                  onClick={handleProcess}
-                  disabled={processStatus.running}
-                  className="btn-primary text-[12px] py-[7px] px-3"
-                >
-                  <RefreshCw size={13} className={processStatus.running ? 'animate-spin' : ''} />
-                  {processStatus.running ? 'Procesando…' : 'Procesar'}
-                </button>
+                {processStatus.running ? (
+                  <button
+                    onClick={async () => {
+                      await apiFetch('/process/stop', { method: 'POST' });
+                    }}
+                    className="btn-secondary text-[12px] py-[7px] px-3 border-[var(--acm-err)] text-[var(--acm-err)] hover:border-[var(--acm-err)]"
+                  >
+                    <Square size={12} />
+                    Detener
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleProcess}
+                    className="btn-primary text-[12px] py-[7px] px-3"
+                  >
+                    <RefreshCw size={13} />
+                    Procesar
+                  </button>
+                )}
                 <button
                   onClick={() => setShowSettings(true)}
                   className="btn-secondary text-[12px] py-[7px] px-3"

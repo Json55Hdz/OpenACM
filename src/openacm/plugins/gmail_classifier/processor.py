@@ -55,6 +55,7 @@ class GmailBatchProcessor:
         self._llm = llm_router
         self._event_bus = event_bus
         self.is_running = False
+        self._stop_requested = False
         self._processed = 0
         self._total = 0
         self._errors = 0
@@ -76,6 +77,7 @@ class GmailBatchProcessor:
             raise RuntimeError("Processor is already running")
 
         self.is_running = True
+        self._stop_requested = False
         self._processed = 0
         self._total = 0
         self._errors = 0
@@ -93,6 +95,9 @@ class GmailBatchProcessor:
 
             # 2. Process in batches
             for i in range(0, len(msg_ids), BATCH_SIZE):
+                if self._stop_requested:
+                    log.info("Gmail classification stopped by user request")
+                    break
                 batch_ids = msg_ids[i: i + BATCH_SIZE]
                 emails = await self._fetch_details(service, batch_ids, auth_email)
                 classifications = await self._classify(emails, categories)
@@ -122,9 +127,8 @@ class GmailBatchProcessor:
 
     async def _fetch_all_ids(self, service, since_date: str) -> list[str]:
         ids: list[str] = []
-        # Convert YYYY/MM/DD to YYYYMMDD for Gmail query
-        query_date = since_date.replace("/", "")
-        query = f"after:{query_date}" if query_date else ""
+        # Gmail after: operator expects YYYY/MM/DD format (slashes required)
+        query = f"after:{since_date}" if since_date else ""
         page_token = None
         while True:
             kwargs: dict = {"userId": "me", "maxResults": 500}
