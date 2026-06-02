@@ -113,7 +113,9 @@ export function Sidebar() {
     };
     const fetchClientProfile = async () => {
       try {
-        const res = await fetch('/api/config/client-profile');
+        const res = await fetch('/api/config/client-profile', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         if (res.ok) setClientProfile(await res.json());
       } catch { /* ignore */ }
     };

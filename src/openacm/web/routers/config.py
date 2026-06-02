@@ -453,6 +453,7 @@ def register_routes(app: FastAPI) -> None:
         if not _state.config:
             return {"active": False, "name": "", "allowed_pages": []}
         p = _state.config.client_profile
+        log.info("client-profile requested", active=p.active, pages=p.allowed_pages)
         return {"active": p.active, "name": p.name, "allowed_pages": p.allowed_pages}
 
     @app.get("/api/config/local_router")
