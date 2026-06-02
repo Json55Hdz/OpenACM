@@ -58,6 +58,7 @@ interface ProcessStatus {
   errors: number;
   started_at: string | null;
   last_completed_at: string | null;
+  cron_active: boolean;
 }
 
 interface AuthStatus {
@@ -136,7 +137,7 @@ export default function GmailClassifierPage() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [processStatus, setProcessStatus] = useState<ProcessStatus>({
-    running: false, processed: 0, total: 0, errors: 0, started_at: null, last_completed_at: null,
+    running: false, processed: 0, total: 0, errors: 0, started_at: null, last_completed_at: null, cron_active: false,
   });
   const [sinceDate, setSinceDate] = useState('');
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -203,6 +204,26 @@ export default function GmailClassifierPage() {
     fetchEmails();
     pollStatus();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Silent background poll every 30s to catch cron-triggered runs
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch('/process/status');
+        if (!res.ok) return;
+        const next: ProcessStatus = await res.json();
+        setProcessStatus(prev => {
+          // If a background run just completed (new last_completed_at), refresh data
+          if (!next.running && next.last_completed_at && next.last_completed_at !== prev.last_completed_at) {
+            fetchEmails();
+            fetchCategories();
+          }
+          return next;
+        });
+      } catch { /* ignore */ }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [apiFetch, fetchEmails, fetchCategories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetchEmails();
@@ -297,6 +318,14 @@ export default function GmailClassifierPage() {
                     <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
                     <span className="text-[11px] text-[var(--acm-accent)] acm-pulse">
                       Clasificando…
+                    </span>
+                  </>
+                )}
+                {!processStatus.running && processStatus.cron_active && (
+                  <>
+                    <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
+                    <span className="text-[11px] text-[var(--acm-fg-4)] flex items-center gap-1">
+                      <span className="dot dot-ok" /> Cron activo
                     </span>
                   </>
                 )}

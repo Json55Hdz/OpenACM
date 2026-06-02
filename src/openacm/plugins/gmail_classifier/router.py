@@ -275,7 +275,11 @@ async def start_process(body: ProcessBody):
 @router.get("/process/status")
 async def process_status():
     proc = _require_processor()
-    return proc.status
+    from openacm.plugins.gmail_classifier import PLUGIN
+    status = dict(proc.status)
+    cron_task = getattr(PLUGIN, "_cron_task", None)
+    status["cron_active"] = bool(cron_task and not cron_task.done())
+    return status
 
 
 @router.post("/process/stop")

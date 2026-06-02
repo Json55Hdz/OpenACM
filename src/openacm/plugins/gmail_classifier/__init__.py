@@ -94,31 +94,45 @@ class GmailClassifierPlugin(Plugin):
         from openacm.watchers.cron_scheduler import _next_cron_datetime
         import datetime as _dt
 
+        log.info("Gmail cron loop started", schedule=schedule)
         while True:
             now = _dt.datetime.now(_dt.timezone.utc)
             try:
                 next_run = _next_cron_datetime(schedule, now)
             except ValueError:
-                log.warning("Invalid cron schedule, stopping cron loop", schedule=schedule)
+                log.warning("Invalid gmail cron schedule, stopping", schedule=schedule)
                 return
+
             wait_seconds = (next_run - now).total_seconds()
+            log.info("Gmail cron next run", next_run=str(next_run), wait_seconds=round(wait_seconds))
             await asyncio.sleep(max(wait_seconds, 1))
-            if self._processor:
-                since_date = ""
-                if self._db:
+
+            if not self._processor:
+                continue
+
+            since_date = ""
+            if self._db:
+                try:
                     cursor = await self._db._db.execute(
                         "SELECT value FROM gmail_classifier_settings WHERE key = 'since_date_default'"
                     )
                     row = await cursor.fetchone()
                     since_date = row["value"] if row else ""
-                if not since_date:
-                    since_date = (
-                        _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=30)
-                    ).strftime("%Y/%m/%d")
-                try:
-                    await self._processor.process(since_date)
-                except Exception as exc:
-                    log.error("Cron gmail classification failed", error=str(exc))
+                except Exception:
+                    pass
+
+            if not since_date:
+                since_date = (
+                    _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=30)
+                ).strftime("%Y/%m/%d")
+
+            log.info("Gmail cron firing", since_date=since_date)
+            try:
+                await self._processor.process(since_date)
+                log.info("Gmail cron completed")
+            except Exception as exc:
+                log.error("Gmail cron classification failed", error=str(exc))
+                # Continue loop — don't die on one failure
 
     async def on_stop(self) -> None:
         if self._cron_task and not self._cron_task.done():
