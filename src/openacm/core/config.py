@@ -257,6 +257,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config_data["local_router"] = data["local_router"]
     if "resurrection_paths" in data:
         config_data["resurrection_paths"] = data["resurrection_paths"]
+    if "client_profile" in data:
+        config_data["client_profile"] = data["client_profile"]
 
     # Make paths absolute relative to project root
     config = AppConfig(**config_data)
