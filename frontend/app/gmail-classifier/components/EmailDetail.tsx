@@ -12,6 +12,7 @@ interface Email {
   sender_email: string;
   snippet: string;
   body_text: string;
+  body_html: string;
   category_id: number;
   is_read: number;
   is_replied: number;
@@ -32,24 +33,57 @@ interface EmailDetailProps {
   onReply: (emailId: number, body: string) => Promise<boolean>;
 }
 
-function EmailBody({ text }: { text: string }) {
-  if (!text) return null;
+// Inject base styles into HTML emails so they render cleanly in the iframe
+const HTML_BASE_STYLES = `
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #1a1a1a;
+      background: #ffffff;
+      margin: 0;
+      padding: 16px;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    img { max-width: 100%; height: auto; }
+    a { color: #2563eb; }
+    p { margin: 0 0 10px; }
+    pre, code { font-size: 12px; overflow-x: auto; }
+    table { max-width: 100%; border-collapse: collapse; }
+  </style>
+`;
 
-  // Split into paragraphs on double newlines, render single newlines as <br>
+function HtmlEmail({ html }: { html: string }) {
+  const src = `<!DOCTYPE html><html><head><meta charset="utf-8">${HTML_BASE_STYLES}</head><body>${html}</body></html>`;
+  return (
+    <iframe
+      srcDoc={src}
+      sandbox="allow-same-origin"
+      className="w-full border-0 rounded-[var(--acm-radius)] bg-white"
+      style={{ minHeight: '300px', height: '100%' }}
+      onLoad={e => {
+        // Auto-resize iframe to content height
+        const frame = e.currentTarget;
+        try {
+          const h = frame.contentDocument?.body?.scrollHeight;
+          if (h) frame.style.height = `${h + 32}px`;
+        } catch { /* cross-origin */ }
+      }}
+    />
+  );
+}
+
+function PlainTextBody({ text }: { text: string }) {
   const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-
   return (
     <div className="space-y-3">
       {paragraphs.map((para, i) => (
-        <p
-          key={i}
-          className="text-[13px] text-[var(--acm-fg-2)] leading-[1.7] break-words overflow-wrap-anywhere"
-        >
+        <p key={i} className="text-[13px] text-[var(--acm-fg-2)] leading-[1.7] break-words">
           {para.split('\n').map((line, j) => (
-            <span key={j}>
-              {line}
-              {j < para.split('\n').length - 1 && <br />}
-            </span>
+            <span key={j}>{line}{j < para.split('\n').length - 1 && <br />}</span>
           ))}
         </p>
       ))}
@@ -96,6 +130,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       })
     : '';
 
+  const hasHtml = !!email.body_html;
   const bodyContent = email.body_text || email.snippet;
 
   return (
@@ -136,19 +171,15 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       </div>
 
       {/* ── Body ──────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto acm-scroll px-6 py-5 min-h-0">
-        {bodyContent ? (
-          <EmailBody text={bodyContent} />
+      <div className="flex-1 overflow-y-auto acm-scroll min-h-0 px-4 py-4">
+        {hasHtml ? (
+          <HtmlEmail html={email.body_html} />
+        ) : bodyContent ? (
+          <PlainTextBody text={bodyContent} />
         ) : (
-          <p className="text-[12px] text-[var(--acm-fg-4)] italic">
+          <p className="text-[12px] text-[var(--acm-fg-4)] italic px-2">
             Sin contenido — reprocesa para cargar el cuerpo del correo.
           </p>
-        )}
-        {email.snippet && !email.body_text && (
-          <div className="mt-4 pt-4 border-t border-[var(--acm-border)]">
-            <p className="label mb-2">Vista previa</p>
-            <p className="text-[12px] text-[var(--acm-fg-3)] italic">{email.snippet}</p>
-          </div>
         )}
       </div>
 

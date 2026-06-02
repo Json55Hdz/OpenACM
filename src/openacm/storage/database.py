@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 20
+    _SCHEMA_VERSION = 21
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -749,6 +749,15 @@ class Database:
                     "ALTER TABLE gmail_emails ADD COLUMN body_text TEXT NOT NULL DEFAULT ''"
                 )
                 log.info("Migration 20: added body_text to gmail_emails")
+            except Exception:
+                pass  # column already exists
+
+        if current < 21:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE gmail_emails ADD COLUMN body_html TEXT NOT NULL DEFAULT ''"
+                )
+                log.info("Migration 21: added body_html to gmail_emails")
             except Exception:
                 pass  # column already exists
 

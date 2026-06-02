@@ -94,8 +94,8 @@ def _parse_sender(from_header: str) -> tuple[str, str]:
     return from_header.strip(), from_header.strip()
 
 
-def _extract_body(payload: dict) -> str:
-    """Extract plain-text body from a Gmail message payload (handles multipart)."""
+def _extract_body(payload: dict) -> tuple[str, str]:
+    """Extract (plain_text, html) from a Gmail message payload (handles multipart)."""
     import base64
 
     def _decode(data: str) -> str:
@@ -104,24 +104,31 @@ def _extract_body(payload: dict) -> str:
         except Exception:
             return ""
 
-    def _walk(part: dict) -> str:
+    def _collect(part: dict, texts: list, htmls: list) -> None:
         mime = part.get("mimeType", "")
-        parts = part.get("parts", [])
         body_data = part.get("body", {}).get("data", "")
+        parts = part.get("parts", [])
 
         if mime == "text/plain" and body_data:
-            return _decode(body_data)
-        if mime == "text/html" and body_data and not parts:
-            # Strip tags as fallback
-            html = _decode(body_data)
-            return re.sub(r"<[^>]+>", " ", html).strip()
+            texts.append(_decode(body_data))
+        elif mime == "text/html" and body_data:
+            htmls.append(_decode(body_data))
         for p in parts:
-            result = _walk(p)
-            if result:
-                return result
-        return ""
+            _collect(p, texts, htmls)
 
-    return _walk(payload)
+    texts: list[str] = []
+    htmls: list[str] = []
+    _collect(payload, texts, htmls)
+
+    plain = "\n\n".join(texts).strip()
+    html = "\n".join(htmls).strip()
+
+    # If only HTML, derive plain text as fallback
+    if not plain and html:
+        plain = re.sub(r"<[^>]+>", " ", html)
+        plain = re.sub(r"\s{2,}", " ", plain).strip()
+
+    return plain, html
 
 
 def _internaldate_to_iso(ms_str: str) -> str:
@@ -278,7 +285,7 @@ class GmailBatchProcessor:
                     pass
 
                 is_read = 0 if "UNREAD" in msg.get("labelIds", []) else 1
-                body_text = _extract_body(msg.get("payload", {}))
+                body_text, body_html = _extract_body(msg.get("payload", {}))
                 emails.append({
                     "gmail_id": msg_id,
                     "thread_id": thread_id,
@@ -287,6 +294,7 @@ class GmailBatchProcessor:
                     "sender_email": sender_email,
                     "snippet": msg.get("snippet", "")[:200],
                     "body_text": body_text,
+                    "body_html": body_html,
                     "is_read": is_read,
                     "is_replied": is_replied,
                     "received_at": _internaldate_to_iso(msg.get("internalDate", "0")),
@@ -366,8 +374,8 @@ class GmailBatchProcessor:
                 """
                 INSERT INTO gmail_emails
                     (gmail_id, thread_id, subject, sender_name, sender_email,
-                     snippet, body_text, category_id, is_read, is_replied, ai_classified, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                     snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
                 ON CONFLICT(gmail_id) DO UPDATE SET
                     thread_id     = excluded.thread_id,
                     subject       = excluded.subject,
@@ -375,6 +383,7 @@ class GmailBatchProcessor:
                     sender_email  = excluded.sender_email,
                     snippet       = excluded.snippet,
                     body_text     = excluded.body_text,
+                    body_html     = excluded.body_html,
                     category_id   = excluded.category_id,
                     is_replied    = excluded.is_replied,
                     ai_classified = 1,
@@ -388,6 +397,7 @@ class GmailBatchProcessor:
                     email["sender_email"],
                     email["snippet"],
                     email.get("body_text", ""),
+                    email.get("body_html", ""),
                     cat_id,
                     email["is_read"],
                     email["is_replied"],

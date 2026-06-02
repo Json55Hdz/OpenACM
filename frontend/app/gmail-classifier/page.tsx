@@ -41,6 +41,7 @@ interface Email {
   sender_email: string;
   snippet: string;
   body_text: string;
+  body_html: string;
   category_id: number;
   category_name: string;
   category_color: string;
