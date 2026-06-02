@@ -78,12 +78,19 @@ const VOICE_PULSE_COLOR: Partial<Record<string, string>> = {
   speaking:   'oklch(0.75 0.09 160 / 0.9)',
 };
 
+interface ClientProfile {
+  active: boolean;
+  name: string;
+  allowed_pages: string[];
+}
+
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [pendingContent, setPendingContent] = useState(0);
   const [pluginItems, setPluginItems] = useState<PluginNavItem[]>([]);
   const [version, setVersion] = useState<string>('');
+  const [clientProfile, setClientProfile] = useState<ClientProfile>({ active: false, name: '', allowed_pages: [] });
   const pathname = usePathname();
   const isOnline = useChatStore((state) => state.wsConnected);
   const token = useAuthStore((s) => s.token);
@@ -104,6 +111,12 @@ export function Sidebar() {
         }
       } catch { /* ignore — plugins are optional */ }
     };
+    const fetchClientProfile = async () => {
+      try {
+        const res = await fetch('/api/config/client-profile');
+        if (res.ok) setClientProfile(await res.json());
+      } catch { /* ignore */ }
+    };
     const fetchVersion = async () => {
       try {
         const res = await fetch('/api/system/info');
@@ -115,6 +128,7 @@ export function Sidebar() {
     };
     if (token) fetchPluginNav();
     fetchVersion();
+    fetchClientProfile();
   }, [token]);
 
   // Poll for pending content count (from plugins that register a badge)
@@ -188,10 +202,14 @@ export function Sidebar() {
     );
   };
 
-  const workspaceItems = coreNavItems.filter(i => !['/debug', '/config'].includes(i.href));
-  const systemItems = coreNavItems.filter(i => ['/debug', '/config'].includes(i.href));
-  const mainPluginItems = pluginItems.filter((p) => !p.section || p.section === 'main');
-  const bottomPluginItems = pluginItems.filter((p) => p.section === 'bottom');
+  // Apply client profile filtering
+  const isAllowed = (href: string) =>
+    !clientProfile.active || clientProfile.allowed_pages.includes(href);
+
+  const workspaceItems = coreNavItems.filter(i => !['/debug', '/config'].includes(i.href) && isAllowed(i.href));
+  const systemItems = coreNavItems.filter(i => ['/debug', '/config'].includes(i.href) && isAllowed(i.href));
+  const mainPluginItems = pluginItems.filter((p) => (!p.section || p.section === 'main') && isAllowed(p.path));
+  const bottomPluginItems = pluginItems.filter((p) => p.section === 'bottom' && isAllowed(p.path));
 
   return (
     <>

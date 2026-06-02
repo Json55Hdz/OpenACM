@@ -446,6 +446,15 @@ def register_routes(app: FastAPI) -> None:
         log.info("Custom provider deleted", id=provider_id)
         return {"status": "ok"}
 
+    @app.get("/api/config/client-profile")
+    async def get_client_profile():
+        """Return the client profile (active flag + allowed pages).
+        Always returns a valid object — active=False means no restrictions."""
+        if not _state.config:
+            return {"active": False, "name": "", "allowed_pages": []}
+        p = _state.config.client_profile
+        return {"active": p.active, "name": p.name, "allowed_pages": p.allowed_pages}
+
     @app.get("/api/config/local_router")
     async def get_local_router_config():
         """Get LocalRouter configuration and live stats."""

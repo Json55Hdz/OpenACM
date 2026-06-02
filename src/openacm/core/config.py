@@ -30,6 +30,7 @@ class AssistantConfig(BaseModel):
     name: str = "ACM"
     system_prompt: str = "You are ACM, a helpful AI assistant."
     onboarding_completed: bool = False
+    is_agent: bool = False
     max_context_messages: int = 50
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120
@@ -121,6 +122,20 @@ class LocalRouterConfig(BaseModel):
     confidence_threshold: float = 0.88
 
 
+class ClientProfileConfig(BaseModel):
+    """Restricts the UI to a subset of features for a specific client deployment.
+
+    When active=True, only pages listed in allowed_pages are visible in the
+    sidebar and accessible via routes. Everything else is hidden/blocked.
+
+    Toggle on/off by adding or removing this block in config/local.yaml.
+    """
+
+    active: bool = False
+    name: str = "Cliente"
+    allowed_pages: list[str] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel):
     """Root application configuration."""
 
@@ -132,6 +147,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     local_router: LocalRouterConfig = Field(default_factory=LocalRouterConfig)
     resurrection_paths: list[str] = Field(default_factory=list)
+    client_profile: ClientProfileConfig = Field(default_factory=ClientProfileConfig)
 
 
 # ─── Config Loading ──────────────────────────────────────────

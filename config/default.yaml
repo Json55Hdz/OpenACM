@@ -137,3 +137,16 @@ web:
   auth_enabled: true
   host: 127.0.0.1
   port: 47821
+
+# ─── Client Profile ───────────────────────────────────────────
+# Restrict the UI to a specific set of pages for a client deployment.
+# To activate: add the block below to config/local.yaml and restart.
+# To deactivate: remove it from local.yaml and restart.
+#
+# client_profile:
+#   active: true
+#   name: "Conjunto Residencial Los Pinos"
+#   allowed_pages:
+#     - /chat
+#     - /gmail-classifier
+#     - /swarms

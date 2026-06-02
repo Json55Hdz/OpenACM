@@ -1,20 +1,17 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { useChatStore } from '@/stores/chat-store';
 import { GlobalTamagotchi } from '@/components/tamagotchi/global-tamagotchi';
 
-// Watches for a pending onboarding greeting and navigates to /chat via Next.js
-// router (client-side, no reload) so the Zustand store state is preserved.
 function OnboardingNavigator() {
   const router = useRouter();
   const pendingOnboardingGreeting = useChatStore((s) => s.pendingOnboardingGreeting);
 
   useEffect(() => {
     if (pendingOnboardingGreeting !== null) {
-      // Navigate to /chat without a page reload so the store message survives
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/chat')) {
         router.push('/chat');
       }
@@ -24,10 +21,34 @@ function OnboardingNavigator() {
   return null;
 }
 
+// Redirects to /chat if the current page is not in the client profile's allowed_pages
+function ClientProfileGuard() {
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const res = await fetch('/api/config/client-profile');
+        if (!res.ok) return;
+        const profile = await res.json();
+        if (!profile.active || profile.allowed_pages.length === 0) return;
+        const allowed: string[] = profile.allowed_pages;
+        const isAllowed = allowed.some((p: string) => pathname === p || pathname.startsWith(p + '/'));
+        if (!isAllowed) router.replace('/chat');
+      } catch { /* ignore */ }
+    };
+    check();
+  }, [pathname, router]);
+
+  return null;
+}
+
 export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[var(--acm-base)]">
       <OnboardingNavigator />
+      <ClientProfileGuard />
       <Sidebar />
       <GlobalTamagotchi />
 
