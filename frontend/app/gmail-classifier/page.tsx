@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square } from 'lucide-react';
+import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles } from 'lucide-react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
 import { CategoryTabs } from './components/CategoryTabs';
@@ -127,6 +127,9 @@ export default function GmailClassifierPage() {
   const [sinceDate, setSinceDate] = useState('');
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [suggesting, setSuggesting] = useState(false);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -285,6 +288,27 @@ export default function GmailClassifierPage() {
                   </button>
                 )}
                 <button
+                  onClick={async () => {
+                    setSuggesting(true);
+                    try {
+                      const res = await apiFetch('/suggest-categories', { method: 'POST' });
+                      if (res.ok) {
+                        const data = await res.json();
+                        setSuggestions(data.suggestions ?? []);
+                        setShowSuggestions(true);
+                      }
+                    } finally {
+                      setSuggesting(false);
+                    }
+                  }}
+                  disabled={suggesting}
+                  className="btn-secondary text-[12px] py-[7px] px-3"
+                  title="Sugerir categorías con IA"
+                >
+                  <Sparkles size={13} className={suggesting ? 'animate-pulse' : ''} />
+                  {suggesting ? 'Analizando…' : 'Sugerir'}
+                </button>
+                <button
                   onClick={() => setShowSettings(true)}
                   className="btn-secondary text-[12px] py-[7px] px-3"
                   title="Configuración"
@@ -352,7 +376,103 @@ export default function GmailClassifierPage() {
         {showSettings && (
           <PluginSettings token={token ?? ''} onClose={() => setShowSettings(false)} />
         )}
+
+        {showSuggestions && (
+          <SuggestionsModal
+            suggestions={suggestions}
+            token={token ?? ''}
+            onClose={() => setShowSuggestions(false)}
+            onCreated={() => { fetchCategories(); setShowSuggestions(false); }}
+          />
+        )}
       </div>
     </AppLayout>
+  );
+}
+
+// ─── Suggestions Modal ────────────────────────────────────────────────────────
+
+function SuggestionsModal({ suggestions, token, onClose, onCreated }: {
+  suggestions: any[];
+  token: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(new Set(suggestions.map((_, i) => i)));
+  const [saving, setSaving] = useState(false);
+
+  const toggle = (i: number) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+
+  const handleCreate = async () => {
+    setSaving(true);
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    try {
+      for (const i of selected) {
+        await fetch('/api/gmail-classifier/categories', {
+          method: 'POST', headers,
+          body: JSON.stringify(suggestions[i]),
+        });
+      }
+      onCreated();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div className="bg-[var(--acm-base)] border border-[var(--acm-border)] rounded-[var(--acm-radius)] w-full max-w-md shadow-2xl">
+        <div className="px-5 py-4 border-b border-[var(--acm-border)]">
+          <span className="acm-breadcrumb">/ gmail / sugerencias IA</span>
+          <h2 className="text-[15px] font-semibold text-[var(--acm-fg)]">Categorías sugeridas</h2>
+          <p className="text-[11px] text-[var(--acm-fg-4)] mt-0.5">
+            Basadas en tus correos más recientes. Selecciona las que quieras crear.
+          </p>
+        </div>
+
+        <div className="px-5 py-3 space-y-2">
+          {suggestions.map((s, i) => (
+            <button
+              key={i}
+              onClick={() => toggle(i)}
+              className={`w-full flex items-start gap-3 p-3 rounded-[var(--acm-radius)] border text-left transition-colors ${
+                selected.has(i)
+                  ? 'border-[var(--acm-accent)] bg-[var(--acm-accent-tint)]'
+                  : 'border-[var(--acm-border)] hover:border-[var(--acm-border-strong)]'
+              }`}
+            >
+              <div className="w-3 h-3 rounded-full flex-shrink-0 mt-0.5" style={{ backgroundColor: s.color }} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-[var(--acm-fg)]">{s.name}</p>
+                <p className="text-[11px] text-[var(--acm-fg-4)] mt-0.5 leading-snug">{s.description}</p>
+              </div>
+              <div className={`w-4 h-4 rounded border flex-shrink-0 mt-0.5 flex items-center justify-center transition-colors ${
+                selected.has(i) ? 'bg-[var(--acm-accent)] border-[var(--acm-accent)]' : 'border-[var(--acm-border-strong)]'
+              }`}>
+                {selected.has(i) && <span className="text-[oklch(0.18_0.015_80)] text-[10px] font-bold">✓</span>}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[var(--acm-border)] flex items-center justify-between">
+          <span className="text-[11px] text-[var(--acm-fg-4)]">{selected.size} seleccionadas</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="btn-secondary text-[12px] py-[7px] px-3">Cancelar</button>
+            <button
+              onClick={handleCreate}
+              disabled={saving || selected.size === 0}
+              className="btn-primary text-[12px] py-[7px] px-3"
+            >
+              {saving ? 'Creando…' : `Crear ${selected.size}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

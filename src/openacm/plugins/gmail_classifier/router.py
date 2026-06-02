@@ -313,6 +313,86 @@ async def update_settings(body: SettingsBody):
     return {r["key"]: r["value"] for r in rows}
 
 
+# ─── Suggest Categories ───────────────────────────────────────────────────────
+
+@router.post("/suggest-categories")
+async def suggest_categories():
+    """Sample recent emails and ask the LLM to suggest the top 5 categories."""
+    proc = _require_processor()
+    db = _require_db()
+
+    try:
+        from openacm.plugins.gmail_classifier.processor import _get_gmail_service, _get_authenticated_email
+        import json, re as _re
+
+        service = await _get_gmail_service()
+        auth_email = await _get_authenticated_email(service)
+
+        # Fetch up to 150 recent message IDs (no date filter — just most recent)
+        result = service.users().messages().list(userId="me", maxResults=150).execute()
+        msg_ids = [m["id"] for m in result.get("messages", [])]
+
+        if not msg_ids:
+            raise HTTPException(status_code=400, detail="No se encontraron correos")
+
+        # Fetch metadata for each (subject + sender)
+        samples = []
+        for msg_id in msg_ids[:150]:
+            try:
+                msg = service.users().messages().get(
+                    userId="me", id=msg_id, format="metadata",
+                    metadataHeaders=["Subject", "From"],
+                ).execute()
+                headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
+                subject = headers.get("Subject", "")
+                sender = headers.get("From", "")
+                snippet = msg.get("snippet", "")[:100]
+                if subject or sender:
+                    samples.append(f"De: {sender} | Asunto: {subject} | {snippet}")
+            except Exception:
+                continue
+
+        if not samples:
+            raise HTTPException(status_code=400, detail="No se pudieron leer los correos")
+
+        email_block = "\n".join(f"{i+1}. {s}" for i, s in enumerate(samples[:100]))
+
+        prompt = (
+            "Analiza estos correos y sugiere las 5 categorías MÁS ÚTILES para organizar "
+            "la bandeja de este usuario. Basa las categorías en los patrones reales que ves.\n\n"
+            f"Correos de muestra:\n{email_block}\n\n"
+            "Devuelve SOLO un JSON array con exactamente 5 objetos, sin texto adicional:\n"
+            '[\n'
+            '  {"name": "Nombre corto", "description": "Descripción de qué correos van aquí", '
+            '"color": "#hexcolor", "icon": "LucideIconName"},\n'
+            '  ...\n'
+            ']\n\n'
+            "Colores sugeridos (usa variedad): #6366f1 #3b82f6 #10b981 #f59e0b #ef4444 #8b5cf6 #ec4899 #0ea5e9\n"
+            "Iconos válidos (lucide-react): Tag Mail Car FileText Inbox Briefcase Home Star Bell Users "
+            "ShoppingCart Calendar Map Truck Landmark Building2 Package Wrench CreditCard Globe Megaphone\n"
+            "El campo 'name' debe estar en español y ser corto (1-2 palabras)."
+        )
+
+        response = await proc._llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=800,
+        )
+        content = response.get("content", "")
+        match = _re.search(r"\[.*?\]", content, _re.DOTALL)
+        if not match:
+            raise HTTPException(status_code=500, detail="La IA no devolvió sugerencias válidas")
+
+        suggestions = json.loads(match.group(0))
+        return {"suggestions": suggestions[:5]}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("suggest_categories failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ─── Auth Status ──────────────────────────────────────────────────────────────
 
 @router.get("/auth-status")
