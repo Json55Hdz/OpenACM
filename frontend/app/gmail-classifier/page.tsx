@@ -146,6 +146,16 @@ export default function GmailClassifierPage() {
     } catch { /* ignore */ }
   }, [apiFetch]);
 
+  const fetchSinceDate = useCallback(async () => {
+    try {
+      const res = await apiFetch('/settings');
+      if (res.ok) {
+        const s = await res.json();
+        if (s.since_date_default) setSinceDate(s.since_date_default);
+      }
+    } catch { /* ignore */ }
+  }, [apiFetch]);
+
   const fetchCategories = useCallback(async () => {
     const res = await apiFetch('/categories');
     if (res.ok) setCategories(await res.json());
@@ -176,6 +186,7 @@ export default function GmailClassifierPage() {
 
   useEffect(() => {
     fetchAuthStatus();
+    fetchSinceDate();
     fetchCategories();
     fetchEmails();
     pollStatus();
@@ -264,12 +275,23 @@ export default function GmailClassifierPage() {
             {/* Toolbar */}
             {!notReady && (
               <div className="flex items-center gap-2 pb-1">
-                <input
-                  type="date"
-                  value={sinceDate}
-                  onChange={e => setSinceDate(e.target.value)}
-                  className="bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[12px] rounded-[var(--acm-radius)] px-3 py-1.5 outline-none focus:border-[var(--acm-accent)] transition-colors"
-                />
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[var(--acm-fg-4)] whitespace-nowrap">
+                    Clasificando correos desde:
+                  </span>
+                  <input
+                    type="date"
+                    value={sinceDate}
+                    onChange={async e => {
+                      setSinceDate(e.target.value);
+                      await apiFetch('/settings', {
+                        method: 'PUT',
+                        body: JSON.stringify({ since_date_default: e.target.value }),
+                      });
+                    }}
+                    className="bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[12px] rounded-[var(--acm-radius)] px-3 py-1.5 outline-none focus:border-[var(--acm-accent)] transition-colors"
+                  />
+                </div>
                 {processStatus.running ? (
                   <button
                     onClick={async () => {
@@ -387,8 +409,16 @@ export default function GmailClassifierPage() {
           <SuggestionsModal
             suggestions={suggestions}
             token={token ?? ''}
+            sinceDate={sinceDate}
             onClose={() => setShowSuggestions(false)}
-            onCreated={() => { fetchCategories(); setShowSuggestions(false); }}
+            onCreated={async () => {
+              await fetchCategories();
+              setShowSuggestions(false);
+              // Auto-start classification if there's a date configured
+              if (sinceDate) {
+                await handleProcess();
+              }
+            }}
           />
         )}
       </div>
@@ -398,9 +428,10 @@ export default function GmailClassifierPage() {
 
 // ─── Suggestions Modal ────────────────────────────────────────────────────────
 
-function SuggestionsModal({ suggestions, token, onClose, onCreated }: {
+function SuggestionsModal({ suggestions, token, sinceDate, onClose, onCreated }: {
   suggestions: any[];
   token: string;
+  sinceDate: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -474,7 +505,7 @@ function SuggestionsModal({ suggestions, token, onClose, onCreated }: {
               disabled={saving || selected.size === 0}
               className="btn-primary text-[12px] py-[7px] px-3"
             >
-              {saving ? 'Creando…' : `Crear ${selected.size}`}
+              {saving ? 'Creando y clasificando…' : sinceDate ? `Crear y clasificar` : `Crear ${selected.size}`}
             </button>
           </div>
         </div>
