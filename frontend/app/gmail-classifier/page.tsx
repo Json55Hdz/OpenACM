@@ -13,6 +13,16 @@ import { PluginSettings } from './components/PluginSettings';
 
 const API = '/api/gmail-classifier';
 
+function timeAgoShort(iso: string): string {
+  try {
+    const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (diff < 60) return 'hace un momento';
+    if (diff < 3600) return `hace ${Math.floor(diff / 60)} min`;
+    if (diff < 86400) return `hace ${Math.floor(diff / 3600)}h`;
+    return `hace ${Math.floor(diff / 86400)}d`;
+  } catch { return ''; }
+}
+
 interface Category {
   id: number;
   name: string;
@@ -46,6 +56,7 @@ interface ProcessStatus {
   total: number;
   errors: number;
   started_at: string | null;
+  last_completed_at: string | null;
 }
 
 interface AuthStatus {
@@ -124,7 +135,7 @@ export default function GmailClassifierPage() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [processStatus, setProcessStatus] = useState<ProcessStatus>({
-    running: false, processed: 0, total: 0, errors: 0, started_at: null,
+    running: false, processed: 0, total: 0, errors: 0, started_at: null, last_completed_at: null,
   });
   const [sinceDate, setSinceDate] = useState('');
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -207,7 +218,7 @@ export default function GmailClassifierPage() {
       body: JSON.stringify({ since_date: formatted }),
     });
     if (res.ok) {
-      setProcessStatus({ running: true, processed: 0, total: 0, errors: 0, started_at: new Date().toISOString() });
+      setProcessStatus(p => ({ ...p, running: true, processed: 0, total: 0, errors: 0, started_at: new Date().toISOString() }));
       setTimeout(pollStatus, 1000);
     } else {
       const err = await res.json().catch(() => ({}));
@@ -267,9 +278,28 @@ export default function GmailClassifierPage() {
               <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-[var(--acm-fg)]">
                 Gmail Classifier
               </h1>
-              <p className="text-[12px] text-[var(--acm-fg-3)] mt-0.5">
-                Clasifica correos con IA en categorías personalizadas
-              </p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-[12px] text-[var(--acm-fg-3)]">
+                  Clasifica correos con IA en categorías personalizadas
+                </p>
+                {processStatus.last_completed_at && (
+                  <>
+                    <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
+                    <span className="text-[11px] text-[var(--acm-fg-4)] flex items-center gap-1">
+                      <span className="dot dot-ok" />
+                      Actualizado {timeAgoShort(processStatus.last_completed_at)}
+                    </span>
+                  </>
+                )}
+                {processStatus.running && (
+                  <>
+                    <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
+                    <span className="text-[11px] text-[var(--acm-accent)] acm-pulse">
+                      Clasificando…
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Toolbar */}

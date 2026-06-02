@@ -13,21 +13,24 @@ interface PluginSettingsProps {
 function describeCron(expr: string): string {
   if (!expr) return 'Desactivado';
   const map: Record<string, string> = {
+    '* * * * *': 'Cada minuto',
+    '*/5 * * * *': 'Cada 5 minutos',
+    '*/15 * * * *': 'Cada 15 minutos',
+    '*/30 * * * *': 'Cada 30 minutos',
     '@hourly': 'Cada hora',
-    '@daily': 'Cada día a medianoche',
     '0 * * * *': 'Cada hora (en punto)',
     '0 8 * * *': 'Cada día a las 8:00am',
     '0 0 * * *': 'Cada día a medianoche',
-    '*/30 * * * *': 'Cada 30 minutos',
     '0 9 * * 1-5': 'Días hábiles a las 9am',
   };
   return map[expr.trim()] ?? `Expresión: ${expr}`;
 }
 
 const CRON_PRESETS = [
+  { label: 'Cada minuto', value: '* * * * *' },
+  { label: 'Cada 5 min', value: '*/5 * * * *' },
   { label: 'Cada hora', value: '0 * * * *' },
   { label: '8am diario', value: '0 8 * * *' },
-  { label: 'Días hábiles 9am', value: '0 9 * * 1-5' },
   { label: 'Desactivar', value: '' },
 ];
 

@@ -90,6 +90,7 @@ class GmailBatchProcessor:
         self._total = 0
         self._errors = 0
         self._started_at: str | None = None
+        self._last_completed_at: str | None = None
 
     @property
     def status(self) -> dict:
@@ -99,6 +100,7 @@ class GmailBatchProcessor:
             "total": self._total,
             "errors": self._errors,
             "started_at": self._started_at,
+            "last_completed_at": self._last_completed_at,
         }
 
     async def process(self, since_date: str) -> dict:
@@ -139,10 +141,12 @@ class GmailBatchProcessor:
                 })
                 await asyncio.sleep(0)  # yield to event loop
 
+            self._last_completed_at = datetime.now(timezone.utc).isoformat()
             await self._emit("gmail_classifier.completed", {
                 "total": self._total,
                 "processed": self._processed,
                 "errors": self._errors,
+                "last_completed_at": self._last_completed_at,
             })
             return {"total": self._total, "processed": self._processed, "errors": self._errors}
 
