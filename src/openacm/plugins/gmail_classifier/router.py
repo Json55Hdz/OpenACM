@@ -375,11 +375,18 @@ async def suggest_categories():
 
         response = await proc._llm.chat(
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=800,
         )
-        content = response.get("content", "")
-        log.info("suggest_categories LLM response", content_preview=content[:200])
+        log.info("suggest_categories LLM response keys", keys=list(response.keys()) if isinstance(response, dict) else type(response).__name__)
+        # content key varies by provider/streaming mode
+        content = (
+            response.get("content")
+            or response.get("text")
+            or response.get("message")
+            or ""
+        )
+        if isinstance(content, dict):
+            content = content.get("content") or content.get("text") or ""
+        log.info("suggest_categories LLM content", content_preview=str(content)[:300])
 
         # Strip markdown code fences if present (```json ... ``` or ``` ... ```)
         clean = _re.sub(r"```(?:json)?\s*", "", content)

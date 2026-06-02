@@ -225,8 +225,6 @@ class GmailBatchProcessor:
         try:
             response = await self._llm.chat(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-                max_tokens=1500,
             )
             content = response.get("content", "")
             # Extract JSON array from response (may have surrounding text)
