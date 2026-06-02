@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 18
+    _SCHEMA_VERSION = 19
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -699,6 +699,49 @@ class Database:
                 log.info("Migration 18: added parent_swarm_id to swarms")
             except Exception:
                 pass  # column already exists
+
+        if current < 19:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS gmail_categories (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT    NOT NULL UNIQUE,
+                    description TEXT    NOT NULL DEFAULT '',
+                    color       TEXT    NOT NULL DEFAULT '#6366f1',
+                    icon        TEXT    NOT NULL DEFAULT 'Tag',
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS gmail_emails (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    gmail_id      TEXT    NOT NULL UNIQUE,
+                    thread_id     TEXT    NOT NULL DEFAULT '',
+                    subject       TEXT    NOT NULL DEFAULT '',
+                    sender_name   TEXT    NOT NULL DEFAULT '',
+                    sender_email  TEXT    NOT NULL DEFAULT '',
+                    snippet       TEXT    NOT NULL DEFAULT '',
+                    category_id   INTEGER REFERENCES gmail_categories(id),
+                    is_read       INTEGER NOT NULL DEFAULT 0,
+                    is_replied    INTEGER NOT NULL DEFAULT 0,
+                    ai_classified INTEGER NOT NULL DEFAULT 0,
+                    received_at   DATETIME,
+                    last_synced   DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_gmail_emails_category
+                    ON gmail_emails(category_id);
+                CREATE INDEX IF NOT EXISTS idx_gmail_emails_received
+                    ON gmail_emails(received_at);
+
+                CREATE TABLE IF NOT EXISTS gmail_classifier_settings (
+                    key   TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT ''
+                );
+            """)
+            await self._db.execute(
+                "INSERT OR IGNORE INTO gmail_categories (name, description, color, icon) "
+                "VALUES ('Otros', 'Correos que no encajan en ninguna categoría', '#6b7280', 'Inbox')"
+            )
+            log.info("Migration 19: created gmail_classifier tables")
 
         # Save new version
         await self._db.execute(
