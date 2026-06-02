@@ -379,11 +379,21 @@ async def suggest_categories():
             max_tokens=800,
         )
         content = response.get("content", "")
-        match = _re.search(r"\[.*?\]", content, _re.DOTALL)
+        log.info("suggest_categories LLM response", content_preview=content[:200])
+
+        # Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+        clean = _re.sub(r"```(?:json)?\s*", "", content)
+        clean = _re.sub(r"```", "", clean)
+
+        # Grab the outermost [...] array (greedy so we get all items)
+        match = _re.search(r"\[[\s\S]*\]", clean)
         if not match:
-            raise HTTPException(status_code=500, detail="La IA no devolvió sugerencias válidas")
+            raise HTTPException(status_code=500, detail=f"La IA no devolvió JSON válido. Respuesta: {content[:300]}")
 
         suggestions = json.loads(match.group(0))
+        if not isinstance(suggestions, list) or len(suggestions) == 0:
+            raise HTTPException(status_code=500, detail="La IA devolvió una lista vacía")
+
         return {"suggestions": suggestions[:5]}
 
     except HTTPException:

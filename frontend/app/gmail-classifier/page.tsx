@@ -292,11 +292,15 @@ export default function GmailClassifierPage() {
                     setSuggesting(true);
                     try {
                       const res = await apiFetch('/suggest-categories', { method: 'POST' });
+                      const data = await res.json();
                       if (res.ok) {
-                        const data = await res.json();
                         setSuggestions(data.suggestions ?? []);
                         setShowSuggestions(true);
+                      } else {
+                        alert(`Error al sugerir categorías: ${data.detail ?? 'Error desconocido'}`);
                       }
+                    } catch (e) {
+                      alert('Error de conexión al sugerir categorías');
                     } finally {
                       setSuggesting(false);
                     }
