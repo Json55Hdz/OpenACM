@@ -304,6 +304,23 @@ async def update_settings(body: SettingsBody):
     return {r["key"]: r["value"] for r in rows}
 
 
+# ─── Auth Status ──────────────────────────────────────────────────────────────
+
+@router.get("/auth-status")
+async def auth_status():
+    """Check if Gmail OAuth is configured (credentials + token files exist)."""
+    from pathlib import Path
+    creds_path = Path("config/google_credentials.json")
+    token_path = Path("config/google_token.json")
+    configured = creds_path.exists()
+    has_token = token_path.exists()
+    return {
+        "configured": configured,
+        "has_token": has_token,
+        "ready": configured and has_token,
+    }
+
+
 # ─── Cron ─────────────────────────────────────────────────────────────────────
 
 @router.post("/cron")

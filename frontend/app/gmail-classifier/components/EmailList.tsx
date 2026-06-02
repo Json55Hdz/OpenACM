@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 interface Email {
   id: number;
@@ -23,69 +23,77 @@ interface EmailListProps {
 }
 
 function timeAgo(dateStr: string): string {
-  if (!dateStr) return "";
+  if (!dateStr) return '';
   try {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `hace ${mins}m`;
+    if (mins < 60) return `${mins}m`;
     const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `hace ${hrs}h`;
+    if (hrs < 24) return `${hrs}h`;
     const days = Math.floor(hrs / 24);
-    if (days < 7) return `hace ${days}d`;
-    return new Date(dateStr).toLocaleDateString("es-CO", { day: "2-digit", month: "short" });
+    if (days < 7) return `${days}d`;
+    return new Date(dateStr).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
   } catch {
-    return "";
+    return '';
   }
 }
 
 export function EmailList({ emails, selectedId, onSelect }: EmailListProps) {
   if (emails.length === 0) {
     return (
-      <div className="w-80 flex-shrink-0 border-r flex items-center justify-center text-gray-400 text-sm">
-        No hay correos
+      <div className="w-72 flex-shrink-0 border-r border-[var(--acm-border)] flex items-center justify-center text-[var(--acm-fg-4)] text-[12px]">
+        Sin correos
       </div>
     );
   }
 
   return (
-    <div className="w-80 flex-shrink-0 border-r overflow-y-auto">
-      {emails.map(email => (
-        <button
-          key={email.id}
-          onClick={() => onSelect(email)}
-          className={`w-full text-left px-4 py-3 border-b hover:bg-gray-50 transition-colors ${
-            selectedId === email.id ? "bg-blue-50 border-l-2 border-l-blue-500" : ""
-          }`}
-        >
-          <div className="flex items-start gap-2">
-            {/* Unread dot */}
-            <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${email.is_read ? "opacity-0" : "bg-blue-500"}`} />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-1">
-                <p className={`text-sm truncate ${email.is_read ? "text-gray-600" : "text-gray-900 font-semibold"}`}>
-                  {email.sender_name || email.sender_email}
+    <div className="w-72 flex-shrink-0 border-r border-[var(--acm-border)] overflow-y-auto acm-scroll">
+      {emails.map(email => {
+        const unread = !email.is_read;
+        const isSelected = selectedId === email.id;
+        return (
+          <button
+            key={email.id}
+            onClick={() => onSelect(email)}
+            className={`w-full text-left px-4 py-3 border-b border-[var(--acm-border)] transition-colors ${
+              isSelected
+                ? 'bg-[var(--acm-accent-tint)] border-l-2 border-l-[var(--acm-accent)]'
+                : 'hover:bg-[var(--acm-elev)]'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {/* Unread dot */}
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 mt-1.5 dot ${unread ? 'dot-accent' : 'bg-transparent'}`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-1 mb-0.5">
+                  <p className={`text-[12px] truncate ${unread ? 'text-[var(--acm-fg)] font-semibold' : 'text-[var(--acm-fg-2)]'}`}>
+                    {email.sender_name || email.sender_email}
+                  </p>
+                  <span className="text-[10px] text-[var(--acm-fg-4)] flex-shrink-0 mono">
+                    {timeAgo(email.received_at)}
+                  </span>
+                </div>
+                <p className={`text-[12px] truncate mb-0.5 ${unread ? 'text-[var(--acm-fg-2)] font-medium' : 'text-[var(--acm-fg-3)]'}`}>
+                  {email.subject}
                 </p>
-                <span className="text-xs text-gray-400 flex-shrink-0">{timeAgo(email.received_at)}</span>
-              </div>
-              <p className={`text-sm truncate ${email.is_read ? "text-gray-500" : "text-gray-800 font-medium"}`}>
-                {email.subject}
-              </p>
-              <p className="text-xs text-gray-400 truncate mt-0.5">{email.snippet}</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span
-                  className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: `${email.category_color}22`, color: email.category_color }}
-                >
-                  {email.category_name}
-                </span>
-                {email.is_replied === 1 && (
-                  <span className="text-xs text-green-600">↩ Respondido</span>
-                )}
+                <p className="text-[11px] text-[var(--acm-fg-4)] truncate">{email.snippet}</p>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full"
+                    style={{ background: `${email.category_color}22`, color: email.category_color }}
+                  >
+                    {email.category_name}
+                  </span>
+                  {email.is_replied === 1 && (
+                    <span className="text-[10px] text-[var(--acm-ok)]">↩ respondido</span>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        </button>
-      ))}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { Mail, MailOpen, ChevronDown } from "lucide-react";
+import { useState } from 'react';
+import { Mail, MailOpen, ChevronDown, CornerUpLeft } from 'lucide-react';
 
 interface Email {
   id: number;
@@ -30,14 +30,16 @@ interface EmailDetailProps {
 }
 
 export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply }: EmailDetailProps) {
-  const [replyText, setReplyText] = useState("");
+  const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [replySuccess, setReplySuccess] = useState(false);
+  const [replyError, setReplyError] = useState('');
 
   if (!email) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-        Selecciona un correo para ver el detalle
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--acm-fg-4)]">
+        <Mail size={32} className="opacity-30" />
+        <p className="text-[13px]">Selecciona un correo</p>
       </div>
     );
   }
@@ -45,108 +47,125 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
   const handleSendReply = async () => {
     if (!replyText.trim()) return;
     setSending(true);
+    setReplyError('');
     const ok = await onReply(email.id, replyText.trim());
     setSending(false);
     if (ok) {
-      setReplyText("");
+      setReplyText('');
       setReplySuccess(true);
       setTimeout(() => setReplySuccess(false), 3000);
+    } else {
+      setReplyError('Error al enviar. Verifica la conexión con Gmail.');
     }
   };
 
   const formattedDate = email.received_at
-    ? new Date(email.received_at).toLocaleString("es-CO", {
-        day: "2-digit", month: "long", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
+    ? new Date(email.received_at).toLocaleString('es-CO', {
+        day: '2-digit', month: 'long', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
       })
-    : "";
+    : '';
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b bg-white flex-shrink-0">
-        <h2 className="font-semibold text-gray-900 text-lg leading-tight">{email.subject}</h2>
-        <div className="flex items-center gap-2 mt-2 text-sm text-gray-500 flex-wrap">
+      <div className="px-6 py-4 border-b border-[var(--acm-border)] flex-shrink-0">
+        <h2 className="text-[15px] font-semibold text-[var(--acm-fg)] leading-snug mb-2">
+          {email.subject}
+        </h2>
+        <div className="flex items-center gap-3 text-[12px] text-[var(--acm-fg-3)] flex-wrap">
           <span>
-            De: <span className="text-gray-700 font-medium">{email.sender_name || email.sender_email}</span>
+            De:{' '}
+            <span className="text-[var(--acm-fg-2)] font-medium">
+              {email.sender_name || email.sender_email}
+            </span>
           </span>
-          <span className="text-gray-400">&lt;{email.sender_email}&gt;</span>
-          <span className="ml-auto text-xs">{formattedDate}</span>
+          <span className="text-[var(--acm-fg-4)]">&lt;{email.sender_email}&gt;</span>
+          <span className="ml-auto mono text-[11px] text-[var(--acm-fg-4)]">{formattedDate}</span>
         </div>
       </div>
 
-      {/* Body / snippet */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
-        <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{email.snippet}</p>
-        <p className="text-xs text-gray-400 mt-4 italic">
-          (Vista previa del correo — abre Gmail para ver el mensaje completo)
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto acm-scroll px-6 py-4">
+        <p className="text-[13px] text-[var(--acm-fg-2)] leading-relaxed whitespace-pre-wrap">
+          {email.snippet}
+        </p>
+        <p className="text-[11px] text-[var(--acm-fg-4)] mt-4 italic">
+          Vista previa — abre Gmail para ver el mensaje completo
         </p>
       </div>
 
-      {/* Controls */}
-      <div className="px-6 py-3 border-t bg-gray-50 flex items-center gap-3 flex-wrap flex-shrink-0">
-        {/* Category selector */}
+      {/* Controls bar */}
+      <div className="px-6 py-3 border-t border-[var(--acm-border)] bg-[var(--acm-elev)] flex items-center gap-2 flex-wrap flex-shrink-0">
+        {/* Category dropdown */}
         <div className="relative">
           <select
             value={email.category_id}
             onChange={e => onRecategorize(email.id, Number(e.target.value))}
-            className="text-sm border rounded px-3 py-1.5 pr-7 text-gray-700 bg-white appearance-none cursor-pointer"
+            className="bg-[var(--acm-card)] border border-[var(--acm-border)] text-[var(--acm-fg-2)] text-[12px] rounded-[var(--acm-radius)] px-3 py-1.5 pr-7 appearance-none outline-none focus:border-[var(--acm-accent)] transition-colors cursor-pointer"
           >
             {categories.map(c => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
-          <ChevronDown size={12} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
+          <ChevronDown size={11} className="absolute right-2 top-2 text-[var(--acm-fg-4)] pointer-events-none" />
         </div>
 
         {/* Read toggle */}
         {email.is_read ? (
           <button
             onClick={() => onReadToggle(email.id, false)}
-            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-blue-600 px-2 py-1.5 rounded hover:bg-blue-50 transition-colors"
+            className="btn-secondary text-[11px] py-[5px] px-2.5"
           >
-            <Mail size={14} /> Marcar no leído
+            <Mail size={12} /> No leído
           </button>
         ) : (
           <button
             onClick={() => onReadToggle(email.id, true)}
-            className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-green-600 px-2 py-1.5 rounded hover:bg-green-50 transition-colors"
+            className="btn-secondary text-[11px] py-[5px] px-2.5"
           >
-            <MailOpen size={14} /> Marcar leído
+            <MailOpen size={12} /> Leído
           </button>
         )}
 
         {email.is_replied === 1 && (
-          <span className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">
-            ↩ Respondido
+          <span className="text-[11px] text-[var(--acm-ok)] flex items-center gap-1">
+            <span className="dot dot-ok" />
+            Respondido
           </span>
         )}
       </div>
 
       {/* Reply composer */}
-      <div className="px-6 py-4 border-t bg-white flex-shrink-0">
-        <p className="text-xs text-gray-500 mb-2">
-          Responder a: <span className="font-medium">{email.sender_email}</span>
-        </p>
+      <div className="px-6 py-4 border-t border-[var(--acm-border)] flex-shrink-0">
+        <div className="flex items-center gap-2 mb-2">
+          <CornerUpLeft size={12} className="text-[var(--acm-fg-4)]" />
+          <p className="text-[11px] text-[var(--acm-fg-4)]">
+            Responder a <span className="text-[var(--acm-fg-3)]">{email.sender_email}</span>
+          </p>
+        </div>
         <textarea
           value={replyText}
           onChange={e => setReplyText(e.target.value)}
-          placeholder="Escribe tu respuesta..."
+          placeholder="Escribe tu respuesta…"
           rows={4}
-          className="w-full border rounded px-3 py-2 text-sm text-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[13px] rounded-[var(--acm-radius)] px-3 py-2 resize-none outline-none focus:border-[var(--acm-accent)] transition-colors placeholder:text-[var(--acm-fg-4)]"
         />
         <div className="flex items-center justify-between mt-2">
-          {replySuccess ? (
-            <span className="text-sm text-green-600 font-medium">✓ Respuesta enviada</span>
-          ) : (
-            <span />
-          )}
+          <div>
+            {replySuccess && (
+              <span className="text-[12px] text-[var(--acm-ok)]">✓ Respuesta enviada</span>
+            )}
+            {replyError && (
+              <span className="text-[12px] text-[var(--acm-err)]">{replyError}</span>
+            )}
+          </div>
           <button
             onClick={handleSendReply}
             disabled={sending || !replyText.trim()}
-            className="bg-blue-600 text-white text-sm px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="btn-primary text-[12px] py-[7px] px-3"
           >
-            {sending ? "Enviando..." : "Enviar respuesta"}
+            {sending ? 'Enviando…' : 'Enviar'}
           </button>
         </div>
       </div>

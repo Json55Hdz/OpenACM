@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 interface ProcessingProgressProps {
   processed: number;
@@ -12,21 +12,23 @@ export function ProcessingProgress({ processed, total, running }: ProcessingProg
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 flex items-center gap-3">
+    <div className="flex items-center gap-3">
       <div className="flex-1">
-        <div className="flex justify-between text-xs text-blue-700 mb-1">
-          <span>{running ? "Clasificando correos..." : "Clasificación completada"}</span>
-          <span>{processed} / {total} correos</span>
+        <div className="flex justify-between text-[11px] text-[var(--acm-fg-3)] mb-1">
+          <span className="text-[var(--acm-fg-2)]">
+            {running ? 'Clasificando correos…' : 'Clasificación completada'}
+          </span>
+          <span className="mono">{processed} / {total}</span>
         </div>
-        <div className="w-full bg-blue-200 rounded-full h-1.5">
+        <div className="w-full bg-[var(--acm-elev)] rounded-full h-1">
           <div
-            className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-            style={{ width: `${pct}%` }}
+            className="h-1 rounded-full transition-all duration-300"
+            style={{ width: `${pct}%`, background: 'var(--acm-accent)' }}
           />
         </div>
       </div>
       {!running && (
-        <span className="text-green-600 text-sm font-medium">✓ Listo</span>
+        <span className="text-[11px] text-[var(--acm-ok)] font-medium flex-shrink-0">✓ Listo</span>
       )}
     </div>
   );

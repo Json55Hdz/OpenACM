@@ -1,7 +1,6 @@
-"use client";
+'use client';
 
-import * as Icons from "lucide-react";
-import { Plus } from "lucide-react";
+import { Plus } from 'lucide-react';
 
 interface Category {
   id: number;
@@ -18,65 +17,71 @@ interface CategoryTabsProps {
   onManage: () => void;
 }
 
-function CategoryIcon({ iconName, color }: { iconName: string; color: string }) {
-  const LucideIcon = (Icons as any)[iconName] ?? Icons.Tag;
-  return <LucideIcon size={14} style={{ color }} />;
-}
-
 export function CategoryTabs({ categories, selectedId, onSelect, onManage }: CategoryTabsProps) {
   const totalCount = categories.reduce((sum, c) => sum + c.email_count, 0);
 
   return (
-    <div className="flex items-center gap-1 px-4 py-2 border-b overflow-x-auto bg-white">
+    <div className="flex items-center gap-0.5 px-4 py-2 overflow-x-auto">
       {/* Todo tab */}
       <button
         onClick={() => onSelect(null)}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition-colors ${
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--acm-radius)] text-[12px] font-medium whitespace-nowrap transition-colors ${
           selectedId === null
-            ? "bg-gray-900 text-white"
-            : "text-gray-600 hover:bg-gray-100"
+            ? 'acm-active-pill'
+            : 'text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] hover:bg-[var(--acm-elev)]'
         }`}
       >
         Todo
         {totalCount > 0 && (
-          <span className={`text-xs px-1.5 rounded-full ${selectedId === null ? "bg-white/20 text-white" : "bg-gray-200 text-gray-600"}`}>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full mono ${
+            selectedId === null
+              ? 'bg-black/20 text-[oklch(0.18_0.015_80)]'
+              : 'bg-[var(--acm-elev)] text-[var(--acm-fg-3)]'
+          }`}>
             {totalCount}
           </span>
         )}
       </button>
 
       {/* Category tabs */}
-      {categories.map(cat => (
-        <button
-          key={cat.id}
-          onClick={() => onSelect(cat.id)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition-colors ${
-            selectedId === cat.id ? "text-white" : "text-gray-600 hover:bg-gray-100"
-          }`}
-          style={selectedId === cat.id ? { backgroundColor: cat.color } : undefined}
-        >
-          <CategoryIcon iconName={cat.icon} color={selectedId === cat.id ? "white" : cat.color} />
-          {cat.name}
-          {cat.email_count > 0 && (
+      {categories.map(cat => {
+        const isActive = selectedId === cat.id;
+        return (
+          <button
+            key={cat.id}
+            onClick={() => onSelect(cat.id)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--acm-radius)] text-[12px] font-medium whitespace-nowrap transition-colors ${
+              isActive
+                ? 'text-[var(--acm-base)]'
+                : 'text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] hover:bg-[var(--acm-elev)]'
+            }`}
+            style={isActive ? { backgroundColor: cat.color } : undefined}
+          >
             <span
-              className="text-xs px-1.5 rounded-full"
-              style={{
-                backgroundColor: selectedId === cat.id ? "rgba(255,255,255,0.25)" : `${cat.color}22`,
-                color: selectedId === cat.id ? "white" : cat.color,
-              }}
-            >
-              {cat.email_count}
-            </span>
-          )}
-        </button>
-      ))}
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ backgroundColor: isActive ? 'rgba(255,255,255,0.6)' : cat.color }}
+            />
+            {cat.name}
+            {cat.email_count > 0 && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded-full mono"
+                style={isActive
+                  ? { background: 'rgba(0,0,0,0.15)', color: 'inherit' }
+                  : { background: `${cat.color}22`, color: cat.color }}
+              >
+                {cat.email_count}
+              </span>
+            )}
+          </button>
+        );
+      })}
 
-      {/* Add / manage categories */}
+      {/* Add category */}
       <button
         onClick={onManage}
-        className="flex items-center gap-1 px-2 py-1.5 rounded-full text-sm text-gray-500 hover:bg-gray-100 whitespace-nowrap ml-1"
+        className="flex items-center gap-1 px-3 py-1.5 rounded-[var(--acm-radius)] text-[12px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-2)] hover:bg-[var(--acm-elev)] whitespace-nowrap transition-colors ml-1"
       >
-        <Plus size={14} />
+        <Plus size={12} />
         Nueva
       </button>
     </div>
