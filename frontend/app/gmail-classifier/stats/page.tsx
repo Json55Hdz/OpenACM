@@ -14,7 +14,10 @@ import { AutoReplyChart } from './components/AutoReplyChart';
 const API = '/api/gmail-classifier';
 
 function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export type StatsData = {
@@ -142,12 +145,6 @@ export default function StatsPage() {
             Cargando estadísticas...
           </div>
         )}
-        {!loading && !stats && !error && (
-          <div className="text-center py-20 text-[var(--acm-fg-3)] text-sm">
-            Selecciona un rango y haz clic en Aplicar.
-          </div>
-        )}
-
         {!loading && stats && (
           <div className="charts-container space-y-6">
             <KpiCards stats={stats} />
