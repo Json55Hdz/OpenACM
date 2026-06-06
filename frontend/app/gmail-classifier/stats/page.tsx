@@ -5,6 +5,11 @@ import Link from 'next/link';
 import { ArrowLeft, Download, Printer } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 import { AppLayout } from '@/components/layout/app-layout';
+import { KpiCards } from './components/KpiCards';
+import { VolumeChart } from './components/VolumeChart';
+import { CategoryChart } from './components/CategoryChart';
+import { TopSendersChart } from './components/TopSendersChart';
+import { AutoReplyChart } from './components/AutoReplyChart';
 
 const API = '/api/gmail-classifier';
 
@@ -143,12 +148,17 @@ export default function StatsPage() {
           </div>
         )}
 
-        {/* Charts placeholder — filled in Task 4 */}
         {!loading && stats && (
           <div className="charts-container space-y-6">
-            <p className="text-sm text-[var(--acm-fg-3)]">
-              {stats.period.total_emails} emails del {stats.period.from} al {stats.period.to}
-            </p>
+            <KpiCards stats={stats} />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <VolumeChart data={stats.volume_by_day} />
+              <CategoryChart data={stats.by_category} />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <TopSendersChart data={stats.top_senders} />
+              <AutoReplyChart data={stats.autoreply} />
+            </div>
           </div>
         )}
       </div>
