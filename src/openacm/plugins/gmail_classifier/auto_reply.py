@@ -10,8 +10,8 @@ import structlog
 log = structlog.get_logger()
 
 NOREPLY_PATTERNS = (
-    "noreply@", "no-reply@", "donotreply@",
-    "notifications@", "mailer-daemon@", "bounce@",
+    "noreply", "no-reply", "donotreply",
+    "notifications", "mailer-daemon", "bounce",
 )
 
 
@@ -22,8 +22,8 @@ class AutoReplyGenerator:
         self._authed_email = authed_email
 
     def _is_noreply(self, sender_email: str) -> bool:
-        e = (sender_email or "").lower().strip()
-        return any(e.startswith(p) for p in NOREPLY_PATTERNS)
+        local = (sender_email or "").lower().split("@")[0]
+        return any(p in local for p in NOREPLY_PATTERNS)
 
     async def _get_authed_email(self) -> str:
         if self._authed_email:
