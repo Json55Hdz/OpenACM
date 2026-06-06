@@ -74,8 +74,13 @@ Write-Host "[OK] Python 3.12 ready." -ForegroundColor Green
 # ── 3. Check Visual C++ Build Tools (needed for some native deps) ───────────
 # We don't hard-fail because most modern wheels are precompiled, but we warn
 # loudly so a later 'uv pip install' failure makes sense to the user.
+# Note: PowerShell 5.1 chokes on ${env:ProgramFiles(x86)} (parens inside the
+# variable curly braces break the parser), so we read these via [Environment].
 $buildToolsFound = $false
-$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$progFiles    = [Environment]::GetEnvironmentVariable("ProgramFiles")
+$progFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+
+$vswhere = Join-Path $progFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
 if (Test-Path $vswhere) {
     $vc = & $vswhere -latest -products * `
         -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
@@ -85,12 +90,12 @@ if (Test-Path $vswhere) {
 # Fallback heuristics
 if (-not $buildToolsFound) {
     $vsRoots = @(
-        "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC",
-        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VC",
-        "${env:ProgramFiles}\Microsoft Visual Studio\2019\BuildTools\VC",
-        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools\VC"
+        (Join-Path $progFiles    "Microsoft Visual Studio\2022\BuildTools\VC"),
+        (Join-Path $progFilesX86 "Microsoft Visual Studio\2022\BuildTools\VC"),
+        (Join-Path $progFiles    "Microsoft Visual Studio\2019\BuildTools\VC"),
+        (Join-Path $progFilesX86 "Microsoft Visual Studio\2019\BuildTools\VC")
     )
-    foreach ($r in $vsRoots) { if (Test-Path $r) { $buildToolsFound = $true; break } }
+    foreach ($r in $vsRoots) { if ($r -and (Test-Path $r)) { $buildToolsFound = $true; break } }
 }
 
 if (-not $buildToolsFound) {
