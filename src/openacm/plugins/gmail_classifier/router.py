@@ -879,3 +879,28 @@ async def get_stats(from_date: str, to_date: str):
         raise HTTPException(status_code=400, detail="from_date must be <= to_date")
     from openacm.plugins.gmail_classifier.stats import compute_stats
     return await compute_stats(db, from_date, to_date)
+
+
+@router.get("/export/excel")
+async def export_excel(from_date: str, to_date: str):
+    """Generate and return an Excel report for the given date range."""
+    import datetime
+    try:
+        datetime.date.fromisoformat(from_date)
+        datetime.date.fromisoformat(to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must be <= to_date")
+    db = _require_db()
+    from fastapi.responses import StreamingResponse
+    from openacm.plugins.gmail_classifier.stats import compute_stats
+    from openacm.plugins.gmail_classifier.excel_export import generate_excel
+    stats = await compute_stats(db, from_date, to_date)
+    buf = generate_excel(stats, from_date, to_date)
+    filename = f"gmail_stats_{from_date}_{to_date}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
