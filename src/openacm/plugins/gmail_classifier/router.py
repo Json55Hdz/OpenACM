@@ -475,13 +475,33 @@ async def save_draft(email_id: int, body: DraftBody):
         from openacm.tools.google_services import _get_google_service
         service = await _get_google_service("gmail", "v1")
 
+        # Fetch the original message to get threadId and Message-ID header
+        # so the draft appears inside the existing conversation, not as a new one.
+        orig = service.users().messages().get(
+            userId="me", id=row["gmail_id"], format="metadata",
+            metadataHeaders=["Message-ID"],
+        ).execute()
+        thread_id = orig.get("threadId", "")
+        orig_message_id = next(
+            (h["value"] for h in orig.get("payload", {}).get("headers", [])
+             if h["name"] == "Message-ID"),
+            "",
+        )
+
         subject = row["subject"]
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
         message = MIMEText(body.body)
         message["to"] = row["sender_email"]
         message["subject"] = subject
+        if orig_message_id:
+            message["In-Reply-To"] = orig_message_id
+            message["References"] = orig_message_id
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        draft_msg: dict = {"raw": raw}
+        if thread_id:
+            draft_msg["threadId"] = thread_id
 
         existing = await db._db.execute(
             "SELECT gmail_draft_id FROM gmail_reply_drafts WHERE email_id = ?", (email_id,)
@@ -492,11 +512,11 @@ async def save_draft(email_id: int, body: DraftBody):
             draft = service.users().drafts().update(
                 userId="me",
                 id=existing_row["gmail_draft_id"],
-                body={"message": {"raw": raw}},
+                body={"message": draft_msg},
             ).execute()
         else:
             draft = service.users().drafts().create(
-                userId="me", body={"message": {"raw": raw}}
+                userId="me", body={"message": draft_msg}
             ).execute()
 
         draft_id = draft.get("id", "")
