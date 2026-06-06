@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink, ChevronUp } from 'lucide-react';
 
 interface Email {
@@ -103,16 +103,22 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
   const [suggestionError, setSuggestionError] = useState<string | null>(null)
   const [savingDraft, setSavingDraft] = useState(false)
   const [draftSaved, setDraftSaved] = useState(false)
+  // Session cache: keeps generated suggestions in RAM so switching emails
+  // and coming back doesn't cost another LLM call.
+  const suggestionCache = useRef<Map<number, string>>(new Map())
 
   useEffect(() => {
-    // Reset all suggestion state whenever the email changes
-    setReplyText('')
+    // Load from cache immediately to avoid flash of empty state
+    const cached = email ? suggestionCache.current.get(email.id) : undefined
+    setReplyText(cached ?? '')
     setDraftSaved(false)
     setSuggestionError(null)
 
     if (!email || !autoReplyCategoryIds || !token) return
     const categoryEnabled = autoReplyCategoryIds.includes(email.category_id)
     if (!categoryEnabled) return
+    // Cache hit — no LLM call needed
+    if (cached !== undefined) return
 
     let timedOut = false
     const controller = new AbortController()
@@ -130,6 +136,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       .then(r => r.json())
       .then(data => {
         if (data.eligible && data.body) {
+          suggestionCache.current.set(email.id, data.body)
           setReplyText(data.body)
           setDraftSaved(data.from_draft ?? false)
         }
