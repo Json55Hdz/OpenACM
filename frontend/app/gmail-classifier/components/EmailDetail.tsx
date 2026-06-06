@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink, ChevronUp } from 'lucide-react';
 
 interface Email {
@@ -31,6 +31,9 @@ interface EmailDetailProps {
   onReadToggle: (emailId: number, isRead: boolean) => void;
   onRecategorize: (emailId: number, categoryId: number) => void;
   onReply: (emailId: number, body: string) => Promise<boolean>;
+  autoReplyCategoryIds?: number[]
+  token?: string
+  suggestionTimeoutMs?: number
 }
 
 // Inject base styles into HTML emails so they render cleanly in the iframe
@@ -91,12 +94,73 @@ function PlainTextBody({ text }: { text: string }) {
   );
 }
 
-export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply }: EmailDetailProps) {
+export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply, autoReplyCategoryIds, token, suggestionTimeoutMs }: EmailDetailProps) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [replySuccess, setReplySuccess] = useState(false);
   const [replyError, setReplyError] = useState('');
+  const [suggestionLoading, setSuggestionLoading] = useState(false)
+  const [suggestionError, setSuggestionError] = useState<string | null>(null)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [draftSaved, setDraftSaved] = useState(false)
+  // Session cache: keeps generated suggestions in RAM so switching emails
+  // and coming back doesn't cost another LLM call.
+  const suggestionCache = useRef<Map<number, string>>(new Map())
+
+  useEffect(() => {
+    // Load from cache immediately to avoid flash of empty state
+    const cached = email ? suggestionCache.current.get(email.id) : undefined
+    setReplyText(cached ?? '')
+    setDraftSaved(false)
+    setSuggestionError(null)
+
+    if (!email || !autoReplyCategoryIds || !token) return
+    const categoryEnabled = autoReplyCategoryIds.includes(email.category_id)
+    if (!categoryEnabled) return
+    // Cache hit — no LLM call needed
+    if (cached !== undefined) return
+
+    let timedOut = false
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, suggestionTimeoutMs ?? 60000)
+    setSuggestionLoading(true)
+    setSuggestionError(null)
+
+    fetch(`/api/gmail-classifier/emails/${email.id}/suggest-reply`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.eligible && data.body) {
+          suggestionCache.current.set(email.id, data.body)
+          setReplyText(data.body)
+          setDraftSaved(data.from_draft ?? false)
+        }
+      })
+      .catch(err => {
+        if (err.name === 'AbortError' && !timedOut) return  // cleanup abort — ignore
+        const timeoutSecs = Math.round((suggestionTimeoutMs ?? 60000) / 1000)
+        const msg = timedOut
+          ? `Tiempo de espera agotado (${timeoutSecs}s)`
+          : `Error: ${err?.message || 'desconocido'}`
+        console.error('[autoreply] suggest-reply error:', err)
+        setSuggestionError(msg)
+      })
+      .finally(() => {
+        setSuggestionLoading(false)
+        clearTimeout(timeoutId)
+      })
+
+    return () => {
+      controller.abort()
+      clearTimeout(timeoutId)
+    }
+  }, [email?.id, autoReplyCategoryIds, token])
 
   const handleSendReply = async () => {
     if (!replyText.trim()) return;
@@ -236,6 +300,22 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
         </button>
       </div>
 
+      {/* Auto-reply feedback — visible immediately when email opens */}
+      {suggestionLoading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 px-6 pt-2">
+          <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+          Generando respuesta...
+        </div>
+      )}
+      {!suggestionLoading && replyText && autoReplyCategoryIds?.includes(email.category_id) && (
+        <div className="px-6 pt-2">
+          <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Sugerencia IA ✦</span>
+        </div>
+      )}
+      {suggestionError && (
+        <p className="text-xs text-gray-400 dark:text-gray-500 px-6 pt-2">{suggestionError}</p>
+      )}
+
       {/* ── Reply composer (collapsible) ───────────────────── */}
       {replyOpen && (
         <div className="px-6 py-4 border-t border-[var(--acm-border)] flex-shrink-0 bg-[var(--acm-base)]">
@@ -256,6 +336,28 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
             <div className="flex gap-2">
               <button onClick={() => setReplyOpen(false)} className="btn-secondary text-[12px] py-[6px] px-3">
                 Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!token) return
+                  setSavingDraft(true)
+                  try {
+                    const res = await fetch(`/api/gmail-classifier/emails/${email.id}/draft`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ body: replyText }),
+                    })
+                    if (res.ok) {
+                      setDraftSaved(true)
+                    }
+                  } finally {
+                    setSavingDraft(false)
+                  }
+                }}
+                disabled={savingDraft || !replyText.trim()}
+                className="btn-secondary text-[12px] py-[6px] px-3"
+              >
+                {savingDraft ? 'Guardando...' : draftSaved ? 'Borrador guardado ✓' : 'Guardar como borrador'}
               </button>
               <button
                 onClick={handleSendReply}

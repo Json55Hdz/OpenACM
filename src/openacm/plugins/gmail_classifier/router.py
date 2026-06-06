@@ -19,6 +19,8 @@ router = APIRouter(prefix="/gmail-classifier", tags=["gmail-classifier"])
 # Set by GmailClassifierPlugin.on_start()
 _db: Any = None
 _processor: Any = None
+_auto_reply: Any = None
+_learning: Any = None
 
 
 def _require_db():
@@ -31,6 +33,18 @@ def _require_processor():
     if _processor is None:
         raise HTTPException(status_code=503, detail="Gmail Classifier processor not initialized")
     return _processor
+
+
+def _require_auto_reply():
+    if _auto_reply is None:
+        raise HTTPException(status_code=503, detail="AutoReply not initialized")
+    return _auto_reply
+
+
+def _require_learning():
+    if _learning is None:
+        raise HTTPException(status_code=503, detail="ReplyLearning not initialized")
+    return _learning
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────────
@@ -118,6 +132,18 @@ class SettingsBody(BaseModel):
     auto_apply_label: str | None = None
     cron_schedule: str | None = None
     since_date_default: str | None = None
+    autoreply_enabled_categories: str | None = None
+    autoreply_model: str | None = None
+    autoreply_timeout_seconds: int | None = None
+
+
+class DraftBody(BaseModel):
+    body: str
+
+
+class ReplyExampleUpdate(BaseModel):
+    subtype_label: str | None = None
+    final_response: str | None = None
 
 
 class CronBody(BaseModel):
@@ -411,11 +437,201 @@ async def reply_email(email_id: int, body: ReplyBody):
             "UPDATE gmail_emails SET is_replied = 1, is_read = 1 WHERE id = ?", (email_id,)
         )
         await db._db.commit()
+        try:
+            if _learning:
+                await _learning.learn(email_id=email_id, final_body=body.body)
+        except Exception as exc:
+            log.warning("AutoReply learning failed on send", error=str(exc))
         return {"success": True, "to": row["sender_email"]}
 
     except Exception as exc:
         log.error("Failed to send reply", email_id=email_id, error=str(exc))
         raise HTTPException(status_code=500, detail=f"Failed to send reply: {exc}")
+
+
+# ─── Auto-reply ───────────────────────────────────────────────────────────────
+
+@router.get("/emails/{email_id}/suggest-reply")
+async def suggest_reply(email_id: int):
+    gen = _require_auto_reply()
+    result = await gen.generate(email_id=email_id)
+    if result is None:
+        return {"eligible": False}
+    return {"eligible": True, **result}
+
+
+@router.post("/emails/{email_id}/draft")
+async def save_draft(email_id: int, body: DraftBody):
+    db = _require_db()
+    learning = _require_learning()
+
+    cursor = await db._db.execute(
+        "SELECT gmail_id, subject, sender_email FROM gmail_emails WHERE id = ?", (email_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    try:
+        from openacm.tools.google_services import _get_google_service
+        service = await _get_google_service("gmail", "v1")
+
+        # Fetch the original message to get threadId and Message-ID header
+        # so the draft appears inside the existing conversation, not as a new one.
+        orig = service.users().messages().get(
+            userId="me", id=row["gmail_id"], format="metadata",
+            metadataHeaders=["Message-ID"],
+        ).execute()
+        thread_id = orig.get("threadId", "")
+        orig_message_id = next(
+            (h["value"] for h in orig.get("payload", {}).get("headers", [])
+             if h["name"] == "Message-ID"),
+            "",
+        )
+
+        subject = row["subject"]
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+        message = MIMEText(body.body)
+        message["to"] = row["sender_email"]
+        message["subject"] = subject
+        if orig_message_id:
+            message["In-Reply-To"] = orig_message_id
+            message["References"] = orig_message_id
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+        draft_msg: dict = {"raw": raw}
+        if thread_id:
+            draft_msg["threadId"] = thread_id
+
+        existing = await db._db.execute(
+            "SELECT gmail_draft_id FROM gmail_reply_drafts WHERE email_id = ?", (email_id,)
+        )
+        existing_row = await existing.fetchone()
+
+        if existing_row and existing_row["gmail_draft_id"]:
+            draft = service.users().drafts().update(
+                userId="me",
+                id=existing_row["gmail_draft_id"],
+                body={"message": draft_msg},
+            ).execute()
+        else:
+            draft = service.users().drafts().create(
+                userId="me", body={"message": draft_msg}
+            ).execute()
+
+        draft_id = draft.get("id", "")
+        await db._db.execute(
+            "INSERT INTO gmail_reply_drafts (email_id, gmail_draft_id, draft_body) "
+            "VALUES (?, ?, ?) ON CONFLICT(email_id) DO UPDATE SET "
+            "gmail_draft_id = excluded.gmail_draft_id, "
+            "draft_body = excluded.draft_body, "
+            "updated_at = CURRENT_TIMESTAMP",
+            (email_id, draft_id, body.body),
+        )
+        await db._db.commit()
+        try:
+            await learning.learn(email_id=email_id, final_body=body.body)
+        except Exception as exc:
+            log.warning("AutoReply learning failed on draft save", error=str(exc))
+        return {"success": True, "draft_id": draft_id}
+
+    except Exception as exc:
+        log.error("Failed to save draft", email_id=email_id, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"Failed to save draft: {exc}")
+
+
+@router.delete("/emails/{email_id}/draft")
+async def delete_draft(email_id: int):
+    db = _require_db()
+    cursor = await db._db.execute(
+        "SELECT gmail_draft_id FROM gmail_reply_drafts WHERE email_id = ?", (email_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No draft found for this email")
+
+    try:
+        from openacm.tools.google_services import _get_google_service
+        service = await _get_google_service("gmail", "v1")
+        if row["gmail_draft_id"]:
+            service.users().drafts().delete(
+                userId="me", id=row["gmail_draft_id"]
+            ).execute()
+    except Exception as exc:
+        log.warning("Failed to delete Gmail draft", error=str(exc))
+
+    await db._db.execute("DELETE FROM gmail_reply_drafts WHERE email_id = ?", (email_id,))
+    await db._db.commit()
+    return {"deleted": True}
+
+
+# ─── Reply examples ──────────────────────────────────────────────────────────
+
+@router.get("/reply-examples")
+async def list_reply_examples(category_id: int | None = None):
+    db = _require_db()
+    if category_id is not None:
+        cursor = await db._db.execute(
+            "SELECT id, category_id, subtype_label, email_context, "
+            "final_response, use_count, created_at "
+            "FROM gmail_reply_examples WHERE category_id = ? ORDER BY use_count DESC",
+            (category_id,),
+        )
+    else:
+        cursor = await db._db.execute(
+            "SELECT id, category_id, subtype_label, email_context, "
+            "final_response, use_count, created_at "
+            "FROM gmail_reply_examples ORDER BY use_count DESC"
+        )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.put("/reply-examples/{example_id}")
+async def update_reply_example(example_id: int, body: ReplyExampleUpdate):
+    db = _require_db()
+    cursor = await db._db.execute(
+        "SELECT id FROM gmail_reply_examples WHERE id = ?", (example_id,)
+    )
+    if not await cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Example not found")
+
+    updates: list[str] = []
+    params: list = []
+    if body.subtype_label is not None:
+        updates.append("subtype_label = ?")
+        params.append(body.subtype_label)
+    if body.final_response is not None:
+        updates.append("final_response = ?")
+        params.append(body.final_response)
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(example_id)
+    await db._db.execute(
+        f"UPDATE gmail_reply_examples SET {', '.join(updates)} WHERE id = ?", params
+    )
+    await db._db.commit()
+    cursor2 = await db._db.execute(
+        "SELECT id, category_id, subtype_label, email_context, final_response, use_count "
+        "FROM gmail_reply_examples WHERE id = ?", (example_id,)
+    )
+    return dict(await cursor2.fetchone())
+
+
+@router.delete("/reply-examples/{example_id}")
+async def delete_reply_example(example_id: int):
+    db = _require_db()
+    cursor = await db._db.execute(
+        "SELECT id FROM gmail_reply_examples WHERE id = ?", (example_id,)
+    )
+    if not await cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Example not found")
+    await db._db.execute("DELETE FROM gmail_reply_examples WHERE id = ?", (example_id,))
+    await db._db.commit()
+    return {"deleted": True, "id": example_id}
 
 
 # ─── Processing ───────────────────────────────────────────────────────────────
@@ -646,3 +862,46 @@ async def delete_cron():
     if PLUGIN._cron_task and not PLUGIN._cron_task.done():
         PLUGIN._cron_task.cancel()
     return {"cron_schedule": ""}
+
+
+# ─── Stats ───────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_stats(from_date: str, to_date: str):
+    """Return aggregated email stats for the given inclusive date range."""
+    try:
+        import datetime
+        datetime.date.fromisoformat(from_date)
+        datetime.date.fromisoformat(to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    db = _require_db()
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must be <= to_date")
+    from openacm.plugins.gmail_classifier.stats import compute_stats
+    return await compute_stats(db, from_date, to_date)
+
+
+@router.get("/export/excel")
+async def export_excel(from_date: str, to_date: str):
+    """Generate and return an Excel report for the given date range."""
+    import datetime
+    try:
+        datetime.date.fromisoformat(from_date)
+        datetime.date.fromisoformat(to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must be <= to_date")
+    db = _require_db()
+    from fastapi.responses import StreamingResponse
+    from openacm.plugins.gmail_classifier.stats import compute_stats
+    from openacm.plugins.gmail_classifier.excel_export import generate_excel
+    stats = await compute_stats(db, from_date, to_date)
+    buf = generate_excel(stats, from_date, to_date)
+    filename = f"gmail_stats_{from_date}_{to_date}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles } from 'lucide-react';
+import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles, BarChart3 } from 'lucide-react';
+import Link from 'next/link';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
 import { CategoryTabs } from './components/CategoryTabs';
@@ -145,6 +146,8 @@ export default function GmailClassifierPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const [autoReplyCategoryIds, setAutoReplyCategoryIds] = useState<number[]>([]);
+  const [suggestionTimeoutMs, setSuggestionTimeoutMs] = useState<number>(60000);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -165,6 +168,13 @@ export default function GmailClassifierPage() {
       if (res.ok) {
         const s = await res.json();
         if (s.since_date_default) setSinceDate(s.since_date_default);
+        const cats = s?.autoreply_enabled_categories;
+        try {
+          const parsed = cats ? JSON.parse(cats) : [];
+          if (Array.isArray(parsed)) setAutoReplyCategoryIds(parsed);
+        } catch { /* malformed setting — keep default [] */ }
+        const timeoutSecs = parseInt(s?.autoreply_timeout_seconds ?? '60', 10);
+        if (!isNaN(timeoutSecs) && timeoutSecs > 0) setSuggestionTimeoutMs(timeoutSecs * 1000);
       }
     } catch { /* ignore */ }
   }, [apiFetch]);
@@ -396,6 +406,13 @@ export default function GmailClassifierPage() {
                   <Sparkles size={13} className={suggesting ? 'animate-pulse' : ''} />
                   {suggesting ? 'Analizando…' : 'Sugerir'}
                 </button>
+                <Link
+                  href="/gmail-classifier/stats"
+                  className="btn-secondary text-[12px] py-[7px] px-3 flex items-center gap-1"
+                  title="Estadísticas"
+                >
+                  <BarChart3 size={13} />
+                </Link>
                 <button
                   onClick={() => setShowSettings(true)}
                   className="btn-secondary text-[12px] py-[7px] px-3"
@@ -447,6 +464,9 @@ export default function GmailClassifierPage() {
                 onReadToggle={handleEmailRead}
                 onRecategorize={handleRecategorize}
                 onReply={handleReply}
+                autoReplyCategoryIds={autoReplyCategoryIds}
+                token={token ?? undefined}
+                suggestionTimeoutMs={suggestionTimeoutMs}
               />
             </div>
           </>
@@ -462,7 +482,12 @@ export default function GmailClassifierPage() {
           />
         )}
         {showSettings && (
-          <PluginSettings token={token ?? ''} onClose={() => setShowSettings(false)} />
+          <PluginSettings
+            token={token ?? ''}
+            onClose={() => setShowSettings(false)}
+            onAutoReplyChange={setAutoReplyCategoryIds}
+            onAutoReplyTimeoutChange={(secs) => setSuggestionTimeoutMs(secs * 1000)}
+          />
         )}
 
         {showSuggestions && (

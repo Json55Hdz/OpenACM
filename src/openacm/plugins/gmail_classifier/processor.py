@@ -325,6 +325,7 @@ class GmailBatchProcessor:
 
                 # Determine is_replied: check if last message in thread was from auth user
                 is_replied = 0
+                last_email = ""
                 try:
                     thread = service.users().threads().get(
                         userId="me", id=thread_id, format="metadata",
@@ -352,6 +353,7 @@ class GmailBatchProcessor:
                     "body_html": body_html,
                     "is_read": is_read,
                     "is_replied": is_replied,
+                    "thread_last_sender_email": last_email,
                     "received_at": _internaldate_to_iso(msg.get("internalDate", "0")),
                 })
                 await asyncio.sleep(0.05)  # Gmail API rate limiting
@@ -509,8 +511,8 @@ class GmailBatchProcessor:
                 """
                 INSERT INTO gmail_emails
                     (gmail_id, thread_id, subject, sender_name, sender_email,
-                     snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                     snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, thread_last_sender_email, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(gmail_id) DO UPDATE SET
                     thread_id     = excluded.thread_id,
                     subject       = excluded.subject,
@@ -523,6 +525,7 @@ class GmailBatchProcessor:
                                          THEN gmail_emails.category_id
                                          ELSE excluded.category_id END,
                     is_replied    = excluded.is_replied,
+                    thread_last_sender_email = excluded.thread_last_sender_email,
                     ai_classified = CASE WHEN gmail_emails.manual_override = 1
                                          THEN gmail_emails.ai_classified
                                          ELSE 1 END,
@@ -540,6 +543,7 @@ class GmailBatchProcessor:
                     cat_id,
                     email["is_read"],
                     email["is_replied"],
+                    email.get("thread_last_sender_email", ""),
                     email["received_at"],
                 ),
             )
