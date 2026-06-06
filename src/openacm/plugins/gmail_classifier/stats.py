@@ -33,7 +33,7 @@ async def compute_stats(db: Any, from_date: str, to_date: str) -> dict:
         "FROM gmail_categories c "
         "LEFT JOIN gmail_emails e ON e.category_id = c.id "
         "  AND e.received_at >= ? AND e.received_at < date(?, '+1 day') "
-        "GROUP BY c.id ORDER BY total DESC",
+        "GROUP BY c.id ORDER BY total DESC, c.name ASC",
         p,
     )
     by_category = [

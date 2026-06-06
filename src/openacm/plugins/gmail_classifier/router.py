@@ -868,6 +868,12 @@ async def delete_cron():
 @router.get("/stats")
 async def get_stats(from_date: str, to_date: str):
     """Return aggregated email stats for the given inclusive date range."""
+    try:
+        import datetime
+        datetime.date.fromisoformat(from_date)
+        datetime.date.fromisoformat(to_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format")
     db = _require_db()
     if from_date > to_date:
         raise HTTPException(status_code=400, detail="from_date must be <= to_date")
