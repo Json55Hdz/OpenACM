@@ -861,3 +861,15 @@ async def delete_cron():
     if PLUGIN._cron_task and not PLUGIN._cron_task.done():
         PLUGIN._cron_task.cancel()
     return {"cron_schedule": ""}
+
+
+# ─── Stats ───────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_stats(from_date: str, to_date: str):
+    """Return aggregated email stats for the given inclusive date range."""
+    db = _require_db()
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date must be <= to_date")
+    from openacm.plugins.gmail_classifier.stats import compute_stats
+    return await compute_stats(db, from_date, to_date)
