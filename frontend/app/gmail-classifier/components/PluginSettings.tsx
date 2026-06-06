@@ -164,15 +164,18 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
       ? autoReplyCats.filter(id => id !== categoryId)
       : [...autoReplyCats, categoryId];
     const prev = autoReplyCats;
+    const nextStr = JSON.stringify(next);
     setAutoReplyCats(next);
+    setSettings(s => ({ ...s, autoreply_enabled_categories: nextStr }));
     try {
       await fetch(`${API}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ autoreply_enabled_categories: JSON.stringify(next) }),
+        body: JSON.stringify({ autoreply_enabled_categories: nextStr }),
       });
     } catch {
       setAutoReplyCats(prev); // rollback on failure
+      setSettings(s => ({ ...s, autoreply_enabled_categories: JSON.stringify(prev) }));
     }
   }
 
