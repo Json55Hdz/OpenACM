@@ -110,8 +110,12 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
     const categoryEnabled = autoReplyCategoryIds.includes(email.category_id)
     if (!categoryEnabled) return
 
+    let timedOut = false
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 30000)
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, 30000)
     setSuggestionLoading(true)
     setSuggestionError(null)
 
@@ -128,9 +132,8 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
         }
       })
       .catch(err => {
-        if (err.name !== 'AbortError') {
-          setSuggestionError('No se pudo generar sugerencia')
-        }
+        if (err.name === 'AbortError' && !timedOut) return  // cleanup abort — ignore
+        setSuggestionError('No se pudo generar sugerencia')
       })
       .finally(() => {
         setSuggestionLoading(false)
@@ -281,6 +284,22 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
         </button>
       </div>
 
+      {/* Auto-reply feedback — visible immediately when email opens */}
+      {suggestionLoading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 px-6 pt-2">
+          <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+          Generando respuesta...
+        </div>
+      )}
+      {!suggestionLoading && replyText && autoReplyCategoryIds?.includes(email.category_id) && (
+        <div className="px-6 pt-2">
+          <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Sugerencia IA ✦</span>
+        </div>
+      )}
+      {suggestionError && (
+        <p className="text-xs text-gray-400 dark:text-gray-500 px-6 pt-2">{suggestionError}</p>
+      )}
+
       {/* ── Reply composer (collapsible) ───────────────────── */}
       {replyOpen && (
         <div className="px-6 py-4 border-t border-[var(--acm-border)] flex-shrink-0 bg-[var(--acm-base)]">
@@ -288,18 +307,6 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
             <CornerUpLeft size={11} className="inline mr-1" />
             Responder a <span className="text-[var(--acm-fg-3)]">{email.sender_email}</span>
           </p>
-          {suggestionLoading && (
-            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2">
-              <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
-              Generando respuesta...
-            </div>
-          )}
-          {!suggestionLoading && replyText && autoReplyCategoryIds?.includes(email.category_id) && (
-            <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Sugerencia IA ✦</span>
-          )}
-          {suggestionError && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{suggestionError}</p>
-          )}
           <textarea
             value={replyText}
             onChange={e => setReplyText(e.target.value)}
