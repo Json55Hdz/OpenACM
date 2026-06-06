@@ -209,8 +209,24 @@ class GmailBatchProcessor:
             auto_apply_label = settings.get("auto_apply_label") == "true"
             label_cache: dict = {}
 
-            # 1. Collect all message IDs
-            msg_ids = await self._fetch_all_ids(service, since_date)
+            # 1. Collect all message IDs from Gmail
+            all_ids = await self._fetch_all_ids(service, since_date)
+
+            # 1b. Skip IDs we've already persisted (manual overrides and
+            # AI-classified alike). This is the biggest cron optimization:
+            # in steady state we only process newly-arrived emails.
+            existing_cursor = await self._db._db.execute(
+                "SELECT gmail_id FROM gmail_emails"
+            )
+            existing_ids = {r["gmail_id"] for r in await existing_cursor.fetchall()}
+            msg_ids = [mid for mid in all_ids if mid not in existing_ids]
+            skipped_count = len(all_ids) - len(msg_ids)
+            if skipped_count:
+                log.info(
+                    "Gmail processor: skipping already-processed emails",
+                    skipped=skipped_count, new=len(msg_ids),
+                )
+
             self._total = len(msg_ids)
             await self._emit("gmail_classifier.progress", {"processed": 0, "total": self._total})
 
@@ -245,6 +261,20 @@ class GmailBatchProcessor:
                 await asyncio.sleep(0)  # yield to event loop
 
             self._last_completed_at = datetime.now(timezone.utc).isoformat()
+
+            # Persist last_sync_at so the next cron tick can use an incremental
+            # window instead of re-fetching since_date_default every time.
+            try:
+                await self._db._db.execute(
+                    "INSERT INTO gmail_classifier_settings (key, value) "
+                    "VALUES ('last_sync_at', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (self._last_completed_at,),
+                )
+                await self._db._db.commit()
+            except Exception as exc:
+                log.warning("Failed to persist last_sync_at", error=str(exc))
+
             await self._emit("gmail_classifier.completed", {
                 "total": self._total,
                 "processed": self._processed,
@@ -337,21 +367,99 @@ class GmailBatchProcessor:
 
     async def _load_categories(self) -> list[dict]:
         cursor = await self._db._db.execute(
-            "SELECT id, name, description FROM gmail_categories ORDER BY id"
+            "SELECT id, name, description, context, known_senders, patterns "
+            "FROM gmail_categories ORDER BY id"
         )
         rows = await cursor.fetchall()
-        return [{"id": r["id"], "name": r["name"], "description": r["description"]} for r in rows]
+        out: list[dict] = []
+        for r in rows:
+            try:
+                known_senders = json.loads(r["known_senders"] or "[]")
+            except Exception:
+                known_senders = []
+            try:
+                patterns = json.loads(r["patterns"] or "[]")
+            except Exception:
+                patterns = []
+            out.append({
+                "id": r["id"],
+                "name": r["name"],
+                "description": r["description"],
+                "context": r["context"] or "",
+                "known_senders": known_senders,
+                "patterns": patterns,
+            })
+        return out
+
+    def _match_hard_rule(self, email: dict, categories: list[dict]) -> str | None:
+        """Return category name if the email matches any hard rule, else None.
+
+        Order is the category order in the DB. First matching category wins —
+        if you want priority over another, reorder. "Otros" is never matched
+        as a hard rule (it's the fallback).
+        """
+        sender = (email.get("sender_email") or "").lower()
+        subject = (email.get("subject") or "").lower()
+        for cat in categories:
+            if cat["name"] == "Otros":
+                continue
+            # Known senders (exact email match)
+            for s in cat.get("known_senders") or []:
+                if s and s == sender:
+                    return cat["name"]
+            # Patterns
+            for p in cat.get("patterns") or []:
+                ptype = p.get("type")
+                pval = (p.get("value") or "").strip().lower()
+                if not pval:
+                    continue
+                if ptype == "sender_email" and sender == pval:
+                    return cat["name"]
+                if ptype == "sender_domain":
+                    dom = pval.lstrip("@")
+                    if sender.endswith("@" + dom) or sender.endswith("." + dom):
+                        return cat["name"]
+                if ptype == "subject_contains" and pval in subject:
+                    return cat["name"]
+        return None
 
     async def _classify(self, emails: list[dict], categories: list[dict]) -> dict[str, str]:
-        """Call LLM to classify emails. Returns {gmail_id: category_name}."""
+        """Classify emails.
+
+        Step 1: hard rules (sender / pattern) — fast path, no LLM call.
+        Step 2: remaining emails go to the LLM with each category's context.
+        Returns {gmail_id: category_name}.
+        """
         if not emails or not categories:
             return {}
 
-        cat_block = "\n".join(
-            f"- {c['name']}: {c['description']}" for c in categories
-            if c["name"] != "Otros"
-        )
-        cat_block += "\n- Otros: Usa esta cuando el correo no encaje en ninguna categoría."
+        results: dict[str, str] = {}
+        remaining: list[dict] = []
+        for e in emails:
+            matched = self._match_hard_rule(e, categories)
+            if matched:
+                results[e["gmail_id"]] = matched
+            else:
+                remaining.append(e)
+
+        if remaining:
+            results.update(await self._classify_with_llm(remaining, categories))
+
+        return results
+
+    async def _classify_with_llm(
+        self, emails: list[dict], categories: list[dict]
+    ) -> dict[str, str]:
+        """Send `emails` to the LLM with per-category context. Returns {gmail_id: name}."""
+        def _cat_line(c: dict) -> str:
+            line = f"- {c['name']}: {c['description']}"
+            ctx = (c.get("context") or "").strip()
+            if ctx:
+                line += f"\n  Contexto: {ctx}"
+            return line
+
+        cat_block = "\n".join(_cat_line(c) for c in categories if c["name"] != "Otros")
+        cat_block += "\n- Otros: Usa esta cuando el correo no encaje en ninguna otra categoría."
 
         email_block = "\n".join(
             f'{i + 1}. [gmail_id={e["gmail_id"]}] De: {e["sender_email"]} | Asunto: {e["subject"]} | Preview: {e["snippet"]}'
@@ -371,7 +479,6 @@ class GmailBatchProcessor:
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.get("content", "")
-            # Extract JSON array from response (may have surrounding text)
             match = re.search(r"\[.*?\]", content, re.DOTALL)
             if not match:
                 raise ValueError("No JSON array in LLM response")
@@ -395,6 +502,9 @@ class GmailBatchProcessor:
             cat_name = classifications.get(email["gmail_id"], "Otros")
             cat_id = cat_by_name.get(cat_name, otros_id)
 
+            # If the row already exists with manual_override=1 we preserve the
+            # user-chosen category_id and ai_classified flag. Body/metadata is
+            # still refreshed because that's harmless and useful.
             await self._db._db.execute(
                 """
                 INSERT INTO gmail_emails
@@ -409,9 +519,13 @@ class GmailBatchProcessor:
                     snippet       = excluded.snippet,
                     body_text     = excluded.body_text,
                     body_html     = excluded.body_html,
-                    category_id   = excluded.category_id,
+                    category_id   = CASE WHEN gmail_emails.manual_override = 1
+                                         THEN gmail_emails.category_id
+                                         ELSE excluded.category_id END,
                     is_replied    = excluded.is_replied,
-                    ai_classified = 1,
+                    ai_classified = CASE WHEN gmail_emails.manual_override = 1
+                                         THEN gmail_emails.ai_classified
+                                         ELSE 1 END,
                     last_synced   = CURRENT_TIMESTAMP
                 """,
                 (

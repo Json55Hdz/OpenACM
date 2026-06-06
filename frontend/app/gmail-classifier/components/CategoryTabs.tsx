@@ -1,6 +1,6 @@
 'use client';
 
-import { Plus } from 'lucide-react';
+import { Settings2 } from 'lucide-react';
 
 interface Category {
   id: number;
@@ -76,13 +76,14 @@ export function CategoryTabs({ categories, selectedId, onSelect, onManage }: Cat
         );
       })}
 
-      {/* Add category */}
+      {/* Manage categories */}
       <button
         onClick={onManage}
-        className="flex items-center gap-1 px-3 py-1.5 rounded-[var(--acm-radius)] text-[12px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-2)] hover:bg-[var(--acm-elev)] whitespace-nowrap transition-colors ml-1"
+        title="Crear, editar o importar categorías"
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--acm-radius)] text-[12px] font-medium text-[var(--acm-fg-3)] border border-[var(--acm-border)] hover:text-[var(--acm-fg)] hover:border-[var(--acm-accent)] hover:bg-[var(--acm-elev)] whitespace-nowrap transition-colors ml-2"
       >
-        <Plus size={12} />
-        Nueva
+        <Settings2 size={12} />
+        Gestionar
       </button>
     </div>
   );

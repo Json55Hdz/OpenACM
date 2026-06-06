@@ -122,6 +122,13 @@ class CronScheduler:
     """Asyncio-based scheduler — polls every 30 s, fires due jobs concurrently."""
 
     POLL_INTERVAL = 30  # seconds
+    # If the system was suspended, on resume there may be many jobs whose
+    # next_run is in the past. Don't fire those catch-up runs — just
+    # reschedule from "now" so we resume the normal cadence.
+    SKIP_IF_LATE_BY_SECONDS = 300  # 5 minutes
+    # Bound how many jobs can run in parallel (a burst after wake or a slow
+    # job shouldn't be able to spawn unbounded tasks).
+    MAX_CONCURRENT_JOBS = 3
 
     def __init__(self, database: Any, brain: Any = None, swarm_manager: Any = None):
         self._db = database
@@ -130,6 +137,7 @@ class CronScheduler:
         self._task: asyncio.Task | None = None
         self._running = False
         self._jobs: dict[int, CronJob] = {}
+        self._fire_sem = asyncio.Semaphore(self.MAX_CONCURRENT_JOBS)
 
     # ── Public control ────────────────────────────────────────
 
@@ -185,11 +193,52 @@ class CronScheduler:
                     if j.is_enabled and j.next_run_dt and j.next_run_dt <= now
                 ]
                 for job in due:
-                    asyncio.create_task(self._fire_job(job))
+                    late_by = (now - job.next_run_dt).total_seconds()
+                    if late_by > self.SKIP_IF_LATE_BY_SECONDS:
+                        # System was probably suspended. Don't fire the catch-up
+                        # run — just reschedule next_run so we resume cadence
+                        # from now without bursting.
+                        log.info(
+                            "CronJob skipped stale run (likely resume from suspend)",
+                            job_id=job.id, name=job.name,
+                            late_by_seconds=round(late_by),
+                        )
+                        asyncio.create_task(self._reschedule_without_firing(job))
+                    else:
+                        asyncio.create_task(self._fire_job_bounded(job))
             except Exception as exc:
                 log.error("CronScheduler loop error", error=str(exc))
 
             await asyncio.sleep(self.POLL_INTERVAL)
+
+    async def _fire_job_bounded(self, job: CronJob) -> dict:
+        """Wrap _fire_job behind the concurrency semaphore."""
+        async with self._fire_sem:
+            return await self._fire_job(job)
+
+    async def _reschedule_without_firing(self, job: CronJob) -> None:
+        """Advance job.next_run past now without executing the job."""
+        try:
+            next_dt = _next_cron_datetime(job.cron_expr, datetime.now(timezone.utc))
+            next_run_str = next_dt.isoformat()
+        except Exception as exc:
+            log.error("Could not compute next_run for skipped job",
+                      job_id=job.id, error=str(exc))
+            return
+        try:
+            # Keep last_run/last_status untouched — this isn't a real run.
+            await self._db.update_cron_job_after_run(
+                job.id,
+                job.last_run or "",
+                next_run_str,
+                job.last_status or "pending",
+                output="(skipped catch-up run after resume)",
+            )
+            if job.id in self._jobs:
+                self._jobs[job.id].next_run = next_run_str
+        except Exception as exc:
+            log.error("Failed to persist skipped-job reschedule",
+                      job_id=job.id, error=str(exc))
 
     async def _sync_jobs(self) -> None:
         """Reload enabled job definitions from the DB."""

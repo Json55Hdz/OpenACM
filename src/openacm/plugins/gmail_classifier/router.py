@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
 from email.mime.text import MIMEText
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 log = structlog.get_logger()
 
@@ -34,11 +35,66 @@ def _require_processor():
 
 # ─── Pydantic models ─────────────────────────────────────────────────────────
 
+PatternType = Literal["sender_email", "sender_domain", "subject_contains"]
+
+
+class CategoryPattern(BaseModel):
+    type: PatternType
+    value: str
+
+
 class CategoryBody(BaseModel):
     name: str
     description: str = ""
     color: str = "#6366f1"
     icon: str = "Tag"
+    context: str = ""
+    known_senders: list[str] = Field(default_factory=list)
+    patterns: list[CategoryPattern] = Field(default_factory=list)
+
+
+def _normalize_senders(senders: list[str]) -> list[str]:
+    """Lowercase, strip, dedupe, drop empties."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in senders:
+        v = (s or "").strip().lower()
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _normalize_patterns(patterns: list[CategoryPattern]) -> list[dict]:
+    out: list[dict] = []
+    for p in patterns:
+        v = (p.value or "").strip()
+        if not v:
+            continue
+        # Normalize domain: strip leading @ and lowercase
+        if p.type == "sender_domain":
+            v = v.lstrip("@").lower()
+        elif p.type == "sender_email":
+            v = v.lower()
+        else:  # subject_contains: keep case as user typed but lower for matching elsewhere
+            v = v.lower()
+        out.append({"type": p.type, "value": v})
+    return out
+
+
+def _row_to_category(row: Any, include_email_count: bool = False) -> dict:
+    """Convert a SQLite row to a category dict with parsed JSON fields."""
+    d = dict(row)
+    try:
+        d["known_senders"] = json.loads(d.get("known_senders") or "[]")
+    except Exception:
+        d["known_senders"] = []
+    try:
+        d["patterns"] = json.loads(d.get("patterns") or "[]")
+    except Exception:
+        d["patterns"] = []
+    d["context"] = d.get("context") or ""
+    return d
 
 
 class ReadToggle(BaseModel):
@@ -75,13 +131,14 @@ async def list_categories():
     db = _require_db()
     cursor = await db._db.execute(
         "SELECT gc.id, gc.name, gc.description, gc.color, gc.icon, "
+        "gc.context, gc.known_senders, gc.patterns, "
         "COUNT(ge.id) as email_count "
         "FROM gmail_categories gc "
         "LEFT JOIN gmail_emails ge ON ge.category_id = gc.id "
         "GROUP BY gc.id ORDER BY gc.id"
     )
     rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+    return [_row_to_category(r) for r in rows]
 
 
 @router.post("/categories")
@@ -89,17 +146,24 @@ async def create_category(body: CategoryBody):
     db = _require_db()
     if not body.name.strip():
         raise HTTPException(status_code=400, detail="name is required")
+    senders_json = json.dumps(_normalize_senders(body.known_senders), ensure_ascii=False)
+    patterns_json = json.dumps(_normalize_patterns(body.patterns), ensure_ascii=False)
     try:
         cursor = await db._db.execute(
-            "INSERT INTO gmail_categories (name, description, color, icon) VALUES (?, ?, ?, ?)",
-            (body.name.strip(), body.description, body.color, body.icon),
+            "INSERT INTO gmail_categories "
+            "(name, description, color, icon, context, known_senders, patterns) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                body.name.strip(), body.description, body.color, body.icon,
+                body.context, senders_json, patterns_json,
+            ),
         )
         await db._db.commit()
         row_cursor = await db._db.execute(
             "SELECT * FROM gmail_categories WHERE id = ?", (cursor.lastrowid,)
         )
         row = await row_cursor.fetchone()
-        return dict(row)
+        return _row_to_category(row)
     except Exception as exc:
         if "UNIQUE" in str(exc):
             raise HTTPException(status_code=409, detail="Category name already exists")
@@ -112,13 +176,20 @@ async def update_category(cat_id: int, body: CategoryBody):
     cursor = await db._db.execute("SELECT id FROM gmail_categories WHERE id = ?", (cat_id,))
     if not await cursor.fetchone():
         raise HTTPException(status_code=404, detail="Category not found")
+    senders_json = json.dumps(_normalize_senders(body.known_senders), ensure_ascii=False)
+    patterns_json = json.dumps(_normalize_patterns(body.patterns), ensure_ascii=False)
     await db._db.execute(
-        "UPDATE gmail_categories SET name=?, description=?, color=?, icon=? WHERE id=?",
-        (body.name.strip(), body.description, body.color, body.icon, cat_id),
+        "UPDATE gmail_categories "
+        "SET name=?, description=?, color=?, icon=?, context=?, known_senders=?, patterns=? "
+        "WHERE id=?",
+        (
+            body.name.strip(), body.description, body.color, body.icon,
+            body.context, senders_json, patterns_json, cat_id,
+        ),
     )
     await db._db.commit()
     cursor2 = await db._db.execute("SELECT * FROM gmail_categories WHERE id = ?", (cat_id,))
-    return dict(await cursor2.fetchone())
+    return _row_to_category(await cursor2.fetchone())
 
 
 @router.delete("/categories/{cat_id}")
@@ -144,6 +215,90 @@ async def delete_category(cat_id: int):
     await db._db.execute("DELETE FROM gmail_categories WHERE id = ?", (cat_id,))
     await db._db.commit()
     return {"deleted": True, "id": cat_id}
+
+
+# Color palette used to give imported Gmail labels a sensible default color.
+_IMPORT_COLORS = [
+    "#6366f1", "#3b82f6", "#10b981", "#f59e0b",
+    "#ef4444", "#8b5cf6", "#ec4899", "#0ea5e9",
+    "#14b8a6", "#f97316", "#84cc16",
+]
+
+# Gmail system labels are returned with type=system; we also blacklist a few
+# CATEGORY_* labels that come back as type=user but are clearly system.
+_SYSTEM_LABEL_NAMES = {
+    "INBOX", "SENT", "DRAFT", "DRAFTS", "TRASH", "SPAM", "IMPORTANT",
+    "STARRED", "UNREAD", "CHAT", "CHATS",
+    "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS",
+    "CATEGORY_UPDATES", "CATEGORY_FORUMS",
+}
+
+
+@router.post("/categories/import-labels")
+async def import_gmail_labels():
+    """Import the user's Gmail labels as categories.
+
+    Only labels with type='user' are imported. Existing category names (case-
+    insensitive) are skipped — your edits and the seeded defaults are safe.
+    """
+    db = _require_db()
+    try:
+        from openacm.plugins.gmail_classifier.processor import _get_gmail_service
+        service = await _get_gmail_service()
+        result = service.users().labels().list(userId="me").execute()
+        labels = result.get("labels", [])
+    except Exception as exc:
+        log.error("import_gmail_labels: gmail fetch failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"No se pudieron leer las etiquetas de Gmail: {exc}")
+
+    # Existing names, case-insensitive
+    cursor = await db._db.execute("SELECT name FROM gmail_categories")
+    existing = {(r["name"] or "").lower() for r in await cursor.fetchall()}
+
+    created: list[str] = []
+    skipped: list[str] = []
+    color_idx = 0
+
+    for lbl in labels:
+        name = (lbl.get("name") or "").strip()
+        ltype = lbl.get("type", "user")
+        if not name:
+            continue
+        if ltype != "user":
+            continue
+        if name.upper() in _SYSTEM_LABEL_NAMES:
+            continue
+        # Gmail allows nested labels like "Trabajo/Clientes"; take the leaf so the
+        # display name is short, fall back to the full path if collision.
+        display = name.split("/")[-1].strip() or name
+
+        if display.lower() in existing:
+            skipped.append(display)
+            continue
+
+        color = _IMPORT_COLORS[color_idx % len(_IMPORT_COLORS)]
+        color_idx += 1
+        try:
+            await db._db.execute(
+                "INSERT INTO gmail_categories "
+                "(name, description, color, icon, context, known_senders, patterns) "
+                "VALUES (?, ?, ?, ?, ?, '[]', '[]')",
+                (
+                    display,
+                    f"Importada desde Gmail (etiqueta: {name})",
+                    color,
+                    "Tag",
+                    "",
+                ),
+            )
+            existing.add(display.lower())
+            created.append(display)
+        except Exception as exc:
+            log.warning("import_gmail_labels: insert failed", name=display, error=str(exc))
+            skipped.append(display)
+
+    await db._db.commit()
+    return {"created": len(created), "skipped": len(skipped), "names": created}
 
 
 # ─── Emails ───────────────────────────────────────────────────────────────────
@@ -215,8 +370,10 @@ async def recategorize(email_id: int, body: RecategorizeBody):
     cat_cursor = await db._db.execute("SELECT id FROM gmail_categories WHERE id = ?", (body.category_id,))
     if not await cat_cursor.fetchone():
         raise HTTPException(status_code=404, detail="Category not found")
+    # manual_override=1 protects this assignment from being overwritten by
+    # future cron runs that would otherwise re-classify the email.
     await db._db.execute(
-        "UPDATE gmail_emails SET category_id = ? WHERE id = ?",
+        "UPDATE gmail_emails SET category_id = ?, manual_override = 1 WHERE id = ?",
         (body.category_id, email_id),
     )
     await db._db.commit()

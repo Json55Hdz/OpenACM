@@ -9,6 +9,23 @@ echo -e "\033[1;36m  OpenACM Tier-1 Autonomous Agent Setup\033[0m"
 echo -e "\033[1;36m==========================================\033[0m"
 echo ""
 
+# ── macOS: ensure Xcode Command Line Tools are installed ────────────────────
+# Required for compiling native Python deps and by uv's Python builds.
+if [ "$(uname)" = "Darwin" ]; then
+    if ! xcode-select -p &>/dev/null; then
+        echo -e "\033[1;33m[*] Xcode Command Line Tools not found — launching installer...\033[0m"
+        echo -e "\033[1;37m    A system dialog will open. Click Install and wait for it to finish,\033[0m"
+        echo -e "\033[1;37m    then come back here and press Enter.\033[0m"
+        xcode-select --install 2>/dev/null || true
+        read -p "Press Enter once Xcode CLT install finishes... " _
+        if ! xcode-select -p &>/dev/null; then
+            echo -e "\033[1;31m[ERROR] Xcode CLT still missing. Install them and re-run setup.\033[0m"
+            exit 1
+        fi
+    fi
+    echo -e "\033[1;32m[OK] Xcode Command Line Tools detected.\033[0m"
+fi
+
 # Check if uv is installed
 if ! command -v uv &>/dev/null; then
     echo -e "\033[1;33m[*] Instalando 'uv' (gestor de dependencias ultrarrápido)...\033[0m"

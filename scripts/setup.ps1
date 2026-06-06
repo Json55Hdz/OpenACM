@@ -6,23 +6,10 @@ Write-Host "  OpenACM Tier-1 Autonomous Agent Setup" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Check Python version
-$pythonVersion = python --version 2>&1
-if ($pythonVersion -match "Python 3\.(\d+)\.(\d+)") {
-    $minorVersion = [int]$matches[1]
-    if ($minorVersion -lt 12) {
-        Write-Host "[!] Warning: Python 3.$minorVersion detected." -ForegroundColor Yellow
-        Write-Host "    OpenACM requires Python 3.12 or higher." -ForegroundColor Yellow
-        Write-Host "    The installer will try to install Python 3.12 via uv..." -ForegroundColor Yellow
-        Write-Host ""
-    } else {
-        Write-Host "[OK] Python 3.$minorVersion detected." -ForegroundColor Green
-    }
-} else {
-    Write-Host "[!] Could not detect Python version." -ForegroundColor Yellow
-}
-
-# Check if uv is installed, if not, download it
+# ── 1. Bootstrap uv (installs its own Python — no system Python required) ───
+# We intentionally skip checking for a system `python` here. uv can install a
+# standalone Python 3.12 even when none exists on the machine, which is the
+# cleanest path on a fresh PC.
 if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "[*] Installing 'uv' (fast Python package manager)..." -ForegroundColor Yellow
     try {
@@ -30,6 +17,12 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
         # uv installs to .local\bin on newer versions, .cargo\bin on older — add both
         foreach ($p in @("$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin", "$HOME\.local\bin", "$HOME\.cargo\bin")) {
             if (Test-Path $p) { $env:Path = "$p;$env:Path" }
+        }
+        if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
+            Write-Host "[ERROR] uv was installed but is not in PATH for this session." -ForegroundColor Red
+            Write-Host "    Open a new PowerShell window and re-run setup." -ForegroundColor White
+            pause
+            exit 1
         }
         Write-Host "[OK] 'uv' installed successfully." -ForegroundColor Green
     } catch {
@@ -41,19 +34,66 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] 'uv' is already installed." -ForegroundColor Green
 }
 
-# Install Python 3.12 via uv
-Write-Host "[*] Setting up Python 3.12 environment..." -ForegroundColor Yellow
-try {
-    uv python install 3.12 --quiet
-    if ($LASTEXITCODE -ne 0) {
-        throw "uv python install failed"
-    }
-} catch {
-    Write-Host "[!] Could not install Python 3.12 via uv." -ForegroundColor Yellow
-    Write-Host "    Trying to continue with the current version..." -ForegroundColor Yellow
+# ── 2. Install Python 3.12 via uv (standalone — no system Python needed) ────
+Write-Host "[*] Installing standalone Python 3.12 via uv..." -ForegroundColor Yellow
+uv python install 3.12
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] uv could not install Python 3.12." -ForegroundColor Red
+    Write-Host "    Check your internet connection or proxy settings, then re-run." -ForegroundColor White
+    pause
+    exit 1
+}
+Write-Host "[OK] Python 3.12 ready." -ForegroundColor Green
+
+# ── 3. Check Visual C++ Build Tools (needed for some native deps) ───────────
+# We don't hard-fail because most modern wheels are precompiled, but we warn
+# loudly so a later 'uv pip install' failure makes sense to the user.
+$buildToolsFound = $false
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (Test-Path $vswhere) {
+    $vc = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationPath 2>$null
+    if ($vc) { $buildToolsFound = $true }
+}
+# Fallback heuristics
+if (-not $buildToolsFound) {
+    $vsRoots = @(
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022\BuildTools\VC",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VC",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2019\BuildTools\VC",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019\BuildTools\VC"
+    )
+    foreach ($r in $vsRoots) { if (Test-Path $r) { $buildToolsFound = $true; break } }
 }
 
-# Create virtual environment
+if (-not $buildToolsFound) {
+    Write-Host "[!] Visual C++ Build Tools were not detected." -ForegroundColor Yellow
+    Write-Host "    Most dependencies have prebuilt wheels and will work without them," -ForegroundColor White
+    Write-Host "    but if 'uv pip install' fails with a 'cl.exe' or 'MSVC' error you" -ForegroundColor White
+    Write-Host "    will need to install them." -ForegroundColor White
+
+    if (Get-Command "winget" -ErrorAction SilentlyContinue) {
+        $ans = Read-Host "    Install Visual Studio 2022 Build Tools via winget now? (y/N)"
+        if ($ans -match "^[yY]") {
+            Write-Host "[*] Installing Build Tools (this can take several minutes)..." -ForegroundColor Yellow
+            winget install --id Microsoft.VisualStudio.2022.BuildTools `
+                --override "--passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended" `
+                --accept-source-agreements --accept-package-agreements
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[OK] Build Tools installed." -ForegroundColor Green
+            } else {
+                Write-Host "[!] winget install returned $LASTEXITCODE — continuing anyway." -ForegroundColor Yellow
+            }
+        }
+    } else {
+        Write-Host "    Manual download: https://visualstudio.microsoft.com/visual-cpp-build-tools/" -ForegroundColor White
+    }
+} else {
+    Write-Host "[OK] Visual C++ Build Tools detected." -ForegroundColor Green
+}
+
+# ── 4. Create virtual environment ───────────────────────────────────────────
 Write-Host "[*] Creating virtual environment..." -ForegroundColor Yellow
 
 # Remove old venv if it has no pip
@@ -65,8 +105,8 @@ if (Test-Path ".venv\Scripts\python.exe") {
 }
 
 try {
-    # Create venv with seed packages (includes pip)
-    uv venv --seed
+    # Create venv with seed packages (includes pip) using the uv-managed Python
+    uv venv --seed --python 3.12
     if ($LASTEXITCODE -ne 0) {
         throw "uv venv failed"
     }
@@ -85,6 +125,7 @@ try {
     exit 1
 }
 
+# ── 5. Config (.env) ────────────────────────────────────────────────────────
 Write-Host "[*] Checking configuration (.env)..." -ForegroundColor Yellow
 if (!(Test-Path "config\.env")) {
     if (Test-Path "config\.env.example") {
@@ -97,6 +138,7 @@ if (!(Test-Path "config\.env")) {
     }
 }
 
+# ── 6. Install project deps ─────────────────────────────────────────────────
 Write-Host "[*] Installing all project dependencies (this may take a few minutes)..." -ForegroundColor Yellow
 try {
     uv pip install -e . 2>&1 | ForEach-Object {
@@ -117,8 +159,9 @@ try {
     Write-Host ""
     Write-Host "   Suggestions:" -ForegroundColor Yellow
     Write-Host "   1. Check your internet connection" -ForegroundColor Yellow
-    Write-Host "   2. Try running: uv pip install -e . --verbose" -ForegroundColor Yellow
-    Write-Host "   3. If the error persists, install Visual C++ Build Tools" -ForegroundColor Yellow
+    Write-Host "   2. If you see 'cl.exe' or 'MSVC' errors: install Visual C++ Build Tools" -ForegroundColor Yellow
+    Write-Host "      https://visualstudio.microsoft.com/visual-cpp-build-tools/" -ForegroundColor Yellow
+    Write-Host "   3. Try running: uv pip install -e . --verbose" -ForegroundColor Yellow
     pause
     exit 1
 }

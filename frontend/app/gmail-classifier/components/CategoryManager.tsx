@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Plus, Trash2, Edit2 } from 'lucide-react';
+import { X, Plus, Trash2, Edit2, Download } from 'lucide-react';
 
 const API = '/api/gmail-classifier';
 
@@ -17,12 +17,34 @@ const PRESET_ICONS = [
   'ShoppingCart', 'Calendar', 'Map', 'Truck', 'Landmark',
 ];
 
+type PatternType = 'sender_email' | 'sender_domain' | 'subject_contains';
+
+const PATTERN_TYPE_LABELS: Record<PatternType, string> = {
+  sender_email: 'Email exacto',
+  sender_domain: 'Dominio',
+  subject_contains: 'Asunto contiene',
+};
+
+const PATTERN_TYPE_PLACEHOLDERS: Record<PatternType, string> = {
+  sender_email: 'notificaciones@dian.gov.co',
+  sender_domain: 'procuraduria.gov.co',
+  subject_contains: 'notificación judicial',
+};
+
+interface Pattern {
+  type: PatternType;
+  value: string;
+}
+
 interface Category {
   id: number;
   name: string;
   description: string;
   color: string;
   icon: string;
+  context?: string;
+  known_senders?: string[];
+  patterns?: Pattern[];
 }
 
 interface FormState {
@@ -30,7 +52,20 @@ interface FormState {
   description: string;
   color: string;
   icon: string;
+  context: string;
+  known_senders: string[];
+  patterns: Pattern[];
 }
+
+const EMPTY_FORM: FormState = {
+  name: '',
+  description: '',
+  color: '#6366f1',
+  icon: 'Tag',
+  context: '',
+  known_senders: [],
+  patterns: [],
+};
 
 interface CategoryManagerProps {
   categories: Category[];
@@ -41,20 +76,55 @@ interface CategoryManagerProps {
 
 export function CategoryManager({ categories, token, onClose, onSaved }: CategoryManagerProps) {
   const [editingId, setEditingId] = useState<number | 'new' | null>(null);
-  const [form, setForm] = useState<FormState>({ name: '', description: '', color: '#6366f1', icon: 'Tag' });
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState('');
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
+  const handleImportLabels = async () => {
+    setImporting(true);
+    setImportMsg('');
+    try {
+      const res = await fetch(`${API}/categories/import-labels`, { method: 'POST', headers });
+      const data = await res.json();
+      if (!res.ok) {
+        setImportMsg(data.detail || 'Error al importar etiquetas');
+        return;
+      }
+      const created = data.created ?? 0;
+      const skipped = data.skipped ?? 0;
+      setImportMsg(
+        created === 0
+          ? `Sin nuevas etiquetas (${skipped} ya existían)`
+          : `${created} categoría${created === 1 ? '' : 's'} creada${created === 1 ? '' : 's'}${skipped ? ` · ${skipped} ya existían` : ''}`
+      );
+      onSaved();
+    } catch (e) {
+      setImportMsg('Error de conexión');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const startNew = () => {
-    setForm({ name: '', description: '', color: '#6366f1', icon: 'Tag' });
+    setForm(EMPTY_FORM);
     setEditingId('new');
     setError('');
   };
 
   const startEdit = (cat: Category) => {
-    setForm({ name: cat.name, description: cat.description, color: cat.color, icon: cat.icon });
+    setForm({
+      name: cat.name,
+      description: cat.description,
+      color: cat.color,
+      icon: cat.icon,
+      context: cat.context || '',
+      known_senders: cat.known_senders || [],
+      patterns: cat.patterns || [],
+    });
     setEditingId(cat.id);
     setError('');
   };
@@ -66,7 +136,15 @@ export function CategoryManager({ categories, token, onClose, onSaved }: Categor
     try {
       const url = editingId === 'new' ? `${API}/categories` : `${API}/categories/${editingId}`;
       const method = editingId === 'new' ? 'POST' : 'PUT';
-      const res = await fetch(url, { method, headers, body: JSON.stringify(form) });
+      // Drop empty patterns/senders before sending
+      const payload = {
+        ...form,
+        known_senders: form.known_senders.map(s => s.trim()).filter(Boolean),
+        patterns: form.patterns
+          .map(p => ({ type: p.type, value: p.value.trim() }))
+          .filter(p => p.value),
+      };
+      const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
       if (!res.ok) {
         const e = await res.json();
         setError(e.detail || 'Error al guardar');
@@ -87,7 +165,7 @@ export function CategoryManager({ categories, token, onClose, onSaved }: Categor
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-      <div className="bg-[var(--acm-base)] border border-[var(--acm-border)] rounded-[var(--acm-radius)] w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl">
+      <div className="bg-[var(--acm-base)] border border-[var(--acm-border)] rounded-[var(--acm-radius)] w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--acm-border)]">
           <div>
@@ -120,6 +198,11 @@ export function CategoryManager({ categories, token, onClose, onSaved }: Categor
                     {cat.description && (
                       <p className="text-[11px] text-[var(--acm-fg-4)] truncate mt-0.5">{cat.description}</p>
                     )}
+                    {(cat.known_senders?.length || cat.patterns?.length) ? (
+                      <p className="text-[10px] text-[var(--acm-fg-4)] mt-1">
+                        {(cat.known_senders?.length || 0)} remitentes · {(cat.patterns?.length || 0)} patrones
+                      </p>
+                    ) : null}
                   </div>
                   {cat.name !== 'Otros' && (
                     <div className="flex gap-1">
@@ -160,14 +243,28 @@ export function CategoryManager({ categories, token, onClose, onSaved }: Categor
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-[var(--acm-border)]">
-          <button
-            onClick={startNew}
-            disabled={editingId !== null}
-            className="btn-secondary text-[12px] py-[6px] px-3 disabled:opacity-40"
-          >
-            <Plus size={13} /> Nueva categoría
-          </button>
+        <div className="px-5 py-3 border-t border-[var(--acm-border)] flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex gap-2">
+            <button
+              onClick={startNew}
+              disabled={editingId !== null}
+              className="btn-secondary text-[12px] py-[6px] px-3 disabled:opacity-40"
+            >
+              <Plus size={13} /> Nueva categoría
+            </button>
+            <button
+              onClick={handleImportLabels}
+              disabled={importing || editingId !== null}
+              title="Crear una categoría por cada etiqueta de usuario en tu Gmail"
+              className="btn-secondary text-[12px] py-[6px] px-3 disabled:opacity-40"
+            >
+              <Download size={13} className={importing ? 'animate-pulse' : ''} />
+              {importing ? 'Importando…' : 'Importar de Gmail'}
+            </button>
+          </div>
+          {importMsg && (
+            <span className="text-[11px] text-[var(--acm-fg-4)]">{importMsg}</span>
+          )}
         </div>
       </div>
     </div>
@@ -184,6 +281,38 @@ function CategoryForm({
   saving: boolean;
   error: string;
 }) {
+  const [newSender, setNewSender] = useState('');
+
+  const addSender = () => {
+    const v = newSender.trim().toLowerCase();
+    if (!v) return;
+    if (form.known_senders.includes(v)) {
+      setNewSender('');
+      return;
+    }
+    onChange({ ...form, known_senders: [...form.known_senders, v] });
+    setNewSender('');
+  };
+
+  const removeSender = (idx: number) => {
+    onChange({ ...form, known_senders: form.known_senders.filter((_, i) => i !== idx) });
+  };
+
+  const addPattern = () => {
+    onChange({ ...form, patterns: [...form.patterns, { type: 'sender_domain', value: '' }] });
+  };
+
+  const updatePattern = (idx: number, next: Partial<Pattern>) => {
+    onChange({
+      ...form,
+      patterns: form.patterns.map((p, i) => i === idx ? { ...p, ...next } : p),
+    });
+  };
+
+  const removePattern = (idx: number) => {
+    onChange({ ...form, patterns: form.patterns.filter((_, i) => i !== idx) });
+  };
+
   return (
     <div className="px-4 py-4 space-y-4 bg-[var(--acm-elev)]">
       <div>
@@ -196,15 +325,101 @@ function CategoryForm({
           autoFocus
         />
       </div>
+
       <div>
         <label className="label block mb-1.5">Descripción</label>
         <textarea
           className="w-full bg-transparent border-b border-[var(--acm-border)] text-[var(--acm-fg)] text-[13px] py-2 resize-none outline-none focus:border-[var(--acm-accent)] transition-colors placeholder:text-[var(--acm-fg-4)]"
-          placeholder="Describe el tipo de correos para que la IA clasifique mejor"
+          placeholder="Resumen corto para listar"
           rows={2}
           value={form.description}
           onChange={e => onChange({ ...form, description: e.target.value })}
         />
+      </div>
+
+      <div>
+        <label className="label block mb-1.5">Contexto para la IA</label>
+        <textarea
+          className="w-full bg-transparent border-b border-[var(--acm-border)] text-[var(--acm-fg)] text-[13px] py-2 resize-none outline-none focus:border-[var(--acm-accent)] transition-colors placeholder:text-[var(--acm-fg-4)]"
+          placeholder="Explícale a la IA qué correos deben caer aquí (entidades, temas, criterios, qué NO debe incluir, etc.)"
+          rows={5}
+          value={form.context}
+          onChange={e => onChange({ ...form, context: e.target.value })}
+        />
+        <p className="text-[10px] text-[var(--acm-fg-4)] mt-1">
+          Se incluye en el prompt del clasificador cuando no hay match exacto por remitente o patrón.
+        </p>
+      </div>
+
+      {/* Known senders */}
+      <div>
+        <label className="label block mb-1.5">Remitentes conocidos</label>
+        <p className="text-[10px] text-[var(--acm-fg-4)] mb-2">
+          Emails exactos que SIEMPRE caen en esta categoría (salta el LLM).
+        </p>
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {form.known_senders.map((s, i) => (
+            <span key={i} className="inline-flex items-center gap-1 bg-[var(--acm-card)] border border-[var(--acm-border)] rounded px-2 py-0.5 text-[11px] text-[var(--acm-fg-2)]">
+              {s}
+              <button
+                onClick={() => removeSender(i)}
+                className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]"
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className="acm-input text-[12px] flex-1"
+            placeholder="ejemplo@dominio.com"
+            value={newSender}
+            onChange={e => setNewSender(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSender(); } }}
+          />
+          <button onClick={addSender} className="btn-secondary text-[11px] py-1 px-2.5">
+            <Plus size={12} /> Agregar
+          </button>
+        </div>
+      </div>
+
+      {/* Patterns */}
+      <div>
+        <label className="label block mb-1.5">Patrones</label>
+        <p className="text-[10px] text-[var(--acm-fg-4)] mb-2">
+          Reglas duras: si un correo matchea, salta el LLM y se asigna directo.
+        </p>
+        <div className="space-y-1.5">
+          {form.patterns.map((p, i) => (
+            <div key={i} className="flex gap-1.5">
+              <select
+                className="bg-[var(--acm-card)] border border-[var(--acm-border)] rounded text-[11px] px-2 py-1 text-[var(--acm-fg-2)] outline-none focus:border-[var(--acm-accent)]"
+                value={p.type}
+                onChange={e => updatePattern(i, { type: e.target.value as PatternType })}
+              >
+                {(Object.keys(PATTERN_TYPE_LABELS) as PatternType[]).map(t => (
+                  <option key={t} value={t}>{PATTERN_TYPE_LABELS[t]}</option>
+                ))}
+              </select>
+              <input
+                className="acm-input text-[12px] flex-1"
+                placeholder={PATTERN_TYPE_PLACEHOLDERS[p.type]}
+                value={p.value}
+                onChange={e => updatePattern(i, { value: e.target.value })}
+              />
+              <button
+                onClick={() => removePattern(i)}
+                className="p-1.5 text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button onClick={addPattern} className="btn-secondary text-[11px] py-1 px-2.5 mt-2">
+          <Plus size={12} /> Patrón
+        </button>
       </div>
 
       {/* Color picker */}

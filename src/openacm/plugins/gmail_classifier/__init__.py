@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import structlog
@@ -9,6 +10,72 @@ import structlog
 from openacm.plugins import Plugin
 
 log = structlog.get_logger()
+
+
+# Defaults seeded on first run. Users can edit/delete them freely afterwards.
+DEFAULT_CATEGORIES: list[dict] = [
+    {
+        "name": "Importantes",
+        "description": "Correos críticos que requieren atención prioritaria.",
+        "color": "#ef4444",
+        "icon": "Star",
+        "context": (
+            "Esta categoría agrupa correos de alta prioridad para el usuario: "
+            "comunicaciones personales urgentes, mensajes de jefes/clientes directos, "
+            "facturas próximas a vencer, alertas de seguridad de cuentas (login sospechoso, "
+            "cambio de contraseña), confirmaciones de pago, vuelos o reservas, citas médicas, "
+            "y cualquier mensaje cuya postergación tenga costo real. Si el correo es "
+            "promocional, newsletter, notificación social o marketing, NO va aquí."
+        ),
+        "known_senders": [],
+        "patterns": [
+            {"type": "subject_contains", "value": "urgente"},
+            {"type": "subject_contains", "value": "acción requerida"},
+            {"type": "subject_contains", "value": "factura vencida"},
+        ],
+    },
+    {
+        "name": "Legales",
+        "description": "Notificaciones judiciales, entidades de control y trámites legales.",
+        "color": "#8b5cf6",
+        "icon": "Landmark",
+        "context": (
+            "Esta categoría agrupa correos de entidades del Estado, judiciales o de control "
+            "(Procuraduría, Fiscalía, Contraloría, Defensoría del Pueblo, Rama Judicial, "
+            "Superintendencias, DIAN, Notarías, ICBF, Migración Colombia, etc.), "
+            "así como notificaciones de tutelas, demandas, citaciones, sentencias, "
+            "requerimientos, autos, procesos disciplinarios o cualquier comunicación "
+            "con implicaciones legales. NO incluye correos comerciales de abogados a "
+            "menos que sean sobre un proceso activo del usuario."
+        ),
+        "known_senders": [],
+        "patterns": [
+            {"type": "sender_domain", "value": "procuraduria.gov.co"},
+            {"type": "sender_domain", "value": "fiscalia.gov.co"},
+            {"type": "sender_domain", "value": "contraloria.gov.co"},
+            {"type": "sender_domain", "value": "defensoria.gov.co"},
+            {"type": "sender_domain", "value": "ramajudicial.gov.co"},
+            {"type": "sender_domain", "value": "cendoj.ramajudicial.gov.co"},
+            {"type": "sender_domain", "value": "sic.gov.co"},
+            {"type": "sender_domain", "value": "superfinanciera.gov.co"},
+            {"type": "sender_domain", "value": "supersalud.gov.co"},
+            {"type": "sender_domain", "value": "supersociedades.gov.co"},
+            {"type": "sender_domain", "value": "dian.gov.co"},
+            {"type": "sender_domain", "value": "icbf.gov.co"},
+            {"type": "sender_domain", "value": "migracioncolombia.gov.co"},
+            {"type": "sender_domain", "value": "minjusticia.gov.co"},
+            {"type": "sender_domain", "value": "policia.gov.co"},
+            {"type": "subject_contains", "value": "notificación judicial"},
+            {"type": "subject_contains", "value": "tutela"},
+            {"type": "subject_contains", "value": "demanda"},
+            {"type": "subject_contains", "value": "citación"},
+            {"type": "subject_contains", "value": "requerimiento"},
+            {"type": "subject_contains", "value": "sentencia"},
+            {"type": "subject_contains", "value": "proceso disciplinario"},
+            {"type": "subject_contains", "value": "expediente"},
+        ],
+    },
+]
 
 
 class GmailClassifierPlugin(Plugin):
@@ -61,6 +128,35 @@ class GmailClassifierPlugin(Plugin):
                     "INSERT OR IGNORE INTO gmail_classifier_settings (key, value) VALUES (?, ?)",
                     (key, value),
                 )
+
+            # Seed default categories (Importantes, Legales) once. We gate on a
+            # settings flag so that if the user later deletes them on purpose,
+            # we don't re-create them on the next restart.
+            seeded_cursor = await database._db.execute(
+                "SELECT value FROM gmail_classifier_settings WHERE key = 'default_categories_seeded'"
+            )
+            seeded_row = await seeded_cursor.fetchone()
+            already_seeded = bool(seeded_row and seeded_row["value"] == "true")
+            if not already_seeded:
+                for cat in DEFAULT_CATEGORIES:
+                    await database._db.execute(
+                        "INSERT OR IGNORE INTO gmail_categories "
+                        "(name, description, color, icon, context, known_senders, patterns) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            cat["name"],
+                            cat["description"],
+                            cat["color"],
+                            cat["icon"],
+                            cat["context"],
+                            json.dumps(cat["known_senders"], ensure_ascii=False),
+                            json.dumps(cat["patterns"], ensure_ascii=False),
+                        ),
+                    )
+                await database._db.execute(
+                    "INSERT INTO gmail_classifier_settings (key, value) VALUES ('default_categories_seeded', 'true') "
+                    "ON CONFLICT(key) DO UPDATE SET value = 'true'"
+                )
             await database._db.commit()
 
         # Initialize processor and wire router
@@ -104,20 +200,46 @@ class GmailClassifierPlugin(Plugin):
                 return
 
             wait_seconds = (next_run - now).total_seconds()
+            # If wait is non-positive (clock skew / Windows resume from sleep)
+            # we must NOT spin: sleep a full minute and re-evaluate. Without this
+            # guard the loop would fire process() every 1s after the OS wakes up,
+            # which is the cause of the "PC slow until I close openacm" symptom.
+            if wait_seconds <= 0:
+                log.warning(
+                    "Gmail cron computed non-positive wait — likely clock skew "
+                    "after OS resume. Backing off 60s.",
+                    next_run=str(next_run), wait_seconds=round(wait_seconds),
+                )
+                await asyncio.sleep(60)
+                continue
+
             log.info("Gmail cron next run", next_run=str(next_run), wait_seconds=round(wait_seconds))
-            await asyncio.sleep(max(wait_seconds, 1))
+            await asyncio.sleep(wait_seconds)
 
             if not self._processor:
                 continue
 
+            # Incremental window: prefer last_sync_at (minus 1 day for timezone
+            # safety) over since_date_default. The de-dup skip in the processor
+            # makes sure we never re-process the overlap.
             since_date = ""
             if self._db:
                 try:
                     cursor = await self._db._db.execute(
-                        "SELECT value FROM gmail_classifier_settings WHERE key = 'since_date_default'"
+                        "SELECT key, value FROM gmail_classifier_settings "
+                        "WHERE key IN ('last_sync_at', 'since_date_default')"
                     )
-                    row = await cursor.fetchone()
-                    since_date = row["value"] if row else ""
+                    rows = {r["key"]: r["value"] for r in await cursor.fetchall()}
+                    last_sync = (rows.get("last_sync_at") or "").strip()
+                    default = (rows.get("since_date_default") or "").strip()
+                    if last_sync:
+                        try:
+                            sync_dt = _dt.datetime.fromisoformat(last_sync)
+                            since_date = (sync_dt - _dt.timedelta(days=1)).strftime("%Y/%m/%d")
+                        except Exception:
+                            since_date = default
+                    else:
+                        since_date = default
                 except Exception:
                     pass
 

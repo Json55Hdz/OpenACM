@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 21
+    _SCHEMA_VERSION = 23
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -758,6 +758,29 @@ class Database:
                     "ALTER TABLE gmail_emails ADD COLUMN body_html TEXT NOT NULL DEFAULT ''"
                 )
                 log.info("Migration 21: added body_html to gmail_emails")
+            except Exception:
+                pass  # column already exists
+
+        if current < 22:
+            for col, default in (
+                ("context", "''"),
+                ("known_senders", "'[]'"),
+                ("patterns", "'[]'"),
+            ):
+                try:
+                    await self._db.execute(
+                        f"ALTER TABLE gmail_categories ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}"
+                    )
+                except Exception:
+                    pass  # column already exists
+            log.info("Migration 22: added context/known_senders/patterns to gmail_categories")
+
+        if current < 23:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE gmail_emails ADD COLUMN manual_override INTEGER NOT NULL DEFAULT 0"
+                )
+                log.info("Migration 23: added manual_override to gmail_emails")
             except Exception:
                 pass  # column already exists
 
