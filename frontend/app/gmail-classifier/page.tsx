@@ -145,6 +145,7 @@ export default function GmailClassifierPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [suggesting, setSuggesting] = useState(false);
+  const [autoReplyCategoryIds, setAutoReplyCategoryIds] = useState<number[]>([]);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -165,6 +166,9 @@ export default function GmailClassifierPage() {
       if (res.ok) {
         const s = await res.json();
         if (s.since_date_default) setSinceDate(s.since_date_default);
+        const cats = s?.autoreply_enabled_categories;
+        const parsed = cats ? JSON.parse(cats) : [];
+        setAutoReplyCategoryIds(parsed);
       }
     } catch { /* ignore */ }
   }, [apiFetch]);
@@ -447,6 +451,8 @@ export default function GmailClassifierPage() {
                 onReadToggle={handleEmailRead}
                 onRecategorize={handleRecategorize}
                 onReply={handleReply}
+                autoReplyCategoryIds={autoReplyCategoryIds}
+                token={token ?? undefined}
               />
             </div>
           </>

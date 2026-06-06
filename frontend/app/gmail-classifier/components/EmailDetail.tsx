@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink, ChevronUp } from 'lucide-react';
 
 interface Email {
@@ -31,6 +31,8 @@ interface EmailDetailProps {
   onReadToggle: (emailId: number, isRead: boolean) => void;
   onRecategorize: (emailId: number, categoryId: number) => void;
   onReply: (emailId: number, body: string) => Promise<boolean>;
+  autoReplyCategoryIds?: number[]
+  token?: string
 }
 
 // Inject base styles into HTML emails so they render cleanly in the iframe
@@ -91,12 +93,55 @@ function PlainTextBody({ text }: { text: string }) {
   );
 }
 
-export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply }: EmailDetailProps) {
+export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply, autoReplyCategoryIds, token }: EmailDetailProps) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [replySuccess, setReplySuccess] = useState(false);
   const [replyError, setReplyError] = useState('');
+  const [suggestionLoading, setSuggestionLoading] = useState(false)
+  const [suggestionError, setSuggestionError] = useState<string | null>(null)
+  const [fromDraft, setFromDraft] = useState(false)
+  const [savingDraft, setSavingDraft] = useState(false)
+  const [draftSaved, setDraftSaved] = useState(false)
+
+  useEffect(() => {
+    if (!email || !autoReplyCategoryIds || !token) return
+    const categoryEnabled = autoReplyCategoryIds.includes(email.category_id)
+    if (!categoryEnabled) return
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 30000)
+    setSuggestionLoading(true)
+    setSuggestionError(null)
+
+    fetch(`/api/plugins/gmail-classifier/emails/${email.id}/suggest-reply`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.eligible && data.body) {
+          setReplyText(data.body)
+          setFromDraft(data.from_draft ?? false)
+          setDraftSaved(data.from_draft ?? false)
+        }
+      })
+      .catch(err => {
+        if (err.name !== 'AbortError') {
+          setSuggestionError('No se pudo generar sugerencia')
+        }
+      })
+      .finally(() => {
+        setSuggestionLoading(false)
+        clearTimeout(timeoutId)
+      })
+
+    return () => {
+      controller.abort()
+      clearTimeout(timeoutId)
+    }
+  }, [email?.id, autoReplyCategoryIds, token])
 
   const handleSendReply = async () => {
     if (!replyText.trim()) return;
@@ -243,6 +288,18 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
             <CornerUpLeft size={11} className="inline mr-1" />
             Responder a <span className="text-[var(--acm-fg-3)]">{email.sender_email}</span>
           </p>
+          {suggestionLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2">
+              <div className="h-3 w-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              Generando respuesta...
+            </div>
+          )}
+          {!suggestionLoading && replyText && autoReplyCategoryIds?.includes(email.category_id) && (
+            <span className="text-xs font-medium text-purple-600 dark:text-purple-400">Sugerencia IA ✦</span>
+          )}
+          {suggestionError && (
+            <p className="text-xs text-gray-400 dark:text-gray-500 mb-1">{suggestionError}</p>
+          )}
           <textarea
             value={replyText}
             onChange={e => setReplyText(e.target.value)}
@@ -256,6 +313,28 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
             <div className="flex gap-2">
               <button onClick={() => setReplyOpen(false)} className="btn-secondary text-[12px] py-[6px] px-3">
                 Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!token) return
+                  setSavingDraft(true)
+                  try {
+                    const res = await fetch(`/api/plugins/gmail-classifier/emails/${email.id}/draft`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ body: replyText }),
+                    })
+                    if (res.ok) {
+                      setDraftSaved(true)
+                    }
+                  } finally {
+                    setSavingDraft(false)
+                  }
+                }}
+                disabled={savingDraft || !replyText.trim()}
+                className="px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                {savingDraft ? 'Guardando...' : draftSaved ? 'Borrador guardado ✓' : 'Guardar como borrador'}
               </button>
               <button
                 onClick={handleSendReply}
