@@ -6,7 +6,12 @@ Write-Host ""
 $REPO_ROOT = Split-Path -Parent $PSScriptRoot
 Set-Location $REPO_ROOT
 
-# ── 1. Git pull (only if this is a git checkout) ────────────────────────────
+# ── 1. Pull latest code ─────────────────────────────────────────────────────
+# If this is a git checkout, use `git pull`. If it's a manual zip install,
+# download the latest zip from GitHub and unpack it on top. User files
+# (config\.env, data\, .venv\) are never in the zip so they're safe.
+$ZipUrl = "https://github.com/Json55Hdz/OpenACM/archive/refs/heads/main.zip"
+
 $IsGitRepo = $false
 if ((Test-Path ".git") -and (Get-Command "git" -ErrorAction SilentlyContinue)) {
     git rev-parse --is-inside-work-tree 2>&1 | Out-Null
@@ -15,7 +20,6 @@ if ((Test-Path ".git") -and (Get-Command "git" -ErrorAction SilentlyContinue)) {
 
 $Stashed = $false
 if ($IsGitRepo) {
-    # Autostash uncommitted changes so the pull doesn't blow up
     $dirty = $false
     git diff --quiet HEAD 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { $dirty = $true }
@@ -29,7 +33,7 @@ if ($IsGitRepo) {
         if ($LASTEXITCODE -eq 0) { $Stashed = $true }
     }
 
-    Write-Host "[*] Fetching latest changes..." -ForegroundColor Yellow
+    Write-Host "[*] Fetching latest changes via git..." -ForegroundColor Yellow
     git pull --ff-only
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] git pull failed." -ForegroundColor Red
@@ -53,9 +57,47 @@ if ($IsGitRepo) {
         }
     }
 } else {
-    Write-Host "[!] This is not a git checkout — skipping 'git pull'." -ForegroundColor Yellow
-    Write-Host "    If you want to update the code, download the latest version" -ForegroundColor White
-    Write-Host "    from GitHub and extract it over this folder, then re-run update." -ForegroundColor White
+    Write-Host "[*] Not a git checkout — downloading latest from GitHub..." -ForegroundColor Yellow
+
+    $stamp = Get-Random
+    $TmpZip = Join-Path $env:TEMP "openacm-update-$stamp.zip"
+    $TmpDir = Join-Path $env:TEMP "openacm-update-$stamp"
+    New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
+
+    try {
+        # TLS 1.2 for older Win10 PowerShell
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $ZipUrl -OutFile $TmpZip -UseBasicParsing
+    } catch {
+        Write-Host "[ERROR] Failed to download the latest version." -ForegroundColor Red
+        Write-Host "    URL: $ZipUrl" -ForegroundColor White
+        Write-Host "    Details: $_" -ForegroundColor White
+        pause
+        exit 1
+    }
+
+    try {
+        Expand-Archive -Path $TmpZip -DestinationPath $TmpDir -Force
+    } catch {
+        Write-Host "[ERROR] Failed to extract the downloaded archive." -ForegroundColor Red
+        Remove-Item -Recurse -Force $TmpZip, $TmpDir -ErrorAction SilentlyContinue
+        pause
+        exit 1
+    }
+
+    # GitHub zips wrap everything in an inner folder like "OpenACM-main"
+    $InnerDir = Get-ChildItem $TmpDir -Directory | Select-Object -First 1
+    if (-not $InnerDir) {
+        Write-Host "[ERROR] Downloaded archive looked empty." -ForegroundColor Red
+        Remove-Item -Recurse -Force $TmpZip, $TmpDir -ErrorAction SilentlyContinue
+        pause
+        exit 1
+    }
+
+    Write-Host "[*] Applying new files (config\.env, data\, .venv\ are preserved)..." -ForegroundColor Yellow
+    Copy-Item -Path (Join-Path $InnerDir.FullName "*") -Destination $REPO_ROOT -Recurse -Force
+    Remove-Item -Recurse -Force $TmpZip, $TmpDir -ErrorAction SilentlyContinue
+    Write-Host "[OK] Latest version downloaded and applied." -ForegroundColor Green
 }
 Write-Host ""
 
