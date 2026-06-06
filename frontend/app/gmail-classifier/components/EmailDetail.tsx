@@ -33,6 +33,7 @@ interface EmailDetailProps {
   onReply: (emailId: number, body: string) => Promise<boolean>;
   autoReplyCategoryIds?: number[]
   token?: string
+  suggestionTimeoutMs?: number
 }
 
 // Inject base styles into HTML emails so they render cleanly in the iframe
@@ -93,7 +94,7 @@ function PlainTextBody({ text }: { text: string }) {
   );
 }
 
-export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply, autoReplyCategoryIds, token }: EmailDetailProps) {
+export function EmailDetail({ email, categories, onReadToggle, onRecategorize, onReply, autoReplyCategoryIds, token, suggestionTimeoutMs }: EmailDetailProps) {
   const [replyOpen, setReplyOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
@@ -125,7 +126,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
     const timeoutId = setTimeout(() => {
       timedOut = true
       controller.abort()
-    }, 30000)
+    }, suggestionTimeoutMs ?? 60000)
     setSuggestionLoading(true)
     setSuggestionError(null)
 
@@ -143,7 +144,12 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       })
       .catch(err => {
         if (err.name === 'AbortError' && !timedOut) return  // cleanup abort — ignore
-        setSuggestionError('No se pudo generar sugerencia')
+        const timeoutSecs = Math.round((suggestionTimeoutMs ?? 60000) / 1000)
+        const msg = timedOut
+          ? `Tiempo de espera agotado (${timeoutSecs}s)`
+          : `Error: ${err?.message || 'desconocido'}`
+        console.error('[autoreply] suggest-reply error:', err)
+        setSuggestionError(msg)
       })
       .finally(() => {
         setSuggestionLoading(false)

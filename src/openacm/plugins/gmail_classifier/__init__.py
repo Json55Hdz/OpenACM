@@ -124,6 +124,7 @@ class GmailClassifierPlugin(Plugin):
                 "since_date_default": "",
                 "autoreply_enabled_categories": "[]",
                 "autoreply_model": "",
+                "autoreply_timeout_seconds": "60",
             }
             for key, value in defaults.items():
                 await database._db.execute(

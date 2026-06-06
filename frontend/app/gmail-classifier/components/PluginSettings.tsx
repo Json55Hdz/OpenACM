@@ -9,6 +9,7 @@ interface PluginSettingsProps {
   token: string;
   onClose: () => void;
   onAutoReplyChange?: (ids: number[]) => void;
+  onAutoReplyTimeoutChange?: (timeoutSeconds: number) => void;
 }
 
 interface Category {
@@ -52,7 +53,7 @@ const CRON_PRESETS = [
 
 type MainTab = 'general' | 'auto-respuesta';
 
-export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSettingsProps) {
+export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyTimeoutChange }: PluginSettingsProps) {
   const [activeTab, setActiveTab] = useState<MainTab>('general');
 
   const [settings, setSettings] = useState({
@@ -69,6 +70,7 @@ export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSett
   // Auto-respuesta state
   const [categories, setCategories] = useState<Category[]>([]);
   const [autoReplyCats, setAutoReplyCats] = useState<number[]>([]);
+  const [autoReplyTimeout, setAutoReplyTimeout] = useState<number>(60);
   const [exampleFilter, setExampleFilter] = useState<number | null>(null);
   const [examples, setExamples] = useState<ReplyExample[]>([]);
   const [loadingExamples, setLoadingExamples] = useState(false);
@@ -93,6 +95,8 @@ export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSett
             if (Array.isArray(parsed)) setAutoReplyCats(parsed);
           } catch { /* ignore */ }
         }
+        const timeoutSecs = parseInt(data?.autoreply_timeout_seconds ?? '60', 10);
+        if (!isNaN(timeoutSecs) && timeoutSecs > 0) setAutoReplyTimeout(timeoutSecs);
       })
       .finally(() => setLoading(false));
 
@@ -179,6 +183,18 @@ export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSett
       setAutoReplyCats(prev); // rollback on failure
       setSettings(s => ({ ...s, autoreply_enabled_categories: JSON.stringify(prev) }));
     }
+  }
+
+  async function saveTimeout(secs: number) {
+    if (isNaN(secs) || secs < 5) return;
+    try {
+      await fetch(`${API}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ autoreply_timeout_seconds: secs }),
+      });
+      onAutoReplyTimeoutChange?.(secs);
+    } catch { /* ignore */ }
   }
 
   const TABS: { id: MainTab; label: string }[] = [
@@ -365,6 +381,23 @@ export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSett
                       ))}
                     </div>
                   )}
+                </div>
+
+                {/* Timeout setting */}
+                <div className="mt-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-[13px] text-[var(--acm-fg)]">Tiempo de espera (segundos)</span>
+                    <p className="text-[11px] text-[var(--acm-fg-4)] mt-0.5">Tiempo máximo para generar una sugerencia</p>
+                  </div>
+                  <input
+                    type="number"
+                    min={5}
+                    max={300}
+                    value={autoReplyTimeout}
+                    onChange={e => setAutoReplyTimeout(Number(e.target.value))}
+                    onBlur={e => saveTimeout(Number(e.target.value))}
+                    className="w-20 text-center bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[13px] rounded-[var(--acm-radius)] px-2 py-1 outline-none focus:border-[var(--acm-accent)]"
+                  />
                 </div>
 
                 <div className="acm-rule" />

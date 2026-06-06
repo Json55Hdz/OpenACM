@@ -147,6 +147,7 @@ export default function GmailClassifierPage() {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [suggesting, setSuggesting] = useState(false);
   const [autoReplyCategoryIds, setAutoReplyCategoryIds] = useState<number[]>([]);
+  const [suggestionTimeoutMs, setSuggestionTimeoutMs] = useState<number>(60000);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -172,6 +173,8 @@ export default function GmailClassifierPage() {
           const parsed = cats ? JSON.parse(cats) : [];
           if (Array.isArray(parsed)) setAutoReplyCategoryIds(parsed);
         } catch { /* malformed setting — keep default [] */ }
+        const timeoutSecs = parseInt(s?.autoreply_timeout_seconds ?? '60', 10);
+        if (!isNaN(timeoutSecs) && timeoutSecs > 0) setSuggestionTimeoutMs(timeoutSecs * 1000);
       }
     } catch { /* ignore */ }
   }, [apiFetch]);
@@ -463,6 +466,7 @@ export default function GmailClassifierPage() {
                 onReply={handleReply}
                 autoReplyCategoryIds={autoReplyCategoryIds}
                 token={token ?? undefined}
+                suggestionTimeoutMs={suggestionTimeoutMs}
               />
             </div>
           </>
@@ -478,7 +482,12 @@ export default function GmailClassifierPage() {
           />
         )}
         {showSettings && (
-          <PluginSettings token={token ?? ''} onClose={() => setShowSettings(false)} onAutoReplyChange={setAutoReplyCategoryIds} />
+          <PluginSettings
+            token={token ?? ''}
+            onClose={() => setShowSettings(false)}
+            onAutoReplyChange={setAutoReplyCategoryIds}
+            onAutoReplyTimeoutChange={(secs) => setSuggestionTimeoutMs(secs * 1000)}
+          />
         )}
 
         {showSuggestions && (

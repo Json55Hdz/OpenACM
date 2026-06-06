@@ -132,8 +132,9 @@ class SettingsBody(BaseModel):
     auto_apply_label: str | None = None
     cron_schedule: str | None = None
     since_date_default: str | None = None
-    autoreply_enabled_categories: str | None = None  # ← new
-    autoreply_model: str | None = None               # ← new
+    autoreply_enabled_categories: str | None = None
+    autoreply_model: str | None = None
+    autoreply_timeout_seconds: int | None = None
 
 
 class DraftBody(BaseModel):
