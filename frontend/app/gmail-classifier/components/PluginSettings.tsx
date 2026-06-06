@@ -163,12 +163,17 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
     const next = autoReplyCats.includes(categoryId)
       ? autoReplyCats.filter(id => id !== categoryId)
       : [...autoReplyCats, categoryId];
+    const prev = autoReplyCats;
     setAutoReplyCats(next);
-    await fetch(`${API}/settings`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({ autoreply_enabled_categories: JSON.stringify(next) }),
-    });
+    try {
+      await fetch(`${API}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ autoreply_enabled_categories: JSON.stringify(next) }),
+      });
+    } catch {
+      setAutoReplyCats(prev); // rollback on failure
+    }
   }
 
   const TABS: { id: MainTab; label: string }[] = [
@@ -433,25 +438,34 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
                                     <>
                                       <button
                                         onClick={async () => {
-                                          await fetch(`${API}/reply-examples/${ex.id}`, {
-                                            method: 'PUT',
-                                            headers,
-                                            body: JSON.stringify(editDraft),
-                                          });
-                                          setExamples(prev =>
-                                            prev.map(e => e.id === ex.id ? { ...e, ...editDraft } : e)
-                                          );
-                                          setEditingExample(null);
+                                          try {
+                                            const res = await fetch(`${API}/reply-examples/${ex.id}`, {
+                                              method: 'PUT',
+                                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                                              body: JSON.stringify(editDraft),
+                                            });
+                                            if (res.ok) {
+                                              setExamples(prev =>
+                                                prev.map(e => e.id === ex.id ? { ...e, ...editDraft } : e)
+                                              );
+                                              setEditingExample(null);
+                                            }
+                                            // If not ok, stay in edit mode — don't update local state
+                                          } catch {
+                                            // Network error — stay in edit mode
+                                          }
                                         }}
                                         className="p-1 text-green-500 hover:text-green-400"
                                         title="Guardar"
+                                        aria-label="Guardar"
                                       >
                                         <Check size={13} />
                                       </button>
                                       <button
                                         onClick={() => setEditingExample(null)}
                                         className="p-1 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-3)]"
-                                        title="Cancelar"
+                                        title="Cancelar edición"
+                                        aria-label="Cancelar edición"
                                       >
                                         <X size={13} />
                                       </button>
@@ -468,19 +482,27 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
                                         }}
                                         className="p-1 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-3)]"
                                         title="Editar"
+                                        aria-label="Editar"
                                       >
                                         <Pencil size={13} />
                                       </button>
                                       <button
                                         onClick={async () => {
-                                          await fetch(`${API}/reply-examples/${ex.id}`, {
-                                            method: 'DELETE',
-                                            headers: { Authorization: `Bearer ${token}` },
-                                          });
-                                          setExamples(prev => prev.filter(e => e.id !== ex.id));
+                                          try {
+                                            const res = await fetch(`${API}/reply-examples/${ex.id}`, {
+                                              method: 'DELETE',
+                                              headers: { Authorization: `Bearer ${token}` },
+                                            });
+                                            if (res.ok) {
+                                              setExamples(prev => prev.filter(e => e.id !== ex.id));
+                                            }
+                                          } catch {
+                                            // Network error — keep the row
+                                          }
                                         }}
                                         className="p-1 text-red-400 hover:text-red-500"
                                         title="Eliminar"
+                                        aria-label="Eliminar"
                                       >
                                         <Trash2 size={13} />
                                       </button>
