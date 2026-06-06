@@ -101,11 +101,15 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
   const [replyError, setReplyError] = useState('');
   const [suggestionLoading, setSuggestionLoading] = useState(false)
   const [suggestionError, setSuggestionError] = useState<string | null>(null)
-  const [fromDraft, setFromDraft] = useState(false)
   const [savingDraft, setSavingDraft] = useState(false)
   const [draftSaved, setDraftSaved] = useState(false)
 
   useEffect(() => {
+    // Reset all suggestion state whenever the email changes
+    setReplyText('')
+    setDraftSaved(false)
+    setSuggestionError(null)
+
     if (!email || !autoReplyCategoryIds || !token) return
     const categoryEnabled = autoReplyCategoryIds.includes(email.category_id)
     if (!categoryEnabled) return
@@ -127,7 +131,6 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
       .then(data => {
         if (data.eligible && data.body) {
           setReplyText(data.body)
-          setFromDraft(data.from_draft ?? false)
           setDraftSaved(data.from_draft ?? false)
         }
       })
@@ -339,7 +342,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
                   }
                 }}
                 disabled={savingDraft || !replyText.trim()}
-                className="px-3 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                className="btn-secondary text-[12px] py-[6px] px-3"
               >
                 {savingDraft ? 'Guardando...' : draftSaved ? 'Borrador guardado ✓' : 'Guardar como borrador'}
               </button>

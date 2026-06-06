@@ -167,8 +167,10 @@ export default function GmailClassifierPage() {
         const s = await res.json();
         if (s.since_date_default) setSinceDate(s.since_date_default);
         const cats = s?.autoreply_enabled_categories;
-        const parsed = cats ? JSON.parse(cats) : [];
-        setAutoReplyCategoryIds(parsed);
+        try {
+          const parsed = cats ? JSON.parse(cats) : [];
+          if (Array.isArray(parsed)) setAutoReplyCategoryIds(parsed);
+        } catch { /* malformed setting — keep default [] */ }
       }
     } catch { /* ignore */ }
   }, [apiFetch]);
