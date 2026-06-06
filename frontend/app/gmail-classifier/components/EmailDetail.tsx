@@ -123,7 +123,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
     setSuggestionLoading(true)
     setSuggestionError(null)
 
-    fetch(`/api/plugins/gmail-classifier/emails/${email.id}/suggest-reply`, {
+    fetch(`/api/gmail-classifier/emails/${email.id}/suggest-reply`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })
@@ -329,7 +329,7 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
                   if (!token) return
                   setSavingDraft(true)
                   try {
-                    const res = await fetch(`/api/plugins/gmail-classifier/emails/${email.id}/draft`, {
+                    const res = await fetch(`/api/gmail-classifier/emails/${email.id}/draft`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                       body: JSON.stringify({ body: replyText }),
