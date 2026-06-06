@@ -470,7 +470,7 @@ export default function GmailClassifierPage() {
           />
         )}
         {showSettings && (
-          <PluginSettings token={token ?? ''} onClose={() => setShowSettings(false)} />
+          <PluginSettings token={token ?? ''} onClose={() => setShowSettings(false)} onAutoReplyChange={setAutoReplyCategoryIds} />
         )}
 
         {showSuggestions && (

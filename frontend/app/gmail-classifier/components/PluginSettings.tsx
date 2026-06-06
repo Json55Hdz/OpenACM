@@ -8,6 +8,7 @@ const API = '/api/gmail-classifier';
 interface PluginSettingsProps {
   token: string;
   onClose: () => void;
+  onAutoReplyChange?: (ids: number[]) => void;
 }
 
 interface Category {
@@ -51,7 +52,7 @@ const CRON_PRESETS = [
 
 type MainTab = 'general' | 'auto-respuesta';
 
-export function PluginSettings({ token, onClose }: PluginSettingsProps) {
+export function PluginSettings({ token, onClose, onAutoReplyChange }: PluginSettingsProps) {
   const [activeTab, setActiveTab] = useState<MainTab>('general');
 
   const [settings, setSettings] = useState({
@@ -173,6 +174,7 @@ export function PluginSettings({ token, onClose }: PluginSettingsProps) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ autoreply_enabled_categories: nextStr }),
       });
+      onAutoReplyChange?.(next);
     } catch {
       setAutoReplyCats(prev); // rollback on failure
       setSettings(s => ({ ...s, autoreply_enabled_categories: JSON.stringify(prev) }));
