@@ -1,7 +1,6 @@
 # tests/unit/test_gmail_excel.py
 """Unit tests for Excel report generation."""
 import openpyxl
-import pytest
 from openacm.plugins.gmail_classifier.excel_export import generate_excel
 
 SAMPLE_STATS = {
@@ -79,3 +78,4 @@ def test_autoreply_sheet_values():
     assert values["Sugerencias generadas"] == 8
     assert values["Borradores guardados"] == 2
     assert values["Ejemplos aprendidos"] == 3
+    assert values["Uso promedio por ejemplo"] == 1.5
