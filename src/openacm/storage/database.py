@@ -167,7 +167,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 23
+    _SCHEMA_VERSION = 26
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -783,6 +783,54 @@ class Database:
                 log.info("Migration 23: added manual_override to gmail_emails")
             except Exception:
                 pass  # column already exists
+
+        if current < 24:
+            for col, default in (
+                ("thread_last_sender_email", "''"),
+                ("ai_suggestion",            "''"),
+            ):
+                try:
+                    await self._db.execute(
+                        f"ALTER TABLE gmail_emails ADD COLUMN {col} TEXT NOT NULL DEFAULT {default}"
+                    )
+                except Exception:
+                    pass  # column already exists
+            log.info("Migration 24: added thread_last_sender_email, ai_suggestion to gmail_emails")
+
+        if current < 25:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS gmail_reply_drafts (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email_id       INTEGER NOT NULL UNIQUE REFERENCES gmail_emails(id),
+                    gmail_draft_id TEXT    NOT NULL DEFAULT '',
+                    draft_body     TEXT    NOT NULL DEFAULT '',
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            log.info("Migration 25: created gmail_reply_drafts table")
+
+        if current < 26:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS gmail_reply_examples (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category_id         INTEGER NOT NULL REFERENCES gmail_categories(id),
+                    source_email_id     INTEGER,
+                    subtype_label       TEXT    NOT NULL DEFAULT '',
+                    email_context       TEXT    NOT NULL DEFAULT '',
+                    original_suggestion TEXT    NOT NULL DEFAULT '',
+                    final_response      TEXT    NOT NULL DEFAULT '',
+                    embedding           BLOB,
+                    use_count           INTEGER NOT NULL DEFAULT 0,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_reply_examples_category
+                    ON gmail_reply_examples(category_id);
+                CREATE INDEX IF NOT EXISTS idx_reply_examples_source
+                    ON gmail_reply_examples(source_email_id);
+            """)
+            log.info("Migration 26: created gmail_reply_examples table")
 
         # Save new version
         await self._db.execute(

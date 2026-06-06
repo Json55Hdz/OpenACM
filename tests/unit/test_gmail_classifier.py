@@ -47,6 +47,33 @@ async def test_otros_category_inserted_on_migration(db):
     assert row is not None, "'Otros' category should be seeded by migration"
 
 
+@pytest.mark.asyncio
+async def test_migration_24_columns_exist(db):
+    """Migration 24 adds thread_last_sender_email and ai_suggestion."""
+    cursor = await db._db.execute("PRAGMA table_info(gmail_emails)")
+    cols = {row["name"] for row in await cursor.fetchall()}
+    assert "thread_last_sender_email" in cols
+    assert "ai_suggestion" in cols
+
+
+@pytest.mark.asyncio
+async def test_migration_25_reply_drafts_table(db):
+    """Migration 25 creates gmail_reply_drafts."""
+    cursor = await db._db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='gmail_reply_drafts'"
+    )
+    assert await cursor.fetchone() is not None
+
+
+@pytest.mark.asyncio
+async def test_migration_26_reply_examples_table(db):
+    """Migration 26 creates gmail_reply_examples."""
+    cursor = await db._db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='gmail_reply_examples'"
+    )
+    assert await cursor.fetchone() is not None
+
+
 # ─── Plugin Skeleton Tests ───────────────────────────────────────────────────
 
 def test_plugin_nav_items():
