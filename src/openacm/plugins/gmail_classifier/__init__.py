@@ -122,6 +122,8 @@ class GmailClassifierPlugin(Plugin):
                 "auto_apply_label": "false",
                 "cron_schedule": "",
                 "since_date_default": "",
+                "autoreply_enabled_categories": "[]",
+                "autoreply_model": "",
             }
             for key, value in defaults.items():
                 await database._db.execute(
@@ -168,6 +170,14 @@ class GmailClassifierPlugin(Plugin):
         _proc_mod._processor = self._processor
         _router_mod._db = database
         _router_mod._processor = self._processor
+
+        from openacm.plugins.gmail_classifier.auto_reply import AutoReplyGenerator
+        from openacm.plugins.gmail_classifier.reply_learning import ReplyLearningManager
+
+        auto_reply = AutoReplyGenerator(db=database, llm_router=llm_router)
+        learning = ReplyLearningManager(db=database, llm_router=llm_router)
+        _router_mod._auto_reply = auto_reply
+        _router_mod._learning = learning
 
         # Start cron loop if a schedule is configured
         if database:
