@@ -1,8 +1,22 @@
 $REPO_ROOT = Split-Path -Parent $PSScriptRoot
 Set-Location $REPO_ROOT
 
+# Force TLS 1.2 — PowerShell 5.1 on Windows 10 defaults to TLS 1.0/1.1
+# which most modern endpoints (astral.sh, python.org, github) reject.
+# Without this the uv install call fails with a vague SSL/TLS error.
+try {
+    [Net.ServicePointManager]::SecurityProtocol = `
+        [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
+} catch {
+    Write-Host "[!] Could not raise TLS version; continuing." -ForegroundColor Yellow
+}
+
+# Show PowerShell + OS version up front — helps diagnose Win 10 / PS 5.1 quirks
+$psVersion = $PSVersionTable.PSVersion.ToString()
+$osVersion = [System.Environment]::OSVersion.Version.ToString()
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "  OpenACM Tier-1 Autonomous Agent Setup" -ForegroundColor Cyan
+Write-Host "  PowerShell: $psVersion | Windows: $osVersion" -ForegroundColor DarkGray
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -12,21 +26,33 @@ Write-Host ""
 # cleanest path on a fresh PC.
 if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "[*] Installing 'uv' (fast Python package manager)..." -ForegroundColor Yellow
+    $installerPath = Join-Path $env:TEMP "uv-install-$(Get-Random).ps1"
     try {
-        Invoke-RestMethod -Uri "https://astral.sh/uv/install.ps1" | Invoke-Expression
+        # Download to a file first (more reliable on Win 10 PS 5.1 than piping)
+        Invoke-WebRequest -Uri "https://astral.sh/uv/install.ps1" `
+            -OutFile $installerPath -UseBasicParsing
+        & powershell -ExecutionPolicy Bypass -NoProfile -File $installerPath
+        Remove-Item $installerPath -ErrorAction SilentlyContinue
+
         # uv installs to .local\bin on newer versions, .cargo\bin on older — add both
         foreach ($p in @("$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin", "$HOME\.local\bin", "$HOME\.cargo\bin")) {
             if (Test-Path $p) { $env:Path = "$p;$env:Path" }
         }
         if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
             Write-Host "[ERROR] uv was installed but is not in PATH for this session." -ForegroundColor Red
-            Write-Host "    Open a new PowerShell window and re-run setup." -ForegroundColor White
+            Write-Host "    Workaround: close this window, open a new terminal, re-run setup." -ForegroundColor White
             pause
             exit 1
         }
         Write-Host "[OK] 'uv' installed successfully." -ForegroundColor Green
     } catch {
-        Write-Host "[ERROR] Failed to install uv. Install it manually from https://docs.astral.sh/uv/" -ForegroundColor Red
+        Remove-Item $installerPath -ErrorAction SilentlyContinue
+        Write-Host "[ERROR] Failed to download or install uv." -ForegroundColor Red
+        Write-Host "    Details: $($_.Exception.Message)" -ForegroundColor White
+        Write-Host "    If you see 'SSL/TLS' or 'underlying connection' errors:" -ForegroundColor Yellow
+        Write-Host "      Your Win 10 needs TLS 1.2 enabled system-wide. Either:" -ForegroundColor Yellow
+        Write-Host "      - Update Windows fully and reboot, or" -ForegroundColor Yellow
+        Write-Host "      - Install uv manually: https://docs.astral.sh/uv/getting-started/installation/" -ForegroundColor Yellow
         pause
         exit 1
     }
