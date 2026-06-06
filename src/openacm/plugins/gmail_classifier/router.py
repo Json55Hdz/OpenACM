@@ -509,7 +509,10 @@ async def save_draft(email_id: int, body: DraftBody):
             (email_id, draft_id, body.body),
         )
         await db._db.commit()
-        await learning.learn(email_id=email_id, final_body=body.body)
+        try:
+            await learning.learn(email_id=email_id, final_body=body.body)
+        except Exception as exc:
+            log.warning("AutoReply learning failed on draft save", error=str(exc))
         return {"success": True, "draft_id": draft_id}
 
     except Exception as exc:
