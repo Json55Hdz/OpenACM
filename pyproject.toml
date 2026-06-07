@@ -62,7 +62,11 @@ dependencies = [
     # IoT
     "tinytuya>=1.15",
     "aiowebostv>=0.7",
-    "python-miio>=0.5",
+    # python-miio is intentionally NOT here: it pulls in netifaces==0.11.0
+    # which has no Windows wheels and requires MSVC Build Tools to compile.
+    # The IoT discovery code (src/openacm/tools/iot/discovery.py) already
+    # try/except's the import, so Xiaomi devices simply stay undiscovered
+    # unless the user opts in via: uv pip install ".[xiaomi]"
 
     # MCP
     "mcp>=1.0",
@@ -77,6 +81,11 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-mock>=3.14",
     "ruff>=0.8",
+]
+xiaomi = [
+    # Optional: Xiaomi / Roborock device discovery & control.
+    # Requires MSVC Build Tools on Windows because of native netifaces.
+    "python-miio>=0.5",
 ]
 voice = [
     "sounddevice>=0.5",

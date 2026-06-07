@@ -2861,7 +2861,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pypdf" },
     { name = "python-dotenv" },
-    { name = "python-miio" },
     { name = "python-multipart" },
     { name = "python-telegram-bot" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
@@ -2886,6 +2885,9 @@ voice = [
     { name = "numpy" },
     { name = "pyttsx3" },
     { name = "sounddevice" },
+]
+xiaomi = [
+    { name = "python-miio" },
 ]
 
 [package.metadata]
@@ -2923,7 +2925,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14" },
     { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "python-miio", specifier = ">=0.5" },
+    { name = "python-miio", marker = "extra == 'xiaomi'", specifier = ">=0.5" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "python-telegram-bot", specifier = ">=21.0" },
     { name = "pyttsx3", marker = "extra == 'voice'", specifier = ">=2.90" },
@@ -2938,7 +2940,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13.0" },
 ]
-provides-extras = ["dev", "voice"]
+provides-extras = ["dev", "xiaomi", "voice"]
 
 [[package]]
 name = "openai"
