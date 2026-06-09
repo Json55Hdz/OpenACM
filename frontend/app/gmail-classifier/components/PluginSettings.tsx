@@ -51,7 +51,7 @@ const CRON_PRESETS = [
   { label: 'Desactivar', value: '' },
 ];
 
-type MainTab = 'general' | 'auto-respuesta' | 'backup';
+type MainTab = 'general' | 'auto-respuesta' | 'backup' | 'digest';
 
 export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyTimeoutChange }: PluginSettingsProps) {
   const [activeTab, setActiveTab] = useState<MainTab>('general');
@@ -94,6 +94,18 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
+  // Digest tab state
+  const [digestEnabled, setDigestEnabled] = useState(false);
+  const [digestHH, setDigestHH] = useState('08');
+  const [digestMM, setDigestMM] = useState('00');
+  const [digestDays, setDigestDays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [digestAgentId, setDigestAgentId] = useState('');
+  const [digestChatId, setDigestChatId] = useState('');
+  const [agents, setAgents] = useState<{ id: number; name: string }[]>([]);
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   // Load settings + categories on mount
@@ -111,8 +123,27 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
         }
         const timeoutSecs = parseInt(data?.autoreply_timeout_seconds ?? '60', 10);
         if (!isNaN(timeoutSecs) && timeoutSecs > 0) setAutoReplyTimeout(timeoutSecs);
+
+        // Populate digest state from settings response
+        setDigestEnabled(data.digest_enabled === 'true');
+        const timeParts = (data.digest_time || '08:00').split(':');
+        setDigestHH((timeParts[0] || '08').padStart(2, '0'));
+        setDigestMM((timeParts[1] || '00').padStart(2, '0'));
+        const days = (data.digest_days || '1,2,3,4,5')
+          .split(',').map(Number).filter(Boolean);
+        setDigestDays(days);
+        setDigestAgentId(data.digest_agent_id || '');
+        setDigestChatId(data.digest_chat_id || '');
       })
       .finally(() => setLoading(false));
+
+    // Load agents for digest dropdown
+    fetch('/api/agents', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : [])
+      .then((list: any[]) => setAgents((list || []).map((a: any) => ({ id: a.id, name: a.name }))))
+      .catch(() => {});
 
     fetch(`${API}/categories`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
@@ -270,10 +301,55 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
     }
   }
 
+  const toggleDigestDay = (day: number) => {
+    setDigestDays(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+    );
+  };
+
+  const handleSaveDigest = async () => {
+    const digestTime = `${digestHH.padStart(2, '0')}:${digestMM.padStart(2, '0')}`;
+    const digestDaysStr = [...digestDays].sort((a, b) => a - b).join(',');
+    await fetch(`${API}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        digest_enabled: digestEnabled ? 'true' : 'false',
+        digest_time: digestTime,
+        digest_days: digestDaysStr,
+        digest_agent_id: digestAgentId,
+        digest_chat_id: digestChatId,
+      }),
+    });
+  };
+
+  const handleTestSend = async () => {
+    setTestSending(true);
+    setTestResult(null);
+    setTestError(null);
+    await handleSaveDigest();
+    try {
+      const res = await fetch(`${API}/summary/test-send`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(typeof err === 'object' && err !== null && 'detail' in err ? String((err as Record<string, unknown>).detail) : `Error ${res.status}`);
+      }
+      setTestResult('✓ Mensaje enviado correctamente');
+    } catch (err: any) {
+      setTestError(err.message || 'Error al enviar');
+    } finally {
+      setTestSending(false);
+    }
+  };
+
   const TABS: { id: MainTab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'auto-respuesta', label: 'Auto-respuesta' },
     { id: 'backup', label: 'Backup' },
+    { id: 'digest', label: 'Digest' },
   ];
 
   return (
@@ -629,6 +705,128 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── Digest tab ── */}
+            {activeTab === 'digest' && (
+              <div className="px-5 py-4 space-y-5">
+
+                {/* Master toggle */}
+                <div className="flex items-center gap-3">
+                  <input
+                    id="digest-enabled"
+                    type="checkbox"
+                    checked={digestEnabled}
+                    onChange={e => setDigestEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-[var(--acm-accent)]"
+                  />
+                  <label htmlFor="digest-enabled" className="text-[13px] text-[var(--acm-fg-2)]">
+                    Activar digest diario
+                  </label>
+                </div>
+
+                <fieldset disabled={!digestEnabled} className="space-y-4 disabled:opacity-40">
+
+                  {/* Time */}
+                  <div>
+                    <p className="text-[11px] text-[var(--acm-fg-4)] mb-1">Hora de envío</p>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number" min={0} max={23}
+                        value={digestHH}
+                        onChange={e => {
+                          const val = e.target.valueAsNumber;
+                          setDigestHH(isNaN(val) ? '00' : String(Math.min(23, Math.max(0, val))).padStart(2, '0'));
+                        }}
+                        className="w-14 rounded border border-[var(--acm-border)] bg-[var(--acm-bg-2)] px-2 py-1 text-[12px] text-center"
+                      />
+                      <span className="text-[var(--acm-fg-3)]">:</span>
+                      <input
+                        type="number" min={0} max={59} step={5}
+                        value={digestMM}
+                        onChange={e => {
+                          const val = e.target.valueAsNumber;
+                          setDigestMM(isNaN(val) ? '00' : String(Math.min(59, Math.max(0, val))).padStart(2, '0'));
+                        }}
+                        className="w-14 rounded border border-[var(--acm-border)] bg-[var(--acm-bg-2)] px-2 py-1 text-[12px] text-center"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Days */}
+                  <div>
+                    <p className="text-[11px] text-[var(--acm-fg-4)] mb-1">Días</p>
+                    <div className="flex gap-1">
+                      {(['L', 'M', 'X', 'J', 'V', 'S', 'D'] as const).map((label, i) => {
+                        const dayNum = i + 1; // ISO: 1=Mon … 7=Sun
+                        const active = digestDays.includes(dayNum);
+                        return (
+                          <button
+                            key={dayNum}
+                            type="button"
+                            onClick={() => toggleDigestDay(dayNum)}
+                            className={`w-8 h-8 rounded text-[11px] font-medium border transition-colors ${
+                              active
+                                ? 'bg-[var(--acm-accent)] border-[var(--acm-accent)] text-white'
+                                : 'border-[var(--acm-border)] text-[var(--acm-fg-3)] hover:border-[var(--acm-accent)]'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Agent */}
+                  <div>
+                    <p className="text-[11px] text-[var(--acm-fg-4)] mb-1">Agente notificador</p>
+                    <select
+                      value={digestAgentId}
+                      onChange={e => setDigestAgentId(e.target.value)}
+                      className="w-full rounded border border-[var(--acm-border)] bg-[var(--acm-bg-2)] px-2 py-1 text-[12px] text-[var(--acm-fg-2)]"
+                    >
+                      <option value="">— Selecciona un agente —</option>
+                      {agents.map(a => (
+                        <option key={a.id} value={String(a.id)}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Chat ID */}
+                  <div>
+                    <p className="text-[11px] text-[var(--acm-fg-4)] mb-1">Chat ID / Destino</p>
+                    <input
+                      type="text"
+                      value={digestChatId}
+                      onChange={e => setDigestChatId(e.target.value)}
+                      placeholder="ej. 123456789"
+                      className="w-full rounded border border-[var(--acm-border)] bg-[var(--acm-bg-2)] px-2 py-1 text-[12px] text-[var(--acm-fg-2)]"
+                    />
+                    <p className="text-[10px] text-[var(--acm-fg-4)] mt-1">
+                      Para Telegram: abre una conversación con tu bot y mira la URL o usa @userinfobot.
+                    </p>
+                  </div>
+
+                  {/* Save + Test */}
+                  <div className="flex items-center gap-3 pt-1">
+                    <button onClick={handleSaveDigest} className="btn-primary text-[12px] py-[6px] px-3">
+                      Guardar digest
+                    </button>
+                    <button
+                      onClick={handleTestSend}
+                      disabled={testSending || !digestAgentId || !digestChatId}
+                      className="btn-secondary text-[12px] py-[6px] px-3 disabled:opacity-40"
+                    >
+                      {testSending ? 'Enviando…' : 'Probar envío'}
+                    </button>
+                  </div>
+
+                  {testResult && <p className="text-[11px] text-green-400">{testResult}</p>}
+                  {testError  && <p className="text-[11px] text-red-400">{testError}</p>}
+
+                </fieldset>
               </div>
             )}
 
