@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles, BarChart3 } from 'lucide-react';
+import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles, BarChart3, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
@@ -148,6 +148,9 @@ export default function GmailClassifierPage() {
   const [suggesting, setSuggesting] = useState(false);
   const [autoReplyCategoryIds, setAutoReplyCategoryIds] = useState<number[]>([]);
   const [suggestionTimeoutMs, setSuggestionTimeoutMs] = useState<number>(60000);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryText, setSummaryText] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -255,6 +258,24 @@ export default function GmailClassifierPage() {
     } else {
       const err = await res.json().catch(() => ({}));
       alert((err as any).detail || 'Error al iniciar el proceso');
+    }
+  };
+
+  const handleSummary = async () => {
+    setSummaryLoading(true);
+    setSummaryError(null);
+    setSummaryText(null);
+    try {
+      const res = await fetch(`${API}/summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Error ${res.status}`);
+      const data = await res.json();
+      setSummaryText(data.summary);
+    } catch (err: any) {
+      setSummaryError(err.message || 'Error generando resumen');
+    } finally {
+      setSummaryLoading(false);
     }
   };
 
@@ -390,6 +411,17 @@ export default function GmailClassifierPage() {
                   </button>
                 )}
                 <button
+                  onClick={handleSummary}
+                  disabled={summaryLoading}
+                  className="btn-secondary text-[12px] py-[7px] px-3"
+                  title="Resumen de bandeja de entrada"
+                >
+                  {summaryLoading
+                    ? <Loader2 size={13} className="animate-spin" />
+                    : <Sparkles size={13} />}
+                  <span>¿Qué hay?</span>
+                </button>
+                <button
                   onClick={async () => {
                     setSuggesting(true);
                     try {
@@ -447,6 +479,24 @@ export default function GmailClassifierPage() {
                   total={processStatus.total}
                 />
               </div>
+            )}
+
+            {/* Inbox summary panel */}
+            {summaryText && (
+              <div className="mx-4 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
+                <pre className="flex-1 whitespace-pre-wrap text-[12px] text-amber-200/90 font-sans">
+                  {summaryText}
+                </pre>
+                <button
+                  onClick={() => setSummaryText(null)}
+                  className="text-amber-400/60 hover:text-amber-300 text-[14px] leading-none mt-0.5 shrink-0"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {summaryError && (
+              <p className="mx-4 mb-2 text-[11px] text-red-400">{summaryError}</p>
             )}
 
             {/* Category tabs */}
