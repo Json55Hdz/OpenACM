@@ -188,7 +188,7 @@ class GmailBatchProcessor:
             "last_completed_at": self._last_completed_at,
         }
 
-    async def process(self, since_date: str) -> dict:
+    async def process(self, since_date: str, force: bool = False) -> dict:
         """Fetch, classify and persist all emails since since_date (YYYY/MM/DD)."""
         if self.is_running:
             raise RuntimeError("Processor is already running")
@@ -212,20 +212,24 @@ class GmailBatchProcessor:
             # 1. Collect all message IDs from Gmail
             all_ids = await self._fetch_all_ids(service, since_date)
 
-            # 1b. Skip IDs we've already persisted (manual overrides and
-            # AI-classified alike). This is the biggest cron optimization:
-            # in steady state we only process newly-arrived emails.
-            existing_cursor = await self._db._db.execute(
-                "SELECT gmail_id FROM gmail_emails"
-            )
-            existing_ids = {r["gmail_id"] for r in await existing_cursor.fetchall()}
-            msg_ids = [mid for mid in all_ids if mid not in existing_ids]
-            skipped_count = len(all_ids) - len(msg_ids)
-            if skipped_count:
-                log.info(
-                    "Gmail processor: skipping already-processed emails",
-                    skipped=skipped_count, new=len(msg_ids),
+            # 1b. Skip IDs we've already persisted (unless force=True).
+            # In normal mode this is the biggest cron optimization: in steady
+            # state we only process newly-arrived emails.
+            if force:
+                msg_ids = all_ids
+                log.info("Gmail processor: force mode — reprocessing all emails", total=len(msg_ids))
+            else:
+                existing_cursor = await self._db._db.execute(
+                    "SELECT gmail_id FROM gmail_emails"
                 )
+                existing_ids = {r["gmail_id"] for r in await existing_cursor.fetchall()}
+                msg_ids = [mid for mid in all_ids if mid not in existing_ids]
+                skipped_count = len(all_ids) - len(msg_ids)
+                if skipped_count:
+                    log.info(
+                        "Gmail processor: skipping already-processed emails",
+                        skipped=skipped_count, new=len(msg_ids),
+                    )
 
             self._total = len(msg_ids)
             await self._emit("gmail_classifier.progress", {"processed": 0, "total": self._total})
@@ -239,7 +243,7 @@ class GmailBatchProcessor:
                 batch_ids = msg_ids[i: i + BATCH_SIZE]
                 emails = await self._fetch_details(service, batch_ids, auth_email)
                 classifications = await self._classify(emails, categories)
-                saved = await self._upsert(emails, classifications, categories)
+                saved = await self._upsert(emails, classifications, categories, force=force)
 
                 # Apply Gmail actions if enabled
                 if auto_mark_read or auto_apply_label:
@@ -495,6 +499,7 @@ class GmailBatchProcessor:
         emails: list[dict],
         classifications: dict[str, str],
         categories: list[dict],
+        force: bool = False,
     ) -> list[tuple[dict, int]]:
         cat_by_name = {c["name"]: c["id"] for c in categories}
         otros_id = cat_by_name.get("Otros")
@@ -504,49 +509,77 @@ class GmailBatchProcessor:
             cat_name = classifications.get(email["gmail_id"], "Otros")
             cat_id = cat_by_name.get(cat_name, otros_id)
 
-            # If the row already exists with manual_override=1 we preserve the
-            # user-chosen category_id and ai_classified flag. Body/metadata is
-            # still refreshed because that's harmless and useful.
-            await self._db._db.execute(
-                """
-                INSERT INTO gmail_emails
-                    (gmail_id, thread_id, subject, sender_name, sender_email,
-                     snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, thread_last_sender_email, received_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                ON CONFLICT(gmail_id) DO UPDATE SET
-                    thread_id     = excluded.thread_id,
-                    subject       = excluded.subject,
-                    sender_name   = excluded.sender_name,
-                    sender_email  = excluded.sender_email,
-                    snippet       = excluded.snippet,
-                    body_text     = excluded.body_text,
-                    body_html     = excluded.body_html,
-                    category_id   = CASE WHEN gmail_emails.manual_override = 1
-                                         THEN gmail_emails.category_id
-                                         ELSE excluded.category_id END,
-                    is_replied    = excluded.is_replied,
-                    thread_last_sender_email = excluded.thread_last_sender_email,
-                    ai_classified = CASE WHEN gmail_emails.manual_override = 1
-                                         THEN gmail_emails.ai_classified
-                                         ELSE 1 END,
-                    last_synced   = CURRENT_TIMESTAMP
-                """,
-                (
-                    email["gmail_id"],
-                    email["thread_id"],
-                    email["subject"],
-                    email["sender_name"],
-                    email["sender_email"],
-                    email["snippet"],
-                    email.get("body_text", ""),
-                    email.get("body_html", ""),
-                    cat_id,
-                    email["is_read"],
-                    email["is_replied"],
-                    email.get("thread_last_sender_email", ""),
-                    email["received_at"],
-                ),
+            params = (
+                email["gmail_id"],
+                email["thread_id"],
+                email["subject"],
+                email["sender_name"],
+                email["sender_email"],
+                email["snippet"],
+                email.get("body_text", ""),
+                email.get("body_html", ""),
+                cat_id,
+                email["is_read"],
+                email["is_replied"],
+                email.get("thread_last_sender_email", ""),
+                email["received_at"],
             )
+
+            if force:
+                # Always overwrite category and clear manual_override
+                await self._db._db.execute(
+                    """
+                    INSERT INTO gmail_emails
+                        (gmail_id, thread_id, subject, sender_name, sender_email,
+                         snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, thread_last_sender_email, received_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(gmail_id) DO UPDATE SET
+                        thread_id     = excluded.thread_id,
+                        subject       = excluded.subject,
+                        sender_name   = excluded.sender_name,
+                        sender_email  = excluded.sender_email,
+                        snippet       = excluded.snippet,
+                        body_text     = excluded.body_text,
+                        body_html     = excluded.body_html,
+                        category_id   = excluded.category_id,
+                        is_replied    = excluded.is_replied,
+                        thread_last_sender_email = excluded.thread_last_sender_email,
+                        ai_classified = 1,
+                        manual_override = 0,
+                        last_synced   = CURRENT_TIMESTAMP
+                    """,
+                    params,
+                )
+            else:
+                # If the row already exists with manual_override=1 we preserve the
+                # user-chosen category_id and ai_classified flag. Body/metadata is
+                # still refreshed because that's harmless and useful.
+                await self._db._db.execute(
+                    """
+                    INSERT INTO gmail_emails
+                        (gmail_id, thread_id, subject, sender_name, sender_email,
+                         snippet, body_text, body_html, category_id, is_read, is_replied, ai_classified, thread_last_sender_email, received_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(gmail_id) DO UPDATE SET
+                        thread_id     = excluded.thread_id,
+                        subject       = excluded.subject,
+                        sender_name   = excluded.sender_name,
+                        sender_email  = excluded.sender_email,
+                        snippet       = excluded.snippet,
+                        body_text     = excluded.body_text,
+                        body_html     = excluded.body_html,
+                        category_id   = CASE WHEN gmail_emails.manual_override = 1
+                                             THEN gmail_emails.category_id
+                                             ELSE excluded.category_id END,
+                        is_replied    = excluded.is_replied,
+                        thread_last_sender_email = excluded.thread_last_sender_email,
+                        ai_classified = CASE WHEN gmail_emails.manual_override = 1
+                                             THEN gmail_emails.ai_classified
+                                             ELSE 1 END,
+                        last_synced   = CURRENT_TIMESTAMP
+                    """,
+                    params,
+                )
             if cat_id is not None:
                 saved.append((email, cat_id))
         await self._db._db.commit()

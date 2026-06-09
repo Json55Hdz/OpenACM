@@ -412,3 +412,103 @@ async def test_recategorize_email(api, db):
     resp = await client.patch(f"/gmail-classifier/emails/{email_id}/category", json={"category_id": trabajo_id})
     assert resp.status_code == 200
     assert resp.json()["category_id"] == trabajo_id
+
+
+# ─── _upsert force flag ───────────────────────────────────────────────────────
+
+@pytest.fixture
+async def processor_with_categories(db, mock_llm_router, event_bus):
+    """Processor with 'Importantes' and 'Otros' categories seeded."""
+    from openacm.plugins.gmail_classifier.processor import GmailBatchProcessor
+    # Seed categories
+    await db._db.execute(
+        "INSERT OR IGNORE INTO gmail_categories (name, description) VALUES (?, ?)",
+        ("Importantes", "Alta prioridad"),
+    )
+    await db._db.commit()
+    return GmailBatchProcessor(db=db, llm_router=mock_llm_router, event_bus=event_bus)
+
+
+async def test_upsert_force_true_overrides_manual_override(db, processor_with_categories):
+    """force=True rewrites category and clears manual_override even when manual_override=1."""
+    proc = processor_with_categories
+
+    # Load the two category IDs
+    c1 = await db._db.execute("SELECT id FROM gmail_categories WHERE name='Importantes'")
+    importantes_id = (await c1.fetchone())["id"]
+    c2 = await db._db.execute("SELECT id FROM gmail_categories WHERE name='Otros'")
+    otros_id = (await c2.fetchone())["id"]
+
+    # Pre-insert an email with manual_override=1 pointing to 'Otros'
+    await db._db.execute(
+        "INSERT INTO gmail_emails "
+        "(gmail_id, thread_id, subject, sender_name, sender_email, snippet, "
+        " body_text, body_html, category_id, is_read, is_replied, ai_classified, "
+        " manual_override, thread_last_sender_email, received_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 1, ?, datetime('now'))",
+        ("gid1", "tid1", "Asunto", "Sender", "s@x.com", "preview",
+         "body", "", otros_id, ""),
+    )
+    await db._db.commit()
+
+    email = {
+        "gmail_id": "gid1", "thread_id": "tid1", "subject": "Asunto",
+        "sender_name": "Sender", "sender_email": "s@x.com",
+        "snippet": "preview", "body_text": "body", "body_html": "",
+        "is_read": 0, "is_replied": 0, "thread_last_sender_email": "",
+        "received_at": "2026-06-09T00:00:00+00:00",
+    }
+    categories = await proc._load_categories()
+    classifications = {"gid1": "Importantes"}
+
+    await proc._upsert([email], classifications, categories, force=True)
+
+    cursor = await db._db.execute(
+        "SELECT category_id, manual_override, ai_classified FROM gmail_emails WHERE gmail_id='gid1'"
+    )
+    row = await cursor.fetchone()
+    assert row["category_id"] == importantes_id
+    assert row["manual_override"] == 0
+    assert row["ai_classified"] == 1
+
+
+async def test_upsert_force_false_preserves_manual_override(db, processor_with_categories):
+    """force=False (default) preserves manual_override=1 and keeps old category."""
+    proc = processor_with_categories
+
+    c1 = await db._db.execute("SELECT id FROM gmail_categories WHERE name='Importantes'")
+    importantes_id = (await c1.fetchone())["id"]
+    c2 = await db._db.execute("SELECT id FROM gmail_categories WHERE name='Otros'")
+    otros_id = (await c2.fetchone())["id"]
+
+    # Pre-insert with manual_override=1 pointing to 'Otros'
+    await db._db.execute(
+        "INSERT INTO gmail_emails "
+        "(gmail_id, thread_id, subject, sender_name, sender_email, snippet, "
+        " body_text, body_html, category_id, is_read, is_replied, ai_classified, "
+        " manual_override, thread_last_sender_email, received_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 1, ?, datetime('now'))",
+        ("gid2", "tid2", "Asunto", "Sender", "s@x.com", "preview",
+         "body", "", otros_id, ""),
+    )
+    await db._db.commit()
+
+    email = {
+        "gmail_id": "gid2", "thread_id": "tid2", "subject": "Asunto",
+        "sender_name": "Sender", "sender_email": "s@x.com",
+        "snippet": "preview", "body_text": "body", "body_html": "",
+        "is_read": 0, "is_replied": 0, "thread_last_sender_email": "",
+        "received_at": "2026-06-09T00:00:00+00:00",
+    }
+    categories = await proc._load_categories()
+    classifications = {"gid2": "Importantes"}
+
+    # force=False — manual_override should be preserved
+    await proc._upsert([email], classifications, categories, force=False)
+
+    cursor = await db._db.execute(
+        "SELECT category_id, manual_override FROM gmail_emails WHERE gmail_id='gid2'"
+    )
+    row = await cursor.fetchone()
+    assert row["category_id"] == otros_id   # unchanged — manual override kept
+    assert row["manual_override"] == 1
