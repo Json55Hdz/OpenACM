@@ -269,7 +269,11 @@ export default function GmailClassifierPage() {
       const res = await fetch(`${API}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        const msg = errData?.detail || (res.status === 503 ? 'LLM no configurado' : `Error ${res.status}`);
+        throw new Error(msg);
+      }
       const data = await res.json();
       setSummaryText(data.summary);
     } catch (err: any) {
@@ -496,7 +500,10 @@ export default function GmailClassifierPage() {
               </div>
             )}
             {summaryError && (
-              <p className="mx-4 mb-2 text-[11px] text-red-400">{summaryError}</p>
+              <div className="mx-4 mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 flex items-center justify-between gap-2">
+                <p className="text-[12px] text-red-400">⚠ {summaryError}</p>
+                <button onClick={() => setSummaryError(null)} className="text-red-400/60 hover:text-red-300 text-[13px] leading-none shrink-0">✕</button>
+              </div>
             )}
 
             {/* Category tabs */}
