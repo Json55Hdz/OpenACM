@@ -21,6 +21,9 @@ _db: Any = None
 _processor: Any = None
 _auto_reply: Any = None
 _learning: Any = None
+_llm_router: Any = None
+_event_bus: Any = None
+_plugin: Any = None  # GmailClassifierPlugin instance — used to restart digest cron
 
 
 def _require_db():
@@ -45,6 +48,12 @@ def _require_learning():
     if _learning is None:
         raise HTTPException(status_code=503, detail="ReplyLearning not initialized")
     return _learning
+
+
+def _require_llm():
+    if _llm_router is None:
+        raise HTTPException(status_code=503, detail="LLM no configurado")
+    return _llm_router
 
 
 # ─── Pydantic models ─────────────────────────────────────────────────────────
@@ -880,6 +889,19 @@ async def get_stats(from_date: str, to_date: str):
         raise HTTPException(status_code=400, detail="from_date must be <= to_date")
     from openacm.plugins.gmail_classifier.stats import compute_stats
     return await compute_stats(db, from_date, to_date)
+
+
+# ─── Inbox Summary ────────────────────────────────────────────────────────────
+
+@router.get("/summary")
+async def get_inbox_summary():
+    """Generate and return an AI summary of today's inbox."""
+    import datetime as _dt
+    from openacm.plugins.gmail_classifier.summary import generate_inbox_summary
+    db = _require_db()
+    llm = _require_llm()
+    summary = await generate_inbox_summary(db, llm, _event_bus)
+    return {"summary": summary, "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
 
 
 @router.get("/export/excel")

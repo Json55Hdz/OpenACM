@@ -88,6 +88,8 @@ class GmailClassifierPlugin(Plugin):
         self._db = None
         self._processor = None
         self._cron_task: asyncio.Task | None = None
+        self._llm_router = None
+        self._event_bus = None
 
     # ── API router ─────────────────────────────────────────────
 
@@ -162,6 +164,10 @@ class GmailClassifierPlugin(Plugin):
                 )
             await database._db.commit()
 
+        # Store for use by digest cron (Task 2)
+        self._llm_router = llm_router
+        self._event_bus = event_bus
+
         # Initialize processor and wire router
         self._processor = _proc_mod.GmailBatchProcessor(
             db=database,
@@ -179,6 +185,9 @@ class GmailClassifierPlugin(Plugin):
         learning = ReplyLearningManager(db=database, llm_router=llm_router)
         _router_mod._auto_reply = auto_reply
         _router_mod._learning = learning
+        _router_mod._llm_router = llm_router
+        _router_mod._event_bus = event_bus
+        _router_mod._plugin = self
 
         # Start cron loop if a schedule is configured
         if database:
