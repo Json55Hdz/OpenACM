@@ -164,7 +164,10 @@ async def import_config(db: Any, data: dict) -> dict:
             elif k in _BOOL_KEYS:
                 db_value = "true" if v else "false"
             elif k == "autoreply_timeout_seconds":
-                db_value = str(int(v))
+                try:
+                    db_value = str(int(v))
+                except (ValueError, TypeError):
+                    db_value = "60"
             else:
                 db_value = str(v) if v is not None else ""
 
@@ -183,11 +186,12 @@ async def import_config(db: Any, data: dict) -> dict:
                 continue
 
             subtype = ex.get("subtype_label") or ""
+            final_resp = ex.get("final_response") or ""
 
             cursor = await db._db.execute(
                 "SELECT id FROM gmail_reply_examples "
-                "WHERE category_id=? AND subtype_label=? AND source_email_id IS NULL",
-                (cat_id, subtype),
+                "WHERE category_id=? AND subtype_label=? AND final_response=? AND source_email_id IS NULL",
+                (cat_id, subtype, final_resp),
             )
             if await cursor.fetchone():
                 continue
@@ -201,7 +205,7 @@ async def import_config(db: Any, data: dict) -> dict:
                     subtype,
                     ex.get("email_context") or "",
                     ex.get("original_suggestion") or "",
-                    ex.get("final_response") or "",
+                    final_resp,
                     ex.get("use_count") or 0,
                 ),
             )
