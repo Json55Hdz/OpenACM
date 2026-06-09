@@ -1,0 +1,133 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1a1a2e;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 8px;
+}
+
+h1 {
+  font-size: 26px;
+  font-weight: 700;
+  color: #0f0f23;
+  border-bottom: 3px solid #4f46e5;
+  padding-bottom: 12px;
+  margin-bottom: 6px;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1e1b4b;
+  border-bottom: 2px solid #e0e7ff;
+  padding-bottom: 6px;
+  margin-top: 32px;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #3730a3;
+  margin-top: 22px;
+}
+
+blockquote {
+  border-left: 4px solid #6366f1;
+  background: #f0f0ff;
+  margin: 12px 0;
+  padding: 8px 14px;
+  border-radius: 0 6px 6px 0;
+  color: #3730a3;
+  font-size: 12px;
+}
+
+blockquote p { margin: 4px 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 6px rgba(79,70,229,0.10);
+}
+
+thead tr {
+  background: #4f46e5;
+  color: white;
+}
+
+thead th {
+  padding: 9px 12px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 11.5px;
+}
+
+tbody tr:nth-child(even) { background: #f5f5ff; }
+tbody tr:nth-child(odd)  { background: #ffffff; }
+tbody tr:hover           { background: #ede9fe; }
+
+tbody td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e0e7ff;
+  vertical-align: middle;
+}
+
+strong { color: #1e1b4b; }
+
+code {
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  background: #f0f0ff;
+  color: #4f46e5;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11.5px;
+}
+
+pre {
+  background: #1e1b4b;
+  color: #c7d2fe;
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 11px;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+hr {
+  border: none;
+  border-top: 2px solid #e0e7ff;
+  margin: 24px 0;
+}
+
+ul, ol { padding-left: 20px; }
+li { margin: 3px 0; }
+
+a { color: #4f46e5; text-decoration: none; }
+
+@page {
+  margin: 18mm 16mm;
+  @bottom-right {
+    content: "Página " counter(page) " de " counter(pages);
+    font-size: 10px;
+    color: #9ca3af;
+  }
+  @bottom-left {
+    content: "OpenACM — Referencia de precios LLM · Junio 2026";
+    font-size: 10px;
+    color: #9ca3af;
+  }
+}
