@@ -418,7 +418,7 @@ async def test_recategorize_email(api, db):
 
 @pytest_asyncio.fixture
 async def processor_with_categories(db, mock_llm_router, event_bus):
-    """Processor with 'Importantes' and 'Otros' categories seeded."""
+    """Processor with 'Importantes' category seeded (Otros is seeded by migration)."""
     from openacm.plugins.gmail_classifier.processor import GmailBatchProcessor
     # Seed categories
     await db._db.execute(

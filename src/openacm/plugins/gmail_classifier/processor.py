@@ -542,6 +542,7 @@ class GmailBatchProcessor:
                         body_text     = excluded.body_text,
                         body_html     = excluded.body_html,
                         category_id   = excluded.category_id,
+                        is_read       = excluded.is_read,
                         is_replied    = excluded.is_replied,
                         thread_last_sender_email = excluded.thread_last_sender_email,
                         ai_classified = 1,
