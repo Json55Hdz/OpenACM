@@ -23,7 +23,7 @@ class BrainPromptMixin:
 
         if not getattr(self.config, "onboarding_completed", False):
             system_prompt = PROMPT_SETUP_MODE
-        else:
+        elif not getattr(self.config, "is_agent", False):
             rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
             if len(rc_paths) == 0:
                 system_prompt += PROMPT_RESURRECTION_HINT

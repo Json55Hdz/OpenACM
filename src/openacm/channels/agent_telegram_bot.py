@@ -54,8 +54,10 @@ class AgentBrainAdapter:
         channel_type: str,
         attachments: list | None = None,
     ) -> str:
-        # Prefix user_id to avoid collision with main brain memory namespaces
-        scoped_user_id = f"tg_{user_id}"
+        # Scope user_id to agent to isolate each agent's conversation history —
+        # without this, two agents serving the same Telegram user share the same
+        # memory key (channel_id:user_id) and their histories bleed into each other.
+        scoped_user_id = f"a{self.agent['id']}_tg_{user_id}"
         return await self.agent_runner.run(
             agent=self.agent,
             message=content,

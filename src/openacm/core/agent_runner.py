@@ -71,6 +71,8 @@ class AgentRunner:
             name=agent["name"],
             system_prompt=agent["system_prompt"],
             max_tool_iterations=10,
+            onboarding_completed=True,
+            is_agent=True,
         )
 
         # Use caller-provided channel_id or fall back to isolated namespace
