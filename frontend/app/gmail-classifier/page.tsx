@@ -419,7 +419,7 @@ export default function GmailClassifierPage() {
                 <button
                   onClick={handleSummary}
                   disabled={summaryLoading}
-                  className="btn-secondary text-[12px] py-[7px] px-3 flex items-center gap-1"
+                  className="btn-secondary text-[12px] py-[7px] px-3"
                   title="Resumen de bandeja de entrada"
                 >
                   {summaryLoading

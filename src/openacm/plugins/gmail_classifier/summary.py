@@ -21,14 +21,17 @@ async def generate_inbox_summary(db, llm_router, event_bus=None) -> str:
     Falls back to Part A only on LLM timeout or error.
     """
     today = datetime.date.today().isoformat()  # "YYYY-MM-DD"
+    # received_at is stored as ISO-8601 UTC ("2026-06-09T14:30:00.123456+00:00").
+    # substr(..., 1, 10) extracts the date prefix — works on all SQLite versions.
+    today_prefix = today  # "YYYY-MM-DD"
 
     # ── Part A: counts ────────────────────────────────────────────────────────
     total_cursor = await db._db.execute(
         "SELECT COUNT(*) as total, "
         "SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread "
         "FROM gmail_emails "
-        "WHERE date(received_at, 'localtime') = ?",
-        (today,),
+        "WHERE substr(received_at, 1, 10) = ?",
+        (today_prefix,),
     )
     totals = await total_cursor.fetchone()
     total = totals["total"] if totals else 0
@@ -41,10 +44,10 @@ async def generate_inbox_summary(db, llm_router, event_bus=None) -> str:
         "SELECT gc.name, COUNT(*) as cnt "
         "FROM gmail_emails ge "
         "JOIN gmail_categories gc ON ge.category_id = gc.id "
-        "WHERE date(ge.received_at, 'localtime') = ? "
+        "WHERE substr(ge.received_at, 1, 10) = ? "
         "GROUP BY gc.id "
         "ORDER BY cnt DESC",
-        (today,),
+        (today_prefix,),
     )
     by_category = await cat_cursor.fetchall()
     cat_line = "  |  ".join(f"{r['name']}: {r['cnt']}" for r in by_category)
@@ -55,10 +58,10 @@ async def generate_inbox_summary(db, llm_router, event_bus=None) -> str:
     email_cursor = await db._db.execute(
         "SELECT ge.subject, ge.sender_name, ge.received_at "
         "FROM gmail_emails ge "
-        "WHERE date(ge.received_at, 'localtime') = ? "
+        "WHERE substr(ge.received_at, 1, 10) = ? "
         "ORDER BY ge.received_at DESC "
         "LIMIT 30",
-        (today,),
+        (today_prefix,),
     )
     emails = await email_cursor.fetchall()
 
