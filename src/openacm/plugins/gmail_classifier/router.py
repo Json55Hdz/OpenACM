@@ -144,6 +144,11 @@ class SettingsBody(BaseModel):
     autoreply_enabled_categories: str | None = None
     autoreply_model: str | None = None
     autoreply_timeout_seconds: int | None = None
+    digest_enabled: str | None = None
+    digest_time: str | None = None
+    digest_days: str | None = None
+    digest_agent_id: str | None = None
+    digest_chat_id: str | None = None
 
 
 class DraftBody(BaseModel):
@@ -711,6 +716,10 @@ async def update_settings(body: SettingsBody):
                 apply_label=apply_label_on,
             ))
 
+    _DIGEST_KEYS = {"digest_enabled", "digest_time", "digest_days", "digest_agent_id", "digest_chat_id"}
+    if any(k in updates for k in _DIGEST_KEYS) and _plugin:
+        _plugin._start_digest_cron()
+
     cursor2 = await db._db.execute("SELECT key, value FROM gmail_classifier_settings")
     rows = await cursor2.fetchall()
     return {r["key"]: r["value"] for r in rows}
@@ -902,6 +911,46 @@ async def get_inbox_summary():
     llm = _require_llm()
     summary = await generate_inbox_summary(db, llm, _event_bus)
     return {"summary": summary, "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
+
+
+@router.post("/summary/test-send")
+async def test_send_digest():
+    """Generate the summary and emit channel:send immediately (for testing config)."""
+    import datetime as _dt
+    db = _require_db()
+    llm = _require_llm()
+    if _event_bus is None:
+        raise HTTPException(status_code=503, detail="Event bus no disponible")
+
+    cursor = await db._db.execute(
+        "SELECT key, value FROM gmail_classifier_settings "
+        "WHERE key IN ('digest_agent_id', 'digest_chat_id')"
+    )
+    cfg = {r["key"]: r["value"] for r in await cursor.fetchall()}
+    agent_id_str = cfg.get("digest_agent_id", "")
+    chat_id = cfg.get("digest_chat_id", "")
+
+    if not agent_id_str or not chat_id:
+        raise HTTPException(
+            status_code=400,
+            detail="digest_agent_id o digest_chat_id no configurado",
+        )
+    try:
+        agent_id = int(agent_id_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="digest_agent_id inválido")
+
+    from openacm.plugins.gmail_classifier.summary import generate_inbox_summary
+    try:
+        summary = await generate_inbox_summary(db, llm, _event_bus)
+        await _event_bus.emit("channel:send", {
+            "agent_id": agent_id,
+            "target_id": chat_id,
+            "text": summary,
+        })
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"sent": True}
 
 
 @router.get("/export/excel")

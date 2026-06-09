@@ -88,6 +88,7 @@ class GmailClassifierPlugin(Plugin):
         self._db = None
         self._processor = None
         self._cron_task: asyncio.Task | None = None
+        self._digest_task: asyncio.Task | None = None
         self._llm_router = None
         self._event_bus = None
 
@@ -127,6 +128,11 @@ class GmailClassifierPlugin(Plugin):
                 "autoreply_enabled_categories": "[]",
                 "autoreply_model": "",
                 "autoreply_timeout_seconds": "60",
+                "digest_enabled": "false",
+                "digest_time": "",
+                "digest_days": "1,2,3,4,5",
+                "digest_agent_id": "",
+                "digest_chat_id": "",
             }
             for key, value in defaults.items():
                 await database._db.execute(
@@ -198,6 +204,14 @@ class GmailClassifierPlugin(Plugin):
             schedule = row["value"] if row else ""
             if schedule:
                 self._start_cron(schedule)
+
+        # Start digest loop if configured
+        cursor_d = await database._db.execute(
+            "SELECT value FROM gmail_classifier_settings WHERE key = 'digest_enabled'"
+        )
+        row_d = await cursor_d.fetchone()
+        if row_d and row_d["value"] == "true":
+            self._start_digest_cron()
 
         log.info("GmailClassifierPlugin started")
 
@@ -276,11 +290,108 @@ class GmailClassifierPlugin(Plugin):
                 log.error("Gmail cron classification failed", error=str(exc))
                 # Continue loop — don't die on one failure
 
+    def _start_digest_cron(self) -> None:
+        if self._digest_task and not self._digest_task.done():
+            self._digest_task.cancel()
+        self._digest_task = asyncio.create_task(self._digest_loop())
+
+    async def _digest_loop(self) -> None:
+        import datetime as _dt
+
+        log.info("Gmail digest loop started")
+        while True:
+            cursor = await self._db._db.execute(
+                "SELECT key, value FROM gmail_classifier_settings "
+                "WHERE key IN ('digest_enabled','digest_time','digest_days','digest_agent_id','digest_chat_id')"
+            )
+            cfg = {r["key"]: r["value"] for r in await cursor.fetchall()}
+
+            if cfg.get("digest_enabled") != "true":
+                log.info("Gmail digest disabled, stopping loop")
+                return
+
+            digest_time = cfg.get("digest_time", "")
+            if not digest_time or ":" not in digest_time:
+                log.warning("Gmail digest: invalid digest_time, stopping", digest_time=digest_time)
+                return
+
+            try:
+                hh, mm = int(digest_time.split(":")[0]), int(digest_time.split(":")[1])
+            except (ValueError, IndexError):
+                log.warning("Gmail digest: cannot parse digest_time", value=digest_time)
+                return
+
+            try:
+                digest_days = {int(d.strip()) for d in cfg.get("digest_days", "1,2,3,4,5").split(",") if d.strip()}
+            except ValueError:
+                digest_days = {1, 2, 3, 4, 5}
+
+            if not digest_days:
+                log.warning("Gmail digest: no digest_days configured, stopping")
+                return
+
+            # Find next fire time (ISO isoweekday: 1=Mon, 7=Sun)
+            now = _dt.datetime.now()
+            candidate = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += _dt.timedelta(days=1)
+            for _ in range(7):
+                if candidate.isoweekday() in digest_days:
+                    break
+                candidate += _dt.timedelta(days=1)
+
+            wait_seconds = (candidate - now).total_seconds()
+            if wait_seconds <= 0:
+                await asyncio.sleep(60)
+                continue
+
+            log.info("Gmail digest next run", next_run=str(candidate), wait_seconds=round(wait_seconds))
+            await asyncio.sleep(wait_seconds)
+
+            # Re-read enabled flag after sleep (may have been toggled off)
+            cursor2 = await self._db._db.execute(
+                "SELECT value FROM gmail_classifier_settings WHERE key = 'digest_enabled'"
+            )
+            row2 = await cursor2.fetchone()
+            if not row2 or row2["value"] != "true":
+                log.info("Gmail digest disabled after sleep, skipping and stopping")
+                return
+
+            # Re-read agent config (may have changed)
+            cursor3 = await self._db._db.execute(
+                "SELECT key, value FROM gmail_classifier_settings "
+                "WHERE key IN ('digest_agent_id','digest_chat_id')"
+            )
+            send_cfg = {r["key"]: r["value"] for r in await cursor3.fetchall()}
+            agent_id_str = send_cfg.get("digest_agent_id", "")
+            chat_id = send_cfg.get("digest_chat_id", "")
+
+            if not agent_id_str or not chat_id:
+                log.warning("Gmail digest: agent_id or chat_id not configured, skipping send")
+            else:
+                try:
+                    from openacm.plugins.gmail_classifier.summary import generate_inbox_summary
+                    summary = await generate_inbox_summary(self._db, self._llm_router, self._event_bus)
+                    await self._event_bus.emit("channel:send", {
+                        "agent_id": int(agent_id_str),
+                        "target_id": chat_id,
+                        "text": summary,
+                    })
+                    log.info("Gmail digest sent", agent_id=agent_id_str)
+                except Exception as exc:
+                    log.error("Gmail digest send failed", error=str(exc))
+
     async def on_stop(self) -> None:
         if self._cron_task and not self._cron_task.done():
             self._cron_task.cancel()
             try:
                 await self._cron_task
+            except asyncio.CancelledError:
+                pass
+        if self._digest_task and not self._digest_task.done():
+            self._digest_task.cancel()
+            try:
+                await self._digest_task
             except asyncio.CancelledError:
                 pass
 
