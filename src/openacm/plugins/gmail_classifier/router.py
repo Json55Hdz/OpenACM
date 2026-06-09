@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from typing import Any, Literal
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 log = structlog.get_logger()
@@ -905,3 +905,42 @@ async def export_excel(from_date: str, to_date: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─── Config Backup / Restore ─────────────────────────────────────────────────
+
+@router.get("/export")
+async def export_config_endpoint():
+    """Download plugin configuration as a JSON backup file."""
+    import datetime
+    from fastapi import Response
+    from openacm.plugins.gmail_classifier.backup import export_config as _export_config
+    db = _require_db()
+    data = await _export_config(db)
+    today = datetime.date.today().isoformat()
+    filename = f"gmail-classifier-backup-{today}.json"
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/import")
+async def import_config_endpoint(file: UploadFile):
+    """Import configuration from a JSON backup file (smart merge)."""
+    from openacm.plugins.gmail_classifier.backup import import_config as _import_config
+    db = _require_db()
+    raw = await file.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"El archivo no es un JSON válido: {exc}")
+    try:
+        summary = await _import_config(db, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error al importar: {exc}")
+    return summary
