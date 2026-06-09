@@ -83,6 +83,7 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
   // Backup tab state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{
@@ -211,17 +212,23 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
   }
 
   async function handleExport() {
+    setExportError(null);
     setExporting(true);
     try {
       const res = await fetch(`${API}/export`, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setExportError('Error al exportar la configuración');
+        return;
+      }
       const blob = await res.blob();
       const today = new Date().toISOString().slice(0, 10);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `gmail-classifier-backup-${today}.json`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } finally {
       setExporting(false);
@@ -641,6 +648,9 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
                   >
                     {exporting ? 'Descargando…' : 'Descargar configuración'}
                   </button>
+                  {exportError && (
+                    <p className="mt-2 text-[12px] text-red-400">{exportError}</p>
+                  )}
                 </div>
 
                 <div className="acm-rule" />
@@ -682,7 +692,7 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
                           {importing ? 'Importando…' : 'Confirmar importación'}
                         </button>
                         <button
-                          onClick={() => { setSelectedFile(null); setImportResult(null); setImportError(null); }}
+                          onClick={() => { setSelectedFile(null); setImportResult(null); setImportError(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
                           className="btn-secondary text-[12px] py-[7px] px-3"
                         >
                           Cancelar
