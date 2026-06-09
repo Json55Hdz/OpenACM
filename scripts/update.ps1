@@ -28,7 +28,7 @@ if ($IsGitRepo) {
 
     if ($dirty) {
         Write-Host "[*] Local changes detected — stashing them temporarily..." -ForegroundColor Yellow
-        $ts = [int][double]::Parse((Get-Date -UFormat %s))
+        $ts = [long](([datetime]::UtcNow) - [datetime]'1970-01-01').TotalSeconds
         git stash push -u -m "openacm-update-autostash-$ts" 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $Stashed = $true }
     }
