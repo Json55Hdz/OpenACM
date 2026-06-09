@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Pencil, Trash2, Check } from 'lucide-react';
 
 const API = '/api/gmail-classifier';
@@ -51,7 +51,7 @@ const CRON_PRESETS = [
   { label: 'Desactivar', value: '' },
 ];
 
-type MainTab = 'general' | 'auto-respuesta';
+type MainTab = 'general' | 'auto-respuesta' | 'backup';
 
 export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyTimeoutChange }: PluginSettingsProps) {
   const [activeTab, setActiveTab] = useState<MainTab>('general');
@@ -79,6 +79,19 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
     subtype_label: '',
     final_response: '',
   });
+
+  // Backup tab state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [exporting, setExporting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    categories_updated: number;
+    categories_created: number;
+    examples_added: number;
+    settings_updated: number;
+  } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -197,9 +210,63 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
     } catch { /* ignore */ }
   }
 
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/export`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const today = new Date().toISOString().slice(0, 10);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gmail-classifier-backup-${today}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setSelectedFile(file);
+    setImportResult(null);
+    setImportError(null);
+  }
+
+  async function handleImport() {
+    if (!selectedFile) return;
+    setImporting(true);
+    setImportResult(null);
+    setImportError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      const res = await fetch(`${API}/import`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      if (res.ok) {
+        setImportResult(await res.json());
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setImportError(err.detail || 'Error al importar el archivo');
+      }
+    } catch {
+      setImportError('Error de red al importar');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   const TABS: { id: MainTab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'auto-respuesta', label: 'Auto-respuesta' },
+    { id: 'backup', label: 'Backup' },
   ];
 
   return (
@@ -553,6 +620,90 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
                         </tbody>
                       </table>
                     </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Backup tab ── */}
+            {activeTab === 'backup' && (
+              <div className="px-5 py-4 space-y-6">
+                {/* Export */}
+                <div>
+                  <h3 className="text-[13px] font-semibold text-[var(--acm-fg)] mb-1">Exportar configuración</h3>
+                  <p className="text-[11px] text-[var(--acm-fg-4)] mb-3">
+                    Descarga un archivo JSON con tus categorías, settings y ejemplos de respuesta aprendidos.
+                  </p>
+                  <button
+                    onClick={handleExport}
+                    disabled={exporting}
+                    className="btn-secondary text-[12px] py-[7px] px-3 min-w-[170px]"
+                  >
+                    {exporting ? 'Descargando…' : 'Descargar configuración'}
+                  </button>
+                </div>
+
+                <div className="acm-rule" />
+
+                {/* Import */}
+                <div>
+                  <h3 className="text-[13px] font-semibold text-[var(--acm-fg)] mb-1">Importar configuración</h3>
+                  <p className="text-[11px] text-[var(--acm-fg-4)] mb-3">
+                    Combina un backup con tu configuración actual. Las categorías existentes se actualizan
+                    por nombre; los ejemplos nuevos se agregan sin duplicar.
+                  </p>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".json"
+                    className="hidden"
+                    onChange={handleFileSelect}
+                  />
+
+                  {!selectedFile ? (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="btn-secondary text-[12px] py-[7px] px-3"
+                    >
+                      Seleccionar archivo…
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-[12px] text-[var(--acm-fg-3)]">
+                        Archivo: <span className="font-medium">{selectedFile.name}</span>
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleImport}
+                          disabled={importing}
+                          className="btn-primary text-[12px] py-[7px] px-3 min-w-[150px]"
+                        >
+                          {importing ? 'Importando…' : 'Confirmar importación'}
+                        </button>
+                        <button
+                          onClick={() => { setSelectedFile(null); setImportResult(null); setImportError(null); }}
+                          className="btn-secondary text-[12px] py-[7px] px-3"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {importResult && (
+                    <div className="mt-4 rounded p-3 bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[12px]">
+                      <p className="font-medium text-[var(--acm-fg)] mb-2">✓ Importación completa</p>
+                      <ul className="space-y-1 text-[var(--acm-fg-3)]">
+                        <li>• {importResult.categories_updated} categorías actualizadas, {importResult.categories_created} creadas</li>
+                        <li>• {importResult.examples_added} ejemplos de respuesta agregados</li>
+                        <li>• {importResult.settings_updated} settings actualizados</li>
+                      </ul>
+                    </div>
+                  )}
+
+                  {importError && (
+                    <p className="mt-3 text-[12px] text-red-400">{importError}</p>
                   )}
                 </div>
               </div>
