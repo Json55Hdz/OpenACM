@@ -269,12 +269,14 @@ export default function GmailClassifierPage() {
       const res = await fetch(`${API}/summary`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        const msg = errData?.detail || (res.status === 503 ? 'LLM no configurado' : `Error ${res.status}`);
-        throw new Error(msg);
+      const ct = res.headers.get('content-type') ?? '';
+      if (!ct.includes('application/json')) {
+        throw new Error('Servidor no disponible — reinicia la aplicación');
       }
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.detail ?? `Error ${res.status}`);
+      }
       setSummaryText(data.summary);
     } catch (err: any) {
       setSummaryError(err.message || 'Error generando resumen');
