@@ -413,13 +413,13 @@ export default function GmailClassifierPage() {
                 <button
                   onClick={handleSummary}
                   disabled={summaryLoading}
-                  className="btn-secondary text-[12px] py-[7px] px-3"
+                  className="btn-secondary text-[12px] py-[7px] px-3 flex items-center gap-1"
                   title="Resumen de bandeja de entrada"
                 >
                   {summaryLoading
                     ? <Loader2 size={13} className="animate-spin" />
                     : <Sparkles size={13} />}
-                  <span>¿Qué hay?</span>
+                  ¿Qué hay?
                 </button>
                 <button
                   onClick={async () => {
