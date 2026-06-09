@@ -932,6 +932,8 @@ async def import_config_endpoint(file: UploadFile):
     """Import configuration from a JSON backup file (smart merge)."""
     from openacm.plugins.gmail_classifier.backup import import_config as _import_config
     db = _require_db()
+    if file.size and file.size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Archivo demasiado grande (máx 10 MB)")
     raw = await file.read()
     try:
         data = json.loads(raw)
