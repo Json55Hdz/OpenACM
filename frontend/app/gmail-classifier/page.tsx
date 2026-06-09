@@ -362,6 +362,14 @@ export default function GmailClassifierPage() {
                     className="bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[12px] rounded-[var(--acm-radius)] px-3 py-1.5 outline-none focus:border-[var(--acm-accent)] transition-colors"
                   />
                 </div>
+
+                {/* Re-process warning */}
+                {!processStatus.running && (
+                  <p className="text-[11px] text-amber-500/80">
+                    ⚠ Al procesar se reclasificarán todos los correos desde la fecha seleccionada, incluyendo los que ya tenías guardados.
+                  </p>
+                )}
+
                 {processStatus.running ? (
                   <button
                     onClick={async () => {
