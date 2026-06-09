@@ -83,3 +83,139 @@ async def export_config(db: Any) -> dict:
         "categories": categories,
         "reply_examples": reply_examples,
     }
+
+
+async def import_config(db: Any, data: dict) -> dict:
+    """Smart-merge a backup dict into the current plugin config."""
+    if data.get("version") != EXPORT_VERSION:
+        raise ValueError(f"Unsupported backup version: {data.get('version')!r}")
+
+    categories_updated = 0
+    categories_created = 0
+    examples_added = 0
+    settings_updated = 0
+
+    try:
+        # ── Step 1: merge categories ──────────────────────────────────────────
+        name_to_id: dict[str, int] = {}
+
+        for cat in data.get("categories") or []:
+            name = (cat.get("name") or "").strip()
+            if not name or name.lower() == "otros":
+                continue
+
+            senders_json = json.dumps(cat.get("known_senders") or [], ensure_ascii=False)
+            patterns_json = json.dumps(cat.get("patterns") or [], ensure_ascii=False)
+
+            cursor = await db._db.execute(
+                "SELECT id FROM gmail_categories WHERE lower(name) = lower(?)", (name,)
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                await db._db.execute(
+                    "UPDATE gmail_categories "
+                    "SET description=?, color=?, icon=?, context=?, known_senders=?, patterns=? "
+                    "WHERE id=?",
+                    (
+                        cat.get("description") or "",
+                        cat.get("color") or "#6366f1",
+                        cat.get("icon") or "Tag",
+                        cat.get("context") or "",
+                        senders_json,
+                        patterns_json,
+                        existing["id"],
+                    ),
+                )
+                name_to_id[name.lower()] = existing["id"]
+                categories_updated += 1
+            else:
+                cursor = await db._db.execute(
+                    "INSERT INTO gmail_categories "
+                    "(name, description, color, icon, context, known_senders, patterns) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        name,
+                        cat.get("description") or "",
+                        cat.get("color") or "#6366f1",
+                        cat.get("icon") or "Tag",
+                        cat.get("context") or "",
+                        senders_json,
+                        patterns_json,
+                    ),
+                )
+                name_to_id[name.lower()] = cursor.lastrowid
+                categories_created += 1
+
+        # Index all pre-existing categories for example/autoreply resolution
+        cursor = await db._db.execute("SELECT id, name FROM gmail_categories")
+        for row in await cursor.fetchall():
+            name_to_id.setdefault(row["name"].lower(), row["id"])
+
+        # ── Step 2: merge settings ────────────────────────────────────────────
+        for k, v in (data.get("settings") or {}).items():
+            if k in _RUNTIME_KEYS:
+                continue
+
+            if k == "autoreply_enabled_categories":
+                names_list = v if isinstance(v, list) else []
+                ids = [name_to_id[n.lower()] for n in names_list if n.lower() in name_to_id]
+                db_value = json.dumps(ids)
+            elif k in _BOOL_KEYS:
+                db_value = "true" if v else "false"
+            elif k == "autoreply_timeout_seconds":
+                db_value = str(int(v))
+            else:
+                db_value = str(v) if v is not None else ""
+
+            await db._db.execute(
+                "INSERT INTO gmail_classifier_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (k, db_value),
+            )
+            settings_updated += 1
+
+        # ── Step 3: merge reply examples ──────────────────────────────────────
+        for ex in data.get("reply_examples") or []:
+            cat_name = (ex.get("category_name") or "").lower()
+            cat_id = name_to_id.get(cat_name)
+            if not cat_id:
+                continue
+
+            subtype = ex.get("subtype_label") or ""
+
+            cursor = await db._db.execute(
+                "SELECT id FROM gmail_reply_examples "
+                "WHERE category_id=? AND subtype_label=? AND source_email_id IS NULL",
+                (cat_id, subtype),
+            )
+            if await cursor.fetchone():
+                continue
+
+            await db._db.execute(
+                "INSERT INTO gmail_reply_examples "
+                "(category_id, subtype_label, email_context, original_suggestion, final_response, use_count) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    cat_id,
+                    subtype,
+                    ex.get("email_context") or "",
+                    ex.get("original_suggestion") or "",
+                    ex.get("final_response") or "",
+                    ex.get("use_count") or 0,
+                ),
+            )
+            examples_added += 1
+
+        await db._db.commit()
+
+    except Exception:
+        await db._db.rollback()
+        raise
+
+    return {
+        "categories_updated": categories_updated,
+        "categories_created": categories_created,
+        "examples_added": examples_added,
+        "settings_updated": settings_updated,
+    }
