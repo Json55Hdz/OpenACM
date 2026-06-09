@@ -163,14 +163,4 @@ if (-not $FrontendBuilt) {
     Write-Host "  (Note: frontend was not rebuilt — see warnings above.)" -ForegroundColor Yellow
 }
 Write-Host ""
-
-$choice = Read-Host "Restart OpenACM now? (Y/n)"
-if ($choice -eq "" -or $choice -match "^[yY]") {
-    Write-Host ""
-    Write-Host "Launching OpenACM..." -ForegroundColor Green
-    Write-Host ""
-    powershell -ExecutionPolicy Bypass -File "$PSScriptRoot\run.ps1"
-} else {
-    Write-Host "Run 'openacm start' to launch." -ForegroundColor Cyan
-    Read-Host "Press Enter to close"
-}
+# Restart is handled by the caller (update.bat), which launches run.bat after this script exits 0.
