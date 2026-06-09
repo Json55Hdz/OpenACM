@@ -93,6 +93,26 @@ class AgentTelegramChannel(TelegramChannel):
         data["channel_type"] = "telegram"
         await super()._on_message_sent(event_type, data)
 
+    async def start(self):
+        await super().start()
+        self.event_bus.on("channel:send", self._handle_channel_send)
+
+    async def stop(self):
+        try:
+            self.event_bus.off("channel:send", self._handle_channel_send)
+        except Exception:
+            pass
+        await super().stop()
+
+    async def _handle_channel_send(self, event_type: str, data: dict):
+        """Deliver a proactive message to the configured chat if this agent owns it."""
+        if data.get("agent_id") != self.brain.agent["id"]:
+            return
+        target_id = str(data.get("target_id", ""))
+        text = str(data.get("text", ""))
+        if target_id and text:
+            await self.send_message(target_id, text)
+
 
 class AgentBotManager:
     """
