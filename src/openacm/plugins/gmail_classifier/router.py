@@ -641,7 +641,7 @@ async def start_process(body: ProcessBody):
     proc = _require_processor()
     if proc.is_running:
         raise HTTPException(status_code=409, detail="Processing already in progress")
-    asyncio.create_task(proc.process(body.since_date))
+    asyncio.create_task(proc.process(body.since_date, force=True))
     return {"started": True, "since_date": body.since_date}
 
 
