@@ -56,7 +56,7 @@ async def export_config(db: Any) -> dict:
             except Exception:
                 settings[k] = []
         else:
-            settings[k] = v or ""
+            settings[k] = v
 
     # Load reply examples
     cursor = await db._db.execute(
