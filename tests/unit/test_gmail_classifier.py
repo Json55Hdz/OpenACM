@@ -148,6 +148,40 @@ async def test_processor_is_not_running_initially(processor):
 
 
 @pytest.mark.asyncio
+async def test_sync_read_state_pulls_changes_from_gmail(db, processor):
+    """Read/unread state changed in Gmail is reflected back into the local DB."""
+    await db._db.execute(
+        "INSERT OR IGNORE INTO gmail_categories (name, description, color, icon) VALUES ('Otros', 'd', '#000', 'Tag')"
+    )
+    # Three stored emails in the sync window with stale local read state:
+    #   m_read    — locally read, still unread in Gmail  → should flip to unread
+    #   m_unread  — locally unread, now read in Gmail     → should flip to read
+    #   m_same    — locally read, read in Gmail           → unchanged
+    await db._db.executemany(
+        "INSERT INTO gmail_emails (gmail_id, is_read, received_at, thread_id) VALUES (?, ?, ?, '')",
+        [
+            ("m_read", 1, "2026-06-10T10:00:00+00:00"),
+            ("m_unread", 0, "2026-06-10T11:00:00+00:00"),
+            ("m_same", 1, "2026-06-10T12:00:00+00:00"),
+        ],
+    )
+    await db._db.commit()
+
+    # Gmail says only m_read is currently unread.
+    service = MagicMock()
+    service.users().messages().list.return_value.execute.return_value = {
+        "messages": [{"id": "m_read"}], "nextPageToken": None,
+    }
+
+    changed = await processor._sync_read_state(service, "2026/06/01")
+    assert changed == 2
+
+    cur = await db._db.execute("SELECT gmail_id, is_read FROM gmail_emails ORDER BY gmail_id")
+    state = {r["gmail_id"]: r["is_read"] for r in await cur.fetchall()}
+    assert state == {"m_read": 0, "m_unread": 1, "m_same": 1}
+
+
+@pytest.mark.asyncio
 async def test_processor_classifies_emails(db, processor, mock_llm_router, mock_gmail_service, monkeypatch):
     """Processor fetches emails, classifies via LLM, and upserts to DB."""
     # Seed a category
@@ -364,6 +398,86 @@ async def test_list_emails_returns_rows(api, db):
     assert resp.status_code == 200
     emails = resp.json()
     assert any(e["gmail_id"] == "abc123" for e in emails["items"])
+
+
+@pytest.mark.asyncio
+async def test_search_emails_matches_across_columns(api, db):
+    client, _ = api
+    await db._db.execute(
+        "INSERT OR IGNORE INTO gmail_categories (name, description, color, icon) VALUES ('Otros', 'd', '#000', 'Tag')"
+    )
+    cursor = await db._db.execute("SELECT id FROM gmail_categories WHERE name='Otros'")
+    otros_id = (await cursor.fetchone())["id"]
+    await db._db.executemany(
+        "INSERT INTO gmail_emails (gmail_id, subject, sender_name, sender_email, snippet, body_text, category_id, thread_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, '')",
+        [
+            ("s1", "Factura pendiente", "Acme Corp", "billing@acme.com", "snip", "el cuerpo menciona zanahoria", otros_id),
+            ("s2", "Reunión semanal", "Bob", "bob@x.com", "snip", "nada relevante", otros_id),
+        ],
+    )
+    await db._db.commit()
+
+    # Match on subject
+    resp = await client.get("/gmail-classifier/emails", params={"search": "factura"})
+    assert resp.status_code == 200
+    ids = {e["gmail_id"] for e in resp.json()["items"]}
+    assert ids == {"s1"}
+
+    # Match on body_text (proves full-text reach beyond subject/sender)
+    resp = await client.get("/gmail-classifier/emails", params={"search": "zanahoria"})
+    assert {e["gmail_id"] for e in resp.json()["items"]} == {"s1"}
+
+    # Match on sender_email
+    resp = await client.get("/gmail-classifier/emails", params={"search": "bob@x.com"})
+    assert {e["gmail_id"] for e in resp.json()["items"]} == {"s2"}
+
+    # Multiple terms are AND-ed
+    resp = await client.get("/gmail-classifier/emails", params={"search": "factura zanahoria"})
+    assert {e["gmail_id"] for e in resp.json()["items"]} == {"s1"}
+
+    # No match
+    resp = await client.get("/gmail-classifier/emails", params={"search": "inexistente"})
+    assert resp.json()["items"] == []
+
+
+def test_collect_attachment_parts_separates_inline_from_documents():
+    from openacm.plugins.gmail_classifier.router import _collect_attachment_parts
+
+    payload = {
+        "mimeType": "multipart/mixed",
+        "parts": [
+            {"mimeType": "text/html", "body": {"data": "PGI+"}},
+            {
+                "mimeType": "image/png",
+                "filename": "logo.png",
+                "headers": [
+                    {"name": "Content-ID", "value": "<logo123>"},
+                    {"name": "Content-Disposition", "value": "inline"},
+                ],
+                "body": {"attachmentId": "att_inline", "size": 1234},
+            },
+            {
+                "mimeType": "application/pdf",
+                "filename": "factura.pdf",
+                "headers": [{"name": "Content-Disposition", "value": "attachment"}],
+                "body": {"attachmentId": "att_doc", "size": 5678},
+            },
+        ],
+    }
+
+    parts = _collect_attachment_parts(payload)
+    assert len(parts) == 2
+    by_id = {p["attachment_id"]: p for p in parts}
+
+    # Inline image flagged + carries its content-id (used by the HTML resolver)
+    assert by_id["att_inline"]["inline"] is True
+    assert by_id["att_inline"]["content_id"] == "logo123"
+
+    # Real document is not inline → shows up in the attachment chips
+    assert by_id["att_doc"]["inline"] is False
+    assert by_id["att_doc"]["filename"] == "factura.pdf"
+    assert by_id["att_doc"]["mime_type"] == "application/pdf"
 
 
 @pytest.mark.asyncio

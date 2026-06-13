@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles, BarChart3, Loader2 } from 'lucide-react';
+import { Mail, RefreshCw, Settings, AlertTriangle, ExternalLink, Square, Sparkles, BarChart3, Loader2, Search, X } from 'lucide-react';
 import Link from 'next/link';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
@@ -151,6 +151,8 @@ export default function GmailClassifierPage() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryText, setSummaryText] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -188,14 +190,20 @@ export default function GmailClassifierPage() {
   }, [apiFetch]);
 
   const fetchEmails = useCallback(async () => {
+    const q = searchQuery.trim();
     const params = new URLSearchParams({ page: '1', per_page: '50' });
-    if (selectedCategoryId !== null) params.set('category_id', String(selectedCategoryId));
+    if (q) {
+      // Searching is global — span every category so nothing is hidden by the tab.
+      params.set('search', q);
+    } else if (selectedCategoryId !== null) {
+      params.set('category_id', String(selectedCategoryId));
+    }
     const res = await apiFetch(`/emails?${params}`);
     if (res.ok) {
       const data = await res.json();
       setEmails(data.items);
     }
-  }, [apiFetch, selectedCategoryId]);
+  }, [apiFetch, selectedCategoryId, searchQuery]);
 
   const pollStatus = useCallback(async () => {
     const res = await apiFetch('/process/status');
@@ -241,6 +249,12 @@ export default function GmailClassifierPage() {
   useEffect(() => {
     fetchEmails();
   }, [fetchEmails]);
+
+  // Debounce the search box so we don't hit the API on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   const handleProcess = async () => {
     if (!sinceDate) {
@@ -508,8 +522,37 @@ export default function GmailClassifierPage() {
               </div>
             )}
 
+            {/* Search bar */}
+            <div className="flex-shrink-0 px-4 py-2 border-b border-[var(--acm-border)]">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--acm-fg-4)] pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  placeholder="Buscar en todos los correos — remitente, asunto, contenido…"
+                  className="w-full bg-[var(--acm-elev)] border border-[var(--acm-border)] text-[var(--acm-fg)] text-[12px] rounded-[var(--acm-radius)] pl-9 pr-9 py-2 outline-none focus:border-[var(--acm-accent)] transition-colors"
+                />
+                {searchInput && (
+                  <button
+                    onClick={() => setSearchInput('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
+                    title="Limpiar búsqueda"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+              {searchQuery.trim() && (
+                <p className="text-[11px] text-[var(--acm-fg-4)] mt-1.5 px-1">
+                  Búsqueda global · {emails.length} resultado{emails.length === 1 ? '' : 's'}
+                  {' '}para “{searchQuery.trim()}” — se ignoran las categorías
+                </p>
+              )}
+            </div>
+
             {/* Category tabs */}
-            <div className="flex-shrink-0 border-b border-[var(--acm-border)]">
+            <div className={`flex-shrink-0 border-b border-[var(--acm-border)] ${searchQuery.trim() ? 'opacity-40 pointer-events-none' : ''}`}>
               <CategoryTabs
                 categories={categories}
                 selectedId={selectedCategoryId}

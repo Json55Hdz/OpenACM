@@ -76,6 +76,15 @@ class CategoryBody(BaseModel):
     patterns: list[CategoryPattern] = Field(default_factory=list)
 
 
+def _escape_like(term: str) -> str:
+    """Escape LIKE wildcards so a literal % or _ in the query matches itself.
+
+    Paired with `ESCAPE '\\'` in the SQL. Backslash is escaped first so we don't
+    double-escape the escapes we add for % and _.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _normalize_senders(senders: list[str]) -> list[str]:
     """Lowercase, strip, dedupe, drop empties."""
     seen: set[str] = set()
@@ -347,6 +356,7 @@ async def import_gmail_labels():
 async def list_emails(
     category_id: int | None = None,
     is_read: int | None = None,
+    search: str | None = None,
     page: int = 1,
     per_page: int = 50,
 ):
@@ -360,6 +370,21 @@ async def list_emails(
     if is_read is not None:
         conditions.append("ge.is_read = ?")
         params.append(is_read)
+
+    # Free-text search across every meaningful column. Each whitespace-separated
+    # term must match somewhere (AND between terms, OR across columns) so the user
+    # can narrow results by typing more words.
+    if search and search.strip():
+        for term in search.split():
+            like = f"%{_escape_like(term)}%"
+            conditions.append(
+                "(ge.subject LIKE ? ESCAPE '\\' "
+                "OR ge.sender_name LIKE ? ESCAPE '\\' "
+                "OR ge.sender_email LIKE ? ESCAPE '\\' "
+                "OR ge.snippet LIKE ? ESCAPE '\\' "
+                "OR ge.body_text LIKE ? ESCAPE '\\')"
+            )
+            params.extend([like, like, like, like, like])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     offset = (page - 1) * per_page
@@ -578,6 +603,156 @@ async def delete_draft(email_id: int):
     await db._db.execute("DELETE FROM gmail_reply_drafts WHERE email_id = ?", (email_id,))
     await db._db.commit()
     return {"deleted": True}
+
+
+# ─── Attachments & rich HTML ─────────────────────────────────────────────────
+
+
+def _collect_attachment_parts(payload: dict) -> list[dict]:
+    """Walk a Gmail message payload tree and return every part with attachment bytes.
+
+    Each entry: {attachment_id, filename, mime_type, size, content_id, inline}.
+    Inline parts (images referenced from the HTML body via `cid:`) are flagged so
+    the document list can hide them — they're handled by the HTML resolver instead.
+    """
+    out: list[dict] = []
+
+    def _walk(part: dict, depth: int = 0) -> None:
+        if depth > 15:
+            return
+        body = part.get("body", {}) or {}
+        att_id = body.get("attachmentId")
+        if att_id:
+            hdrs = {h.get("name", "").lower(): h.get("value", "") for h in part.get("headers", []) or []}
+            content_id = hdrs.get("content-id", "").strip().strip("<>")
+            disposition = hdrs.get("content-disposition", "").lower()
+            inline = "inline" in disposition or bool(content_id)
+            filename = part.get("filename") or content_id or "archivo"
+            out.append({
+                "attachment_id": att_id,
+                "filename": filename,
+                "mime_type": part.get("mimeType", "application/octet-stream"),
+                "size": body.get("size", 0),
+                "content_id": content_id,
+                "inline": inline,
+            })
+        for p in part.get("parts", []) or []:
+            _walk(p, depth + 1)
+
+    _walk(payload)
+    return out
+
+
+async def _email_gmail_id(email_id: int) -> str:
+    """Resolve a local email row id to its Gmail message id, or 404."""
+    db = _require_db()
+    cursor = await db._db.execute("SELECT gmail_id FROM gmail_emails WHERE id = ?", (email_id,))
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+    return row["gmail_id"]
+
+
+@router.get("/emails/{email_id}/attachments")
+async def list_attachments(email_id: int):
+    """List real document attachments for an email (fetched live from Gmail)."""
+    gmail_id = await _email_gmail_id(email_id)
+    from openacm.tools.google_services import _get_google_service
+    try:
+        service = await _get_google_service("gmail", "v1")
+        msg = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
+    except Exception as exc:
+        log.warning("Failed to fetch attachments", email_id=email_id, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Error al consultar Gmail: {exc}")
+
+    parts = _collect_attachment_parts(msg.get("payload", {}))
+    # Only surface real documents — inline images belong to the HTML body.
+    docs = [
+        {"attachment_id": p["attachment_id"], "filename": p["filename"],
+         "mime_type": p["mime_type"], "size": p["size"]}
+        for p in parts if not p["inline"]
+    ]
+    return {"items": docs}
+
+
+@router.get("/emails/{email_id}/attachments/{attachment_id}")
+async def download_attachment(email_id: int, attachment_id: str):
+    """Stream a single attachment's bytes. Disposition is inline so browsers can
+    preview images/PDFs; the frontend forces a download for other types."""
+    gmail_id = await _email_gmail_id(email_id)
+    from openacm.tools.google_services import _get_google_service
+    try:
+        service = await _get_google_service("gmail", "v1")
+        # Re-walk the message to recover this attachment's filename + mime type.
+        msg = service.users().messages().get(userId="me", id=gmail_id, format="full").execute()
+        meta = next(
+            (p for p in _collect_attachment_parts(msg.get("payload", {})) if p["attachment_id"] == attachment_id),
+            None,
+        )
+        att = service.users().messages().attachments().get(
+            userId="me", messageId=gmail_id, id=attachment_id,
+        ).execute()
+    except Exception as exc:
+        log.warning("Failed to download attachment", email_id=email_id, error=str(exc))
+        raise HTTPException(status_code=502, detail=f"Error al descargar adjunto: {exc}")
+
+    data = att.get("data", "")
+    raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    mime = meta["mime_type"] if meta else "application/octet-stream"
+    filename = (meta["filename"] if meta else "archivo").replace('"', "")
+
+    from fastapi import Response
+    from urllib.parse import quote
+    return Response(
+        content=raw,
+        media_type=mime,
+        headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/emails/{email_id}/html")
+async def email_html(email_id: int):
+    """Return the email's HTML body with inline `cid:` images resolved to data URIs.
+
+    This is what makes embedded images actually render in the viewer. Falls back to
+    the stored body_html if Gmail can't be reached, so the viewer never goes blank.
+    """
+    db = _require_db()
+    cursor = await db._db.execute(
+        "SELECT gmail_id, body_html FROM gmail_emails WHERE id = ?", (email_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Correo no encontrado")
+
+    html = row["body_html"] or ""
+    if not html or "cid:" not in html:
+        return {"html": html, "resolved": False}
+
+    from openacm.tools.google_services import _get_google_service
+    try:
+        service = await _get_google_service("gmail", "v1")
+        msg = service.users().messages().get(userId="me", id=row["gmail_id"], format="full").execute()
+        inline_parts = [p for p in _collect_attachment_parts(msg.get("payload", {})) if p["content_id"]]
+
+        for p in inline_parts:
+            att = service.users().messages().attachments().get(
+                userId="me", messageId=row["gmail_id"], id=p["attachment_id"],
+            ).execute()
+            data = att.get("data", "")
+            b64 = base64.b64encode(
+                base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+            ).decode("ascii")
+            data_uri = f"data:{p['mime_type']};base64,{b64}"
+            # Replace src="cid:ID" / src='cid:ID' / src=cid:ID for this content-id.
+            cid = re.escape(p["content_id"])
+            html = re.sub(rf"""(["'])cid:{cid}\1""", lambda m, u=data_uri: m.group(1) + u + m.group(1), html)
+            html = re.sub(rf"""(?<==)cid:{cid}(?=[\s>])""", data_uri, html)
+    except Exception as exc:
+        log.warning("Failed to resolve inline images", email_id=email_id, error=str(exc))
+        return {"html": row["body_html"] or "", "resolved": False}
+
+    return {"html": html, "resolved": True}
 
 
 # ─── Reply examples ──────────────────────────────────────────────────────────

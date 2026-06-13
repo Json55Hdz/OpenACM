@@ -1,7 +1,27 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink, ChevronUp } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Mail, MailOpen, ChevronDown, CornerUpLeft, ExternalLink, ChevronUp, Paperclip, Download, FileText, Image as ImageIcon, File } from 'lucide-react';
+
+interface Attachment {
+  attachment_id: string;
+  filename: string;
+  mime_type: string;
+  size: number;
+}
+
+function formatBytes(n: number): string {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentIcon(mime: string) {
+  if (mime.startsWith('image/')) return ImageIcon;
+  if (mime === 'application/pdf' || mime.startsWith('text/')) return FileText;
+  return File;
+}
 
 interface Email {
   id: number;
@@ -40,6 +60,7 @@ interface EmailDetailProps {
 const HTML_BASE_STYLES = `
   <style>
     * { box-sizing: border-box; }
+    html, body { max-width: 100%; }
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       font-size: 14px;
@@ -51,11 +72,19 @@ const HTML_BASE_STYLES = `
       word-break: break-word;
       overflow-wrap: anywhere;
     }
-    img { max-width: 100%; height: auto; }
+    img { max-width: 100% !important; height: auto !important; }
     a { color: #2563eb; }
     p { margin: 0 0 10px; }
-    pre, code { font-size: 12px; overflow-x: auto; }
-    table { max-width: 100%; border-collapse: collapse; }
+    h1, h2, h3 { line-height: 1.3; }
+    pre, code { font-size: 12px; white-space: pre-wrap; overflow-x: auto; }
+    /* Marketing emails set huge fixed table widths — clamp so nothing overflows */
+    table { max-width: 100% !important; border-collapse: collapse; }
+    td, th { word-break: break-word; }
+    blockquote {
+      margin: 0 0 10px; padding: 4px 0 4px 12px;
+      border-left: 3px solid #d1d5db; color: #4b5563;
+    }
+    hr { border: none; border-top: 1px solid #e5e7eb; margin: 16px 0; }
   </style>
 `;
 
@@ -107,6 +136,72 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
   // Session cache: keeps generated suggestions in RAM so switching emails
   // and coming back doesn't cost another LLM call.
   const suggestionCache = useRef<Map<number, string>>(new Map())
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  // Resolved HTML (inline cid: images turned into data URIs). null while loading
+  // or when no resolution is needed; falls back to the stored body_html.
+  const [resolvedHtml, setResolvedHtml] = useState<string | null>(null)
+
+  // Fetch the attachment list whenever the open email changes.
+  useEffect(() => {
+    setAttachments([])
+    if (!email || !token) return
+    let cancelled = false
+    fetch(`/api/gmail-classifier/emails/${email.id}/attachments`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => (r.ok ? r.json() : { items: [] }))
+      .then(data => { if (!cancelled) setAttachments(data.items ?? []) })
+      .catch(() => { /* attachments are best-effort */ })
+    return () => { cancelled = true }
+  }, [email?.id, token])
+
+  // Resolve inline cid: images (the usual reason images "don't load"). Only hit
+  // the API when the stored body actually references cid: — otherwise it renders fine.
+  useEffect(() => {
+    setResolvedHtml(null)
+    if (!email || !token) return
+    const stored = `${email.body_html || ''}${email.body_text || ''}`
+    if (!stored.includes('cid:')) return
+    let cancelled = false
+    fetch(`/api/gmail-classifier/emails/${email.id}/html`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (!cancelled && data?.resolved && data.html) setResolvedHtml(data.html) })
+      .catch(() => { /* fall back to stored html */ })
+    return () => { cancelled = true }
+  }, [email?.id, token])
+
+  const downloadAttachment = useCallback(async (att: Attachment) => {
+    if (!email || !token) return
+    setDownloadingId(att.attachment_id)
+    try {
+      const res = await fetch(
+        `/api/gmail-classifier/emails/${email.id}/attachments/${att.attachment_id}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const previewable = att.mime_type.startsWith('image/') || att.mime_type === 'application/pdf'
+      if (previewable) {
+        window.open(url, '_blank', 'noopener')
+      } else {
+        const a = document.createElement('a')
+        a.href = url
+        a.download = att.filename
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (err) {
+      console.error('[attachment] download failed:', err)
+    } finally {
+      setDownloadingId(null)
+    }
+  }, [email?.id, token])
 
   useEffect(() => {
     // Load from cache immediately to avoid flash of empty state
@@ -198,7 +293,8 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
   const looksLikeHtml = (s: string) =>
     /<!DOCTYPE|<html|<body|<div|<table|<td|<span|<p\s|<br|@media|\.u-row/i.test(s.slice(0, 500));
 
-  const htmlToRender = email.body_html || (looksLikeHtml(email.body_text) ? email.body_text : '');
+  const storedHtml = email.body_html || (looksLikeHtml(email.body_text) ? email.body_text : '');
+  const htmlToRender = resolvedHtml ?? storedHtml;
   const hasHtml = !!htmlToRender;
   const bodyContent = email.body_text || email.snippet;
 
@@ -238,6 +334,46 @@ export function EmailDetail({ email, categories, onReadToggle, onRecategorize, o
           </a>
         </div>
       </div>
+
+      {/* ── Attachments ───────────────────────────────────── */}
+      {attachments.length > 0 && (
+        <div className="px-6 py-2.5 border-b border-[var(--acm-border)] flex-shrink-0">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Paperclip size={12} className="text-[var(--acm-fg-4)]" />
+            <span className="text-[11px] text-[var(--acm-fg-4)]">
+              {attachments.length} adjunto{attachments.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {attachments.map(att => {
+              const Icon = attachmentIcon(att.mime_type);
+              const isDownloading = downloadingId === att.attachment_id;
+              return (
+                <button
+                  key={att.attachment_id}
+                  onClick={() => downloadAttachment(att)}
+                  disabled={isDownloading}
+                  title={`${att.filename} — abrir / descargar`}
+                  className="group flex items-center gap-2 max-w-[240px] bg-[var(--acm-card)] border border-[var(--acm-border)] rounded-[var(--acm-radius)] px-2.5 py-1.5 hover:border-[var(--acm-accent)] transition-colors text-left"
+                >
+                  <Icon size={15} className="text-[var(--acm-accent)] flex-shrink-0" />
+                  <span className="flex flex-col min-w-0">
+                    <span className="text-[12px] text-[var(--acm-fg-2)] truncate">{att.filename}</span>
+                    {att.size > 0 && (
+                      <span className="text-[10px] text-[var(--acm-fg-4)]">{formatBytes(att.size)}</span>
+                    )}
+                  </span>
+                  {isDownloading ? (
+                    <div className="h-3 w-3 rounded-full border-2 border-[var(--acm-fg-4)] border-t-transparent animate-spin flex-shrink-0" />
+                  ) : (
+                    <Download size={13} className="text-[var(--acm-fg-4)] group-hover:text-[var(--acm-accent)] flex-shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Body ──────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto acm-scroll min-h-0 px-4 py-4">

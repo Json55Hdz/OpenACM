@@ -62,6 +62,16 @@ async def compute_stats(db: Any, from_date: str, to_date: str) -> dict:
     replied_count = rr[1] or 0
     reply_rate = round(replied_count / total, 3) if total else 0.0
 
+    # Read status — reflects what's actually been read (synced from Gmail)
+    cur = await db._db.execute(
+        "SELECT SUM(CASE WHEN is_read=1 THEN 1 ELSE 0 END) AS read_count "
+        "FROM gmail_emails "
+        "WHERE received_at >= ? AND received_at < date(?, '+1 day')", p
+    )
+    read_count = (await cur.fetchone())[0] or 0
+    unread_count = total - read_count
+    read_rate = round(read_count / total, 3) if total else 0.0
+
     # Autoreply: suggestions generated
     cur = await db._db.execute(
         "SELECT COUNT(*) FROM gmail_emails "
@@ -89,6 +99,10 @@ async def compute_stats(db: Any, from_date: str, to_date: str) -> dict:
         "by_category": by_category,
         "top_senders": top_senders,
         "reply_rate": {"total": total, "replied": replied_count, "rate": reply_rate},
+        "read_status": {
+            "total": total, "read": read_count,
+            "unread": unread_count, "rate": read_rate,
+        },
         "autoreply": {
             "suggestions_generated": suggestions,
             "drafts_saved": drafts,

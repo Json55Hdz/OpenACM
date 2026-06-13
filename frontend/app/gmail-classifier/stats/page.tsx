@@ -10,6 +10,7 @@ import { VolumeChart } from './components/VolumeChart';
 import { CategoryChart } from './components/CategoryChart';
 import { TopSendersChart } from './components/TopSendersChart';
 import { AutoReplyChart } from './components/AutoReplyChart';
+import { ReadStatusChart } from './components/ReadStatusChart';
 
 const API = '/api/gmail-classifier';
 
@@ -29,6 +30,7 @@ export type StatsData = {
   }[];
   top_senders: { email: string; name: string; count: number }[];
   reply_rate: { total: number; replied: number; rate: number };
+  read_status: { total: number; read: number; unread: number; rate: number };
   autoreply: {
     suggestions_generated: number;
     drafts_saved: number;
@@ -155,6 +157,9 @@ export default function StatsPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <TopSendersChart data={stats.top_senders} />
               <AutoReplyChart data={stats.autoreply} />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <ReadStatusChart data={stats.read_status} />
             </div>
           </div>
         )}

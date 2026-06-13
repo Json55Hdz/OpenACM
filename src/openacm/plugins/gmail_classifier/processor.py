@@ -264,6 +264,17 @@ class GmailBatchProcessor:
                 })
                 await asyncio.sleep(0)  # yield to event loop
 
+            # Pull read/unread changes made directly in Gmail back into the DB.
+            # Existing rows are skipped by the classification loop above, so this
+            # is the only place their is_read gets refreshed from Gmail's truth.
+            if not self._stop_requested:
+                try:
+                    synced = await self._sync_read_state(service, since_date)
+                    if synced:
+                        await self._emit("gmail_classifier.state_synced", {"changed": synced})
+                except Exception as exc:
+                    log.warning("Read-state sync failed", error=str(exc))
+
             self._last_completed_at = datetime.now(timezone.utc).isoformat()
 
             # Persist last_sync_at so the next cron tick can use an incremental
@@ -314,6 +325,55 @@ class GmailBatchProcessor:
             if not page_token:
                 break
         return ids
+
+    async def _sync_read_state(self, service, since_date: str) -> int:
+        """Refresh is_read for stored emails from Gmail's UNREAD label (the source
+        of truth). Cheap: one paged `is:unread` list query, then a local diff.
+        Returns the number of rows changed.
+
+        Uses the full configured history (since_date_default) rather than the
+        incremental cron window, so read/unread changes on OLDER emails are caught
+        too — otherwise reading an old email in Gmail would never sync back."""
+        settings = await self._load_settings()
+        raw = (settings.get("since_date_default") or "").strip() or since_date
+        gmail_after = raw.replace("-", "/")          # Gmail `after:` wants slashes
+        since_iso = raw.replace("/", "-") if raw else "0000-00-00"  # received_at compare wants dashes
+
+        # 1. Currently-unread Gmail message IDs within the window.
+        unread_ids: set[str] = set()
+        page_token = None
+        while True:
+            kwargs: dict = {"userId": "me", "q": f"is:unread after:{gmail_after}" if gmail_after else "is:unread", "maxResults": 500}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            resp = service.users().messages().list(**kwargs).execute()
+            for m in resp.get("messages", []):
+                unread_ids.add(m["id"])
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+
+        # 2. Diff stored rows in the window against Gmail's truth.
+        #    received_at is ISO-8601, so a lexicographic >= on the date prefix works.
+        cursor = await self._db._db.execute(
+            "SELECT gmail_id, is_read FROM gmail_emails WHERE received_at >= ?",
+            (since_iso,),
+        )
+        rows = await cursor.fetchall()
+
+        changed = 0
+        for r in rows:
+            should_read = 0 if r["gmail_id"] in unread_ids else 1
+            if should_read != r["is_read"]:
+                await self._db._db.execute(
+                    "UPDATE gmail_emails SET is_read = ?, last_synced = CURRENT_TIMESTAMP WHERE gmail_id = ?",
+                    (should_read, r["gmail_id"]),
+                )
+                changed += 1
+        if changed:
+            await self._db._db.commit()
+            log.info("Read-state sync: pulled changes from Gmail", changed=changed)
+        return changed
 
     async def _fetch_details(self, service, ids: list[str], auth_email: str) -> list[dict]:
         emails = []
