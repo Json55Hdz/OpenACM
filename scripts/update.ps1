@@ -7,7 +7,7 @@ $REPO_ROOT = Split-Path -Parent $PSScriptRoot
 Set-Location $REPO_ROOT
 
 # -- 1. Pull latest code -----------------------------------------------------
-# If this is a git checkout, use `git pull`. If it's a manual zip install,
+# If this is a git checkout, use git pull. If it's a manual zip install,
 # download the latest zip from GitHub and unpack it on top. User files
 # (config\.env, data\, .venv\) are never in the zip so they're safe.
 $ZipUrl = "https://github.com/Json55Hdz/OpenACM/archive/refs/heads/main.zip"
