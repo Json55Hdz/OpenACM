@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Sidebar } from './sidebar';
 import { useChatStore } from '@/stores/chat-store';
+import { useSidebarStore } from '@/stores/sidebar-store';
 import { GlobalTamagotchi } from '@/components/tamagotchi/global-tamagotchi';
 
 function OnboardingNavigator() {
@@ -45,6 +46,7 @@ function ClientProfileGuard() {
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
+  const collapsed = useSidebarStore((s) => s.collapsed);
   return (
     <div className="min-h-screen bg-[var(--acm-base)]">
       <OnboardingNavigator />
@@ -52,8 +54,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <Sidebar />
       <GlobalTamagotchi />
 
-      {/* Main content */}
-      <main className="lg:ml-64 min-h-screen">
+      {/* Main content — margin tracks the sidebar width so the workspace reclaims
+          space when the rail is collapsed. */}
+      <main className={`min-h-screen transition-[margin] duration-300 ease-in-out ${collapsed ? "lg:ml-16" : "lg:ml-64"}`}>
         {children}
       </main>
     </div>

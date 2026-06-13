@@ -22,9 +22,12 @@ import {
   Network,
   Mic,
   Puzzle,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore } from '@/stores/auth-store';
+import { useSidebarStore } from '@/stores/sidebar-store';
 import { useVoice } from '@/components/providers/voice-provider';
 import { TamagotchiWidget } from '@/components/tamagotchi/tamagotchi-widget';
 import { translations } from '@/lib/translations';
@@ -86,6 +89,8 @@ interface ClientProfile {
 
 export function Sidebar() {
   const [isOpen, setIsOpen] = useState(false);
+  const collapsed = useSidebarStore((s) => s.collapsed);
+  const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
   const [isRestarting, setIsRestarting] = useState(false);
   const [pendingContent, setPendingContent] = useState(0);
   const [pluginItems, setPluginItems] = useState<PluginNavItem[]>([]);
@@ -185,17 +190,23 @@ export function Sidebar() {
         <Link
           href={href}
           onClick={() => setIsOpen(false)}
+          title={collapsed ? label : undefined}
           className={cn(
             "flex items-center gap-3 px-[11px] py-[9px] rounded-[6px] text-[13px] transition-all duration-[140ms]",
+            collapsed && "lg:justify-center lg:px-0 lg:relative",
             isActive
               ? "acm-active-pill font-semibold"
               : "font-medium text-[var(--acm-fg-2)] nav-inactive"
           )}
         >
-          <Icon size={16} strokeWidth={isActive ? 2.2 : 1.8} />
-          <span className="flex-1">{label}</span>
+          <Icon size={16} strokeWidth={isActive ? 2.2 : 1.8} className="flex-shrink-0" />
+          <span className={cn("flex-1", collapsed && "lg:hidden")}>{label}</span>
           {badge !== undefined && badge > 0 && (
-            <span className="mono text-[10px] font-bold bg-[var(--acm-accent)] text-[oklch(0.18_0.015_80)] rounded-full px-[5px] py-[1px] min-w-[18px] text-center leading-none">
+            <span className={cn(
+              "mono text-[10px] font-bold bg-[var(--acm-accent)] text-[oklch(0.18_0.015_80)] rounded-full px-[5px] py-[1px] min-w-[18px] text-center leading-none",
+              // Collapsed: shrink to a dot badge anchored to the icon corner
+              collapsed && "lg:absolute lg:top-1 lg:right-1 lg:min-w-0 lg:w-[7px] lg:h-[7px] lg:p-0 lg:text-[0px]"
+            )}>
               {badge > 99 ? '99+' : badge}
             </span>
           )}
@@ -225,26 +236,54 @@ export function Sidebar() {
 
       {/* Sidebar */}
       <nav className={cn(
-        "dot-grid fixed left-0 top-0 h-screen w-64 border-r flex flex-col z-40 transition-transform duration-300 ease-in-out",
+        "dot-grid fixed left-0 top-0 h-screen w-64 border-r flex flex-col z-40 transition-all duration-300 ease-in-out",
         "bg-[var(--acm-base)] border-[var(--acm-border)]",
+        collapsed && "lg:w-16",
         isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
       )}>
         {/* Header */}
-        <div className="min-h-[68px] px-5 py-[16px] border-b border-[var(--acm-border)] flex items-center gap-3">
+        <div className={cn(
+          "min-h-[68px] px-5 py-[16px] border-b border-[var(--acm-border)] flex items-center gap-3",
+          collapsed && "lg:px-0 lg:justify-center"
+        )}>
           <div className="w-10 h-10 border border-[var(--acm-border-strong)] rounded-[8px] flex items-center justify-center text-[var(--acm-accent)] flex-shrink-0">
             <ACMMark size={24} />
           </div>
-          <div className="flex flex-col leading-[1.2] min-w-0">
+          <div className={cn("flex flex-col leading-[1.2] min-w-0", collapsed && "lg:hidden")}>
             <span className="text-[14px] font-semibold text-[var(--acm-fg)]">OpenACM</span>
             <span className="mono text-[9px] text-[var(--acm-fg-4)] tracking-wide">Autonomous · Open · Yours</span>
           </div>
+          {/* Collapse toggle — desktop only */}
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Expandir menú' : 'Contraer menú'}
+            aria-label={collapsed ? 'Expandir menú' : 'Contraer menú'}
+            className={cn(
+              "hidden lg:flex items-center justify-center w-7 h-7 rounded-[6px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:bg-[var(--acm-card)] transition-colors flex-shrink-0",
+              collapsed ? "lg:hidden" : "ml-auto"
+            )}
+          >
+            <PanelLeftClose size={16} />
+          </button>
         </div>
+
+        {/* Expand button — shown only when collapsed, as its own centered row */}
+        {collapsed && (
+          <button
+            onClick={toggleCollapsed}
+            title="Expandir menú"
+            aria-label="Expandir menú"
+            className="hidden lg:flex items-center justify-center mx-auto mt-2 w-9 h-9 rounded-[6px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] hover:bg-[var(--acm-card)] border border-[var(--acm-border)] transition-colors"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        )}
 
         {/* Navigation */}
         <ul className="flex-1 py-2 px-2 overflow-y-auto acm-scroll">
           {/* Workspace section */}
           <li>
-            <span className="label px-[10px] py-[6px] block">Workspace</span>
+            <span className={cn("label px-[10px] py-[6px] block", collapsed && "lg:hidden")}>Workspace</span>
           </li>
           {workspaceItems.map((item) =>
             renderNavItem(item.href, item.label, item.icon)
@@ -252,7 +291,7 @@ export function Sidebar() {
 
           {/* System section */}
           <li>
-            <span className="label px-[10px] py-[6px] block pt-3">System</span>
+            <span className={cn("label px-[10px] py-[6px] block pt-3", collapsed && "lg:hidden")}>System</span>
           </li>
           {systemItems.map((item) =>
             renderNavItem(item.href, item.label, item.icon)
@@ -262,7 +301,7 @@ export function Sidebar() {
           {mainPluginItems.length > 0 && (
             <>
               <li>
-                <span className="label px-[10px] py-[6px] block pt-3">Plugins</span>
+                <span className={cn("label px-[10px] py-[6px] block pt-3", collapsed && "lg:hidden")}>Plugins</span>
               </li>
               {mainPluginItems.map((item) => {
                 const Icon = resolveIcon(item.icon);
@@ -281,7 +320,7 @@ export function Sidebar() {
         </ul>
 
         {/* Footer */}
-        <div className="border-t border-[var(--acm-border)] p-[14px] space-y-[10px]">
+        <div className={cn("border-t border-[var(--acm-border)] p-[14px] space-y-[10px]", collapsed && "lg:px-2")}>
           {/* Mini daemon widget + voice pulse ring */}
           <div className="flex items-center justify-center">
             <div style={{ position: 'relative', width: 44, height: 44 }}>
@@ -318,7 +357,10 @@ export function Sidebar() {
           </div>
 
           {/* Agent status card */}
-          <div className="flex items-center gap-[10px] px-[10px] py-[8px] border border-[var(--acm-border)] rounded-[6px] bg-[var(--acm-card)]">
+          <div className={cn(
+            "flex items-center gap-[10px] px-[10px] py-[8px] border border-[var(--acm-border)] rounded-[6px] bg-[var(--acm-card)]",
+            collapsed && "lg:hidden"
+          )}>
             <span className={cn("dot", isOnline ? "dot-ok acm-pulse" : "dot-warn")} />
             <div className="flex-1 leading-[1.2] min-w-0">
               <span className="block text-[11.5px] text-[var(--acm-fg-2)]">
@@ -335,12 +377,16 @@ export function Sidebar() {
           <button
             onClick={handleRestart}
             disabled={isRestarting}
+            title={collapsed ? 'Restart OpenACM' : undefined}
             className="w-full flex items-center justify-center gap-2 py-[7px] rounded-[6px] text-[12px] text-[var(--acm-fg-3)] border border-[var(--acm-border)] hover:border-[var(--acm-err)] hover:text-[var(--acm-err)] transition-colors duration-[140ms] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isRestarting
-              ? <><Loader2 size={13} className="animate-spin" /> Restarting...</>
-              : <><RotateCcw size={13} /> Restart OpenACM</>
+              ? <Loader2 size={13} className="animate-spin" />
+              : <RotateCcw size={13} />
             }
+            <span className={cn(collapsed && "lg:hidden")}>
+              {isRestarting ? 'Restarting...' : 'Restart OpenACM'}
+            </span>
           </button>
         </div>
       </nav>
