@@ -1,7 +1,7 @@
 $REPO_ROOT = Split-Path -Parent $PSScriptRoot
 Set-Location $REPO_ROOT
 
-# Force TLS 1.2 — PowerShell 5.1 on Windows 10 defaults to TLS 1.0/1.1
+# Force TLS 1.2 - PowerShell 5.1 on Windows 10 defaults to TLS 1.0/1.1
 # which most modern endpoints (astral.sh, python.org, github) reject.
 # Without this the uv install call fails with a vague SSL/TLS error.
 try {
@@ -11,7 +11,7 @@ try {
     Write-Host "[!] Could not raise TLS version; continuing." -ForegroundColor Yellow
 }
 
-# Show PowerShell + OS version up front — helps diagnose Win 10 / PS 5.1 quirks
+# Show PowerShell + OS version up front - helps diagnose Win 10 / PS 5.1 quirks
 $psVersion = $PSVersionTable.PSVersion.ToString()
 $osVersion = [System.Environment]::OSVersion.Version.ToString()
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -20,7 +20,7 @@ Write-Host "  PowerShell: $psVersion | Windows: $osVersion" -ForegroundColor Dar
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. Bootstrap uv (installs its own Python — no system Python required) ───
+# -- 1. Bootstrap uv (installs its own Python - no system Python required) ---
 # We intentionally skip checking for a system `python` here. uv can install a
 # standalone Python 3.12 even when none exists on the machine, which is the
 # cleanest path on a fresh PC.
@@ -34,7 +34,7 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
         & powershell -ExecutionPolicy Bypass -NoProfile -File $installerPath
         Remove-Item $installerPath -ErrorAction SilentlyContinue
 
-        # uv installs to .local\bin on newer versions, .cargo\bin on older — add both
+        # uv installs to .local\bin on newer versions, .cargo\bin on older - add both
         foreach ($p in @("$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin", "$HOME\.local\bin", "$HOME\.cargo\bin")) {
             if (Test-Path $p) { $env:Path = "$p;$env:Path" }
         }
@@ -60,7 +60,7 @@ if (!(Get-Command "uv" -ErrorAction SilentlyContinue)) {
     Write-Host "[OK] 'uv' is already installed." -ForegroundColor Green
 }
 
-# ── 2. Install Python 3.12 via uv (standalone — no system Python needed) ────
+# -- 2. Install Python 3.12 via uv (standalone - no system Python needed) ----
 Write-Host "[*] Installing standalone Python 3.12 via uv..." -ForegroundColor Yellow
 uv python install 3.12
 if ($LASTEXITCODE -ne 0) {
@@ -71,7 +71,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "[OK] Python 3.12 ready." -ForegroundColor Green
 
-# ── 3. Check Visual C++ Build Tools (needed for some native deps) ───────────
+# -- 3. Check Visual C++ Build Tools (needed for some native deps) -----------
 # We don't hard-fail because most modern wheels are precompiled, but we warn
 # loudly so a later 'uv pip install' failure makes sense to the user.
 # Note: PowerShell 5.1 chokes on ${env:ProgramFiles(x86)} (parens inside the
@@ -114,7 +114,7 @@ if (-not $buildToolsFound) {
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[OK] Build Tools installed." -ForegroundColor Green
             } else {
-                Write-Host "[!] winget install returned $LASTEXITCODE — continuing anyway." -ForegroundColor Yellow
+                Write-Host "[!] winget install returned $LASTEXITCODE - continuing anyway." -ForegroundColor Yellow
             }
         }
     } else {
@@ -124,7 +124,7 @@ if (-not $buildToolsFound) {
     Write-Host "[OK] Visual C++ Build Tools detected." -ForegroundColor Green
 }
 
-# ── 4. Create virtual environment ───────────────────────────────────────────
+# -- 4. Create virtual environment -------------------------------------------
 Write-Host "[*] Creating virtual environment..." -ForegroundColor Yellow
 
 # Remove old venv if it has no pip
@@ -156,7 +156,7 @@ try {
     exit 1
 }
 
-# ── 5. Config (.env) ────────────────────────────────────────────────────────
+# -- 5. Config (.env) --------------------------------------------------------
 Write-Host "[*] Checking configuration (.env)..." -ForegroundColor Yellow
 if (!(Test-Path "config\.env")) {
     if (Test-Path "config\.env.example") {
@@ -169,7 +169,7 @@ if (!(Test-Path "config\.env")) {
     }
 }
 
-# ── 6. Install project deps ─────────────────────────────────────────────────
+# -- 6. Install project deps -------------------------------------------------
 Write-Host "[*] Installing all project dependencies (this may take a few minutes)..." -ForegroundColor Yellow
 try {
     uv pip install -e . 2>&1 | ForEach-Object {

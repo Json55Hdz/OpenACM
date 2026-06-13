@@ -53,7 +53,7 @@ switch ($Command.ToLower()) {
         $pid = Get-OpenACMPid
         if ($pid) {
             $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
-            Write-Host "[OK] OpenACM is running  (PID $pid  •  $($proc.CPU)s CPU)" -ForegroundColor Green
+            Write-Host "[OK] OpenACM is running  (PID $pid  *  $($proc.CPU)s CPU)" -ForegroundColor Green
             Write-Host "     Web: http://127.0.0.1:47821" -ForegroundColor Cyan
         } else {
             Write-Host "[--] OpenACM is not running." -ForegroundColor Yellow

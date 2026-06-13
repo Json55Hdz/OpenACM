@@ -6,7 +6,7 @@ Write-Host ""
 $REPO_ROOT = Split-Path -Parent $PSScriptRoot
 Set-Location $REPO_ROOT
 
-# ── 1. Pull latest code ─────────────────────────────────────────────────────
+# -- 1. Pull latest code -----------------------------------------------------
 # If this is a git checkout, use `git pull`. If it's a manual zip install,
 # download the latest zip from GitHub and unpack it on top. User files
 # (config\.env, data\, .venv\) are never in the zip so they're safe.
@@ -27,7 +27,7 @@ if ($IsGitRepo) {
     if ($porcelain) { $dirty = $true }
 
     if ($dirty) {
-        Write-Host "[*] Local changes detected — stashing them temporarily..." -ForegroundColor Yellow
+        Write-Host "[*] Local changes detected - stashing them temporarily..." -ForegroundColor Yellow
         $ts = [long](([datetime]::UtcNow) - [datetime]'1970-01-01').TotalSeconds
         git stash push -u -m "openacm-update-autostash-$ts" 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $Stashed = $true }
@@ -52,12 +52,12 @@ if ($IsGitRepo) {
         Write-Host "[*] Restoring your local changes..." -ForegroundColor Yellow
         git stash pop 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "[!] Could not auto-restore stash — there may be conflicts." -ForegroundColor Yellow
+            Write-Host "[!] Could not auto-restore stash - there may be conflicts." -ForegroundColor Yellow
             Write-Host "    Run 'git stash list' and resolve manually." -ForegroundColor White
         }
     }
 } else {
-    Write-Host "[*] Not a git checkout — downloading latest from GitHub..." -ForegroundColor Yellow
+    Write-Host "[*] Not a git checkout - downloading latest from GitHub..." -ForegroundColor Yellow
 
     $stamp = Get-Random
     $TmpZip = Join-Path $env:TEMP "openacm-update-$stamp.zip"
@@ -101,7 +101,7 @@ if ($IsGitRepo) {
 }
 Write-Host ""
 
-# ── 2. Sync Python dependencies ──────────────────────────────────────────────
+# -- 2. Sync Python dependencies ----------------------------------------------
 Write-Host "[*] Syncing Python dependencies..." -ForegroundColor Yellow
 if (Get-Command "uv" -ErrorAction SilentlyContinue) {
     uv pip install -e . --quiet
@@ -119,7 +119,7 @@ if (Get-Command "uv" -ErrorAction SilentlyContinue) {
 Write-Host "[OK] Python dependencies synced." -ForegroundColor Green
 Write-Host ""
 
-# ── 3. Rebuild frontend ──────────────────────────────────────────────────────
+# -- 3. Rebuild frontend ------------------------------------------------------
 $FrontendBuilt = $true
 if (!(Get-Command "node" -ErrorAction SilentlyContinue)) {
     Write-Host "[!] Node.js not found, skipping frontend build." -ForegroundColor Yellow
@@ -160,7 +160,7 @@ Write-Host "==========================================" -ForegroundColor Green
 Write-Host "  Update Complete!" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
 if (-not $FrontendBuilt) {
-    Write-Host "  (Note: frontend was not rebuilt — see warnings above.)" -ForegroundColor Yellow
+    Write-Host "  (Note: frontend was not rebuilt - see warnings above.)" -ForegroundColor Yellow
 }
 Write-Host ""
 # Restart is handled by the caller (update.bat), which launches run.bat after this script exits 0.

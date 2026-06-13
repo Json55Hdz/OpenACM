@@ -1,4 +1,4 @@
-# Bootstrap installer for Windows — run without cloning first:
+# Bootstrap installer for Windows - run without cloning first:
 #   iwr -useb https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
@@ -11,7 +11,7 @@ Write-Host "  OpenACM - Bootstrap Installer" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# ── Requirements ─────────────────────────────────────────────────────────────
+# -- Requirements -------------------------------------------------------------
 if (!(Get-Command "git" -ErrorAction SilentlyContinue)) {
     Write-Host "[ERROR] git is required. Install it from https://git-scm.com" -ForegroundColor Red
     Write-Host "        Then re-run this script." -ForegroundColor Yellow
@@ -19,9 +19,9 @@ if (!(Get-Command "git" -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# ── Clone or pull ─────────────────────────────────────────────────────────────
+# -- Clone or pull -------------------------------------------------------------
 if (Test-Path "$INSTALL_DIR\.git") {
-    Write-Host "[*] OpenACM already exists at $INSTALL_DIR — pulling latest..." -ForegroundColor Yellow
+    Write-Host "[*] OpenACM already exists at $INSTALL_DIR - pulling latest..." -ForegroundColor Yellow
     Set-Location $INSTALL_DIR
     git pull
 } else {
@@ -33,6 +33,6 @@ if (Test-Path "$INSTALL_DIR\.git") {
 Write-Host "[OK] Repository ready." -ForegroundColor Green
 Write-Host ""
 
-# ── Run setup ─────────────────────────────────────────────────────────────────
+# -- Run setup -----------------------------------------------------------------
 Write-Host "[*] Launching setup..." -ForegroundColor Yellow
 & cmd /c "`"$INSTALL_DIR\setup.bat`""

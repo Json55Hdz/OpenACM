@@ -34,7 +34,7 @@ if ($testImport -notmatch "OK") {
 Write-Host "[OK] Environment verified." -ForegroundColor Green
 Write-Host ""
 
-# Build frontend (optional — skipped if Node.js is not available)
+# Build frontend (optional - skipped if Node.js is not available)
 if ((Get-Command "node" -ErrorAction SilentlyContinue) -and (Test-Path "frontend")) {
     Write-Host "[*] Building frontend..." -ForegroundColor Yellow
     Set-Location frontend
