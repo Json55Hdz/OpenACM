@@ -161,7 +161,7 @@ def create_app() -> FastAPI:
 
 
     # Register all route domains
-    from openacm.web.routers import system, config, chat, skills, agents, mcp, activity, cron, swarms, voice as voice_router
+    from openacm.web.routers import system, config, chat, skills, agents, mcp, activity, cron, swarms, voice as voice_router, whatsapp_webhook
     from openacm.voice import TTSRouter
 
     system.register_routes(app)
@@ -173,6 +173,7 @@ def create_app() -> FastAPI:
     activity.register_routes(app)
     cron.register_routes(app)
     swarms.register_routes(app)
+    whatsapp_webhook.register_routes(app)
     voice_router.register_routes(app, tts_router=TTSRouter(database=_state.database))
 
     # Plugin API routes (before SPA catch-all)

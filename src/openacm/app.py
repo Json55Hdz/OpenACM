@@ -373,9 +373,14 @@ class OpenACM:
 
         if self.config.channels.whatsapp.enabled:
             try:
-                from openacm.channels.whatsapp_channel import WhatsAppChannel
-
-                channel = WhatsAppChannel(self.config.channels.whatsapp, self.brain, self.event_bus)
+                # mode="cloud_api" → official Meta API (default). mode="bridge" →
+                # legacy whatsapp-web.js Node bridge (unofficial, kept as an option).
+                if self.config.channels.whatsapp.mode == "bridge":
+                    from openacm.channels.whatsapp_channel import WhatsAppChannel
+                    channel = WhatsAppChannel(self.config.channels.whatsapp, self.brain, self.event_bus)
+                else:
+                    from openacm.channels.whatsapp_cloud_channel import WhatsAppCloudChannel
+                    channel = WhatsAppCloudChannel(self.config.channels.whatsapp, self.brain, self.event_bus)
                 self._channels.append(channel)
                 channel_tasks.append(asyncio.create_task(channel.start()))
             except Exception as e:

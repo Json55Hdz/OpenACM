@@ -48,9 +48,21 @@ channels:
     allowed_users: []
     enabled: false
   whatsapp:
-    bridge_url: http://localhost:3001
     enabled: false
+    # "cloud_api" = official Meta WhatsApp Cloud API (recommended, no ban risk).
+    # "bridge"    = legacy whatsapp-web.js Node bridge (unofficial — pending).
+    mode: cloud_api
     rate_limit_per_minute: 20
+    # Cloud API credentials — prefer setting these in config/.env (gitignored) as
+    # WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_VERIFY_TOKEN /
+    # WHATSAPP_APP_SECRET so they never land in git.
+    access_token: ""
+    phone_number_id: ""
+    verify_token: ""
+    app_secret: ""
+    graph_api_version: v21.0
+    # Legacy bridge (only used when mode: bridge)
+    bridge_url: http://localhost:3001
 llm:
   default_provider: opencode_go
   providers:

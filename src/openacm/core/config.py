@@ -93,8 +93,20 @@ class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
 
     enabled: bool = False
-    bridge_url: str = DEFAULT_WHATSAPP_BRIDGE_URL
+    # "cloud_api" = official Meta WhatsApp Cloud API (recommended, no ban risk).
+    # "bridge"    = legacy whatsapp-web.js Node bridge (unofficial, ban risk).
+    mode: str = "cloud_api"
     rate_limit_per_minute: int = 20
+
+    # ── Cloud API (mode="cloud_api") ─────────────────────────────────────────
+    access_token: str = ""          # Meta permanent/temporary access token
+    phone_number_id: str = ""       # the sender phone-number id from Meta
+    verify_token: str = ""          # arbitrary string you also paste in Meta's webhook config
+    app_secret: str = ""            # Meta app secret — used to verify webhook signatures
+    graph_api_version: str = "v21.0"
+
+    # ── Legacy bridge (mode="bridge") ────────────────────────────────────────
+    bridge_url: str = DEFAULT_WHATSAPP_BRIDGE_URL
 
 
 class ChannelsConfig(BaseModel):
@@ -272,6 +284,17 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     if telegram_token and ":" in telegram_token and not config.channels.telegram.enabled:
         config.channels.telegram.token = telegram_token
         config.channels.telegram.enabled = True
+
+    # WhatsApp Cloud API — let secrets come from env (config/.env) so they're not
+    # committed to default.yaml. Any env value overrides the YAML one.
+    wa = config.channels.whatsapp
+    wa.access_token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "") or wa.access_token
+    wa.phone_number_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "") or wa.phone_number_id
+    wa.verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "") or wa.verify_token
+    wa.app_secret = os.environ.get("WHATSAPP_APP_SECRET", "") or wa.app_secret
+    # Auto-enable once the minimum Cloud API credentials are present.
+    if wa.mode == "cloud_api" and wa.access_token and wa.phone_number_id and not wa.enabled:
+        wa.enabled = True
 
     # Auto-inject CLI providers for any detected binary not already in config.
     # This means the user only needs to install the CLI — no YAML editing required.
