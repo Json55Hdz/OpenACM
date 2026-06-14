@@ -122,3 +122,33 @@ async def test_list_threads_unread_count(db_with_threads, app):
     tid_a = next(i for i in items if i["thread_id"] == "tid-A")
     assert tid_a["message_count"] == 2
     assert tid_a["unread_count"] == 1  # only msg 2 is unread
+
+
+async def test_list_threads_search_matches_reply_body(db_with_threads, app):
+    # 'sure thing' is the snippet/body of the REPLY in tid-A (not the subject)
+    # A naive 'WHERE subject LIKE' would miss this; EXISTS correctly surfaces the thread
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/gmail-classifier/threads?search=sure+thing")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["items"][0]["thread_id"] == "tid-A"
+
+
+async def test_list_threads_null_thread_id_uses_gmail_id(db_with_threads, app):
+    # Insert an email with thread_id = NULL — should appear as its own thread
+    conn = db_with_threads
+    await conn.execute(
+        "INSERT INTO gmail_emails VALUES (4,'gid4',NULL,'No thread','Solo','solo@co.com',"
+        "'no thread here','no thread here',NULL,1,0,0,'2026-06-12T09:00:00',0)"
+    )
+    await conn.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get("/gmail-classifier/threads")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Now 3 threads: tid-A, tid-B, and gid4 (the NULL thread_id email)
+    assert data["total"] == 3
+    thread_ids = {item["thread_id"] for item in data["items"]}
+    assert "gid4" in thread_ids

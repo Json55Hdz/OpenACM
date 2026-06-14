@@ -492,7 +492,7 @@ async def list_threads(
         p_rows = await (await db._db.execute(
             f"""
             SELECT COALESCE(thread_id, gmail_id) AS tid,
-                   sender_name, sender_email, MIN(received_at) AS first_seen
+                   MIN(sender_name) AS sender_name, sender_email, MIN(received_at) AS first_seen
             FROM gmail_emails
             WHERE COALESCE(thread_id, gmail_id) IN ({ph})
             GROUP BY COALESCE(thread_id, gmail_id), sender_email
