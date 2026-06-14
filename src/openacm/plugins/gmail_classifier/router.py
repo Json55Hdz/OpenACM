@@ -24,6 +24,7 @@ _learning: Any = None
 _llm_router: Any = None
 _event_bus: Any = None
 _plugin: Any = None  # GmailClassifierPlugin instance — used to restart digest cron
+_cached_auth_email: str | None = None
 
 
 def _require_db():
@@ -1024,16 +1025,29 @@ async def suggest_categories():
 
 @router.get("/auth-status")
 async def auth_status():
-    """Check if Gmail OAuth is configured (credentials + token files exist)."""
+    """Check if Gmail OAuth is configured and return the authenticated email."""
+    global _cached_auth_email
     from pathlib import Path
     creds_path = Path("config/google_credentials.json")
     token_path = Path("config/google_token.json")
     configured = creds_path.exists()
     has_token = token_path.exists()
+
+    if has_token and _cached_auth_email is None:
+        try:
+            from openacm.plugins.gmail_classifier.processor import (
+                _get_gmail_service, _get_authenticated_email,
+            )
+            svc = await _get_gmail_service()
+            _cached_auth_email = await _get_authenticated_email(svc)
+        except Exception as exc:
+            log.debug("auth_status: could not resolve email", error=str(exc))
+
     return {
         "configured": configured,
         "has_token": has_token,
         "ready": configured and has_token,
+        "email": _cached_auth_email,
     }
 
 
