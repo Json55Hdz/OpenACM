@@ -412,18 +412,41 @@ async def list_emails(
 @router.patch("/emails/{email_id}/read")
 async def toggle_read(email_id: int, body: ReadToggle):
     db = _require_db()
-    cursor = await db._db.execute("SELECT id FROM gmail_emails WHERE id = ?", (email_id,))
-    if not await cursor.fetchone():
+    cursor = await db._db.execute("SELECT gmail_id FROM gmail_emails WHERE id = ?", (email_id,))
+    row = await cursor.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Email not found")
+    gmail_id = row["gmail_id"]
     await db._db.execute(
         "UPDATE gmail_emails SET is_read = ? WHERE id = ?",
         (1 if body.is_read else 0, email_id),
     )
     await db._db.commit()
+
+    # Sync read state to Gmail if the setting is enabled.
+    # This is the ONLY place where read state is pushed to Gmail — not during classification.
+    try:
+        sc = await db._db.execute(
+            "SELECT value FROM gmail_classifier_settings WHERE key = 'auto_mark_read'"
+        )
+        sr = await sc.fetchone()
+        if sr and sr["value"] == "true":
+            from openacm.tools.google_services import _get_google_service
+            service = await _get_google_service("gmail", "v1")
+            modify_body = (
+                {"removeLabelIds": ["UNREAD"]} if body.is_read
+                else {"addLabelIds": ["UNREAD"]}
+            )
+            service.users().messages().modify(
+                userId="me", id=gmail_id, body=modify_body
+            ).execute()
+    except Exception as exc:
+        log.warning("Failed to sync read state to Gmail", email_id=email_id, error=str(exc))
+
     row_cursor = await db._db.execute("SELECT * FROM gmail_emails WHERE id = ?", (email_id,))
-    row = dict(await row_cursor.fetchone())
-    row["is_read"] = bool(row["is_read"])
-    return row
+    row2 = dict(await row_cursor.fetchone())
+    row2["is_read"] = bool(row2["is_read"])
+    return row2
 
 
 @router.patch("/emails/{email_id}/category")
@@ -880,15 +903,15 @@ async def update_settings(body: SettingsBody):
         )
     await db._db.commit()
 
-    # If a Gmail-action setting was just turned ON, apply retroactively in background
+    # If auto_apply_label was just turned ON, apply labels retroactively in background.
+    # Read state is NOT applied retroactively — it syncs per-click, not in bulk.
     proc = _processor
     if proc:
-        mark_read_on  = updates.get("auto_mark_read")  == "true" and old.get("auto_mark_read")  != "true"
         apply_label_on = updates.get("auto_apply_label") == "true" and old.get("auto_apply_label") != "true"
-        if mark_read_on or apply_label_on:
+        if apply_label_on:
             asyncio.create_task(proc.apply_retroactive(
-                mark_read=mark_read_on,
-                apply_label=apply_label_on,
+                mark_read=False,
+                apply_label=True,
             ))
 
     _DIGEST_KEYS = {"digest_enabled", "digest_time", "digest_days", "digest_agent_id", "digest_chat_id"}

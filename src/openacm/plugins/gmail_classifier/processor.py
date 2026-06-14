@@ -205,7 +205,6 @@ class GmailBatchProcessor:
             auth_email = await _get_authenticated_email(service)
             categories = await self._load_categories()
             settings = await self._load_settings()
-            auto_mark_read = settings.get("auto_mark_read") == "true"
             auto_apply_label = settings.get("auto_apply_label") == "true"
             label_cache: dict = {}
 
@@ -245,17 +244,19 @@ class GmailBatchProcessor:
                 classifications = await self._classify(emails, categories)
                 saved = await self._upsert(emails, classifications, categories, force=force)
 
-                # Apply Gmail actions if enabled
-                if auto_mark_read or auto_apply_label:
+                # Apply labels if enabled. Read state is intentionally NOT touched here —
+                # it is synced to Gmail only when the user opens an email in the app.
+                if auto_apply_label:
                     for email, cat_id in saved:
-                        label_name = cat_by_id.get(cat_id) if auto_apply_label else None
-                        await apply_gmail_actions(
-                            service, email["gmail_id"],
-                            mark_read=auto_mark_read,
-                            label_name=label_name,
-                            label_cache=label_cache,
-                        )
-                        await asyncio.sleep(0.05)
+                        label_name = cat_by_id.get(cat_id)
+                        if label_name:
+                            await apply_gmail_actions(
+                                service, email["gmail_id"],
+                                mark_read=False,
+                                label_name=label_name,
+                                label_cache=label_cache,
+                            )
+                            await asyncio.sleep(0.05)
 
                 self._processed += len(emails)
                 await self._emit("gmail_classifier.progress", {

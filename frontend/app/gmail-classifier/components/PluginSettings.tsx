@@ -395,7 +395,7 @@ export function PluginSettings({ token, onClose, onAutoReplyChange, onAutoReplyT
                   <div>
                     <p className="text-[13px] font-medium text-[var(--acm-fg)]">Marcar como leído en Gmail</p>
                     <p className="text-[11px] text-[var(--acm-fg-4)] mt-0.5">
-                      Tras clasificar, marca el correo como leído directamente en Gmail
+                      Al abrir un correo en la app, lo marca como leído en Gmail (y viceversa)
                     </p>
                   </div>
                   <div
