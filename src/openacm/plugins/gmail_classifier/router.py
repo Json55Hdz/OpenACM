@@ -410,6 +410,113 @@ async def list_emails(
     return {"items": [dict(r) for r in rows], "total": total, "page": page, "per_page": per_page}
 
 
+# ─── Threads ─────────────────────────────────────────────────────────────────
+
+@router.get("/threads")
+async def list_threads(
+    category_id: int | None = None,
+    search: str | None = None,
+    page: int = 1,
+    per_page: int = 50,
+):
+    db = _require_db()
+
+    # Build WHERE conditions that apply to the outer (post-aggregation) query.
+    outer_conditions: list[str] = []
+    params: list = []
+
+    if category_id is not None:
+        outer_conditions.append("t.category_id = ?")
+        params.append(category_id)
+
+    if search and search.strip():
+        for term in search.split():
+            like = f"%{_escape_like(term)}%"
+            outer_conditions.append(
+                "EXISTS (SELECT 1 FROM gmail_emails s "
+                "WHERE COALESCE(s.thread_id, s.gmail_id) = t.thread_id "
+                "AND (s.subject LIKE ? ESCAPE '\\' "
+                "OR s.sender_name LIKE ? ESCAPE '\\' "
+                "OR s.sender_email LIKE ? ESCAPE '\\' "
+                "OR s.snippet LIKE ? ESCAPE '\\' "
+                "OR s.body_text LIKE ? ESCAPE '\\'))"
+            )
+            params.extend([like, like, like, like, like])
+
+    where = ("WHERE " + " AND ".join(outer_conditions)) if outer_conditions else ""
+
+    # CTE groups emails by effective thread_id (falls back to gmail_id for NULL thread_id).
+    inner = f"""
+        WITH threads AS (
+          SELECT
+            COALESCE(ge.thread_id, ge.gmail_id) AS thread_id,
+            (SELECT m.subject FROM gmail_emails m
+             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
+             ORDER BY m.received_at ASC LIMIT 1) AS subject,
+            (SELECT m.category_id FROM gmail_emails m
+             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
+             ORDER BY m.received_at ASC LIMIT 1) AS category_id,
+            COUNT(ge.id) AS message_count,
+            SUM(CASE WHEN ge.is_read = 0 THEN 1 ELSE 0 END) AS unread_count,
+            MAX(ge.received_at) AS latest_at,
+            (SELECT m.snippet FROM gmail_emails m
+             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
+             ORDER BY m.received_at DESC LIMIT 1) AS latest_snippet
+          FROM gmail_emails ge
+          GROUP BY COALESCE(ge.thread_id, ge.gmail_id)
+        )
+        SELECT t.thread_id, t.subject, t.category_id, t.message_count,
+               t.unread_count, t.latest_at, t.latest_snippet,
+               gc.name AS category_name, gc.color AS category_color, gc.icon AS category_icon
+        FROM threads t
+        LEFT JOIN gmail_categories gc ON t.category_id = gc.id
+        {where}
+    """
+
+    count_row = await (await db._db.execute(
+        f"SELECT COUNT(*) AS total FROM ({inner}) _sub", params
+    )).fetchone()
+    total = count_row["total"]
+
+    offset = (page - 1) * per_page
+    rows = await (await db._db.execute(
+        f"{inner} ORDER BY t.latest_at DESC LIMIT ? OFFSET ?",
+        params + [per_page, offset],
+    )).fetchall()
+
+    # Fetch participants in a single bulk query for all returned threads.
+    thread_ids = [r["thread_id"] for r in rows]
+    participants_map: dict[str, list[dict]] = {tid: [] for tid in thread_ids}
+    if thread_ids:
+        ph = ",".join("?" * len(thread_ids))
+        p_rows = await (await db._db.execute(
+            f"""
+            SELECT COALESCE(thread_id, gmail_id) AS tid,
+                   sender_name, sender_email, MIN(received_at) AS first_seen
+            FROM gmail_emails
+            WHERE COALESCE(thread_id, gmail_id) IN ({ph})
+            GROUP BY COALESCE(thread_id, gmail_id), sender_email
+            ORDER BY COALESCE(thread_id, gmail_id), first_seen ASC
+            """,
+            thread_ids,
+        )).fetchall()
+        for p in p_rows:
+            tid = p["tid"]
+            if tid in participants_map:
+                participants_map[tid].append({
+                    "name": p["sender_name"] or p["sender_email"] or "",
+                    "email": p["sender_email"] or "",
+                })
+
+    items = []
+    for r in rows:
+        d = dict(r)
+        d["participants"] = participants_map.get(r["thread_id"], [])
+        items.append(d)
+
+    return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
 @router.patch("/emails/{email_id}/read")
 async def toggle_read(email_id: int, body: ReadToggle):
     db = _require_db()
