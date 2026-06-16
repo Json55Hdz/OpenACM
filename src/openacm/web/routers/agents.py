@@ -149,6 +149,7 @@ def register_routes(app: FastAPI) -> None:
             tool_registry=_state.brain.tool_registry,
             memory=_state.brain.memory,
             event_bus=_state.brain.event_bus,
+            database=_state.database,
         )
         response = await runner.run(agent=agent, message=message, user_id=user_id)
         return {"response": response, "agent": agent["name"]}
@@ -267,6 +268,7 @@ def register_routes(app: FastAPI) -> None:
             tool_registry=_state.brain.tool_registry,
             memory=_state.brain.memory,
             event_bus=_state.brain.event_bus,
+            database=_state.database,
         )
         response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
         return {"response": response}

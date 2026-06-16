@@ -414,6 +414,7 @@ class OpenACM:
                 tool_registry=self.tool_registry,
                 memory=self.memory,
                 event_bus=self.event_bus,
+                database=self.database,
             )
             self._agent_bot_manager = AgentBotManager(
                 agent_runner=agent_runner,

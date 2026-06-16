@@ -14,6 +14,8 @@ import structlog
 
 log = structlog.get_logger()
 
+_KNOWLEDGE_CHAR_LIMIT = 40_000
+
 
 class AgentRunner:
     """
@@ -23,13 +25,15 @@ class AgentRunner:
     - system_prompt (personality + rules)
     - allowed_tools ('all', 'none', or JSON list of tool names)
     - memory namespace (isolated from the main chat)
+    - knowledge base (injected from agent_knowledge table if database is set)
     """
 
-    def __init__(self, llm_router, tool_registry, memory, event_bus):
+    def __init__(self, llm_router, tool_registry, memory, event_bus, database=None):
         self.llm_router = llm_router
         self.tool_registry = tool_registry
         self.memory = memory
         self.event_bus = event_bus
+        self.database = database
 
     def _get_tools(self, allowed_tools: str) -> list[dict] | None:
         """Return the tools list for this agent based on its policy."""
@@ -39,13 +43,27 @@ class AgentRunner:
             return None
         if allowed_tools == "all":
             return self.tool_registry.get_tools_schema()
-        # JSON list of tool names
         try:
             names = json.loads(allowed_tools)
             all_tools = self.tool_registry.get_tools_schema()
             return [t for t in all_tools if t["function"]["name"] in names]
         except Exception:
             return self.tool_registry.get_tools_schema()
+
+    def _build_system_prompt(self, base_prompt: str, knowledge_items: list[dict]) -> str:
+        """Prepend knowledge block to base system prompt, truncating if needed."""
+        if not knowledge_items:
+            return base_prompt
+
+        sections = "\n\n".join(
+            f"### {item['title']}\n{item['content']}" for item in knowledge_items
+        )
+        block = f"## Base de conocimiento\n\n{sections}"
+
+        if len(block) > _KNOWLEDGE_CHAR_LIMIT:
+            block = block[:_KNOWLEDGE_CHAR_LIMIT] + "\n\n[Conocimiento truncado por límite de contexto]"
+
+        return f"{block}\n\n{base_prompt}"
 
     async def run(
         self,
@@ -67,15 +85,24 @@ class AgentRunner:
         from openacm.core.config import AssistantConfig
         from openacm.core.brain import Brain
 
+        # Fetch knowledge and build enriched system prompt
+        knowledge_items: list[dict] = []
+        if self.database:
+            try:
+                knowledge_items = await self.database.get_agent_knowledge(agent["id"])
+            except Exception as exc:
+                log.warning("AgentRunner: failed to fetch knowledge", agent_id=agent["id"], error=str(exc))
+
+        system_prompt = self._build_system_prompt(agent["system_prompt"], knowledge_items)
+
         config = AssistantConfig(
             name=agent["name"],
-            system_prompt=agent["system_prompt"],
+            system_prompt=system_prompt,
             max_tool_iterations=10,
             onboarding_completed=True,
             is_agent=True,
         )
 
-        # Use caller-provided channel_id or fall back to isolated namespace
         if channel_id is None:
             channel_id = f"agent_{agent['id']}"
 
@@ -87,12 +114,9 @@ class AgentRunner:
             tool_registry=self.tool_registry if agent.get("allowed_tools", "all") != "none" else None,
         )
 
-        # Monkey-patch tool selection to respect allowed_tools
         allowed = agent.get("allowed_tools", "all")
         if allowed not in ("all", "none"):
             _tools = self._get_tools(allowed)
-
-            original_get = brain.tool_registry.get_all_tools if brain.tool_registry else None
 
             class _FilteredRegistry:
                 def get_tools_schema(self_inner):
