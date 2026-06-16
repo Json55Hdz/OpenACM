@@ -105,6 +105,100 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok", "deleted": True}
 
+    # ─── Knowledge Base ───────────────────────────────────────
+
+    def _knowledge_public(item: dict) -> dict:
+        """Omit content from list responses but include char_count for the UI counter."""
+        return {k: v for k, v in item.items() if k != "content"} | {
+            "char_count": len(item.get("content", ""))
+        }
+
+    @app.get("/api/agents/{agent_id}/knowledge")
+    async def list_agent_knowledge(agent_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        items = await _state.database.get_agent_knowledge(agent_id)
+        return [_knowledge_public(i) for i in items]
+
+    @app.post("/api/agents/{agent_id}/knowledge/text")
+    async def add_knowledge_text(agent_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        data = await request.json()
+        title = (data.get("title") or "").strip()
+        content = (data.get("content") or "").strip()
+        if not title or not content:
+            raise HTTPException(status_code=400, detail="title and content required")
+        kid = await _state.database.create_agent_knowledge(
+            agent_id=agent_id, type="text", title=title, content=content
+        )
+        items = await _state.database.get_agent_knowledge(agent_id)
+        item = next((i for i in items if i["id"] == kid), None)
+        return _knowledge_public(item)
+
+    @app.post("/api/agents/{agent_id}/knowledge/file")
+    async def add_knowledge_file(agent_id: int, file: UploadFile = File(...), title: str = Form("")):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        from openacm.utils.knowledge_file import extract_text
+        data = await file.read()
+        try:
+            content = await extract_text(file.filename or "file", data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        if not content:
+            raise HTTPException(status_code=422, detail="El archivo no contiene texto extraíble")
+        item_title = title.strip() or (Path(file.filename or "file").stem if file.filename else "Archivo")
+        kid = await _state.database.create_agent_knowledge(
+            agent_id=agent_id, type="file", title=item_title,
+            content=content, filename=file.filename,
+        )
+        items = await _state.database.get_agent_knowledge(agent_id)
+        item = next((i for i in items if i["id"] == kid), None)
+        return _knowledge_public(item)
+
+    @app.patch("/api/agents/{agent_id}/knowledge/{kid}")
+    async def update_knowledge_item(agent_id: int, kid: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        data = await request.json()
+        updates = {}
+        if "title" in data:
+            updates["title"] = (data["title"] or "").strip()
+        if "content" in data:
+            updates["content"] = (data["content"] or "").strip()
+        if not updates:
+            raise HTTPException(status_code=400, detail="title or content required")
+        ok = await _state.database.update_agent_knowledge(kid, **updates)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Knowledge item not found")
+        items = await _state.database.get_agent_knowledge(agent_id)
+        item = next((i for i in items if i["id"] == kid), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Knowledge item not found")
+        return _knowledge_public(item)
+
+    @app.delete("/api/agents/{agent_id}/knowledge/{kid}")
+    async def delete_knowledge_item(agent_id: int, kid: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _state.database.delete_agent_knowledge(kid)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Knowledge item not found")
+        return {"ok": True}
+
     @app.get("/api/agents/{agent_id}/secret")
     async def get_agent_secret(agent_id: int):
         """Return the webhook secret (used once after creation)."""
