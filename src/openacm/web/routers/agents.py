@@ -194,6 +194,9 @@ def register_routes(app: FastAPI) -> None:
     async def delete_knowledge_item(agent_id: int, kid: int):
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
         ok = await _state.database.delete_agent_knowledge(kid)
         if not ok:
             raise HTTPException(status_code=404, detail="Knowledge item not found")
