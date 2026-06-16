@@ -62,16 +62,21 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const totalChars = items.reduce((sum, i) => sum + (i.char_count ?? 0), 0);
 
   const handleAddText = async () => {
     if (!textTitle.trim() || !textContent.trim()) return;
-    await addText.mutateAsync({ title: textTitle.trim(), content: textContent.trim() });
-    setTextTitle('');
-    setTextContent('');
-    setShowTextForm(false);
-    toast.success('Sección de texto agregada');
+    try {
+      await addText.mutateAsync({ title: textTitle.trim(), content: textContent.trim() });
+      setTextTitle('');
+      setTextContent('');
+      setShowTextForm(false);
+      toast.success('Sección de texto agregada');
+    } catch (err: any) {
+      toast.error(err.message || 'Error al agregar la sección');
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,8 +108,15 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
   };
 
   const handleDelete = async (kid: number) => {
-    await removeItem.mutateAsync(kid);
-    toast.success('Item eliminado');
+    try {
+      setDeletingId(kid);
+      await removeItem.mutateAsync(kid);
+      toast.success('Item eliminado');
+    } catch (err: any) {
+      toast.error(err.message || 'Error al eliminar el item');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (isLoading) {
@@ -251,7 +263,7 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
                 </button>
                 <button
                   onClick={() => handleDelete(item.id)}
-                  disabled={removeItem.isPending}
+                  disabled={deletingId === item.id}
                   className="p-1 text-zinc-500 hover:text-red-400 transition-colors"
                   title="Eliminar"
                 >
@@ -612,14 +624,16 @@ function AgentFormModal({
           >
             Cancel
           </button>
-          <button
-            onClick={() => onSave(form)}
-            disabled={isSaving || !form.name.trim() || !form.system_prompt.trim()}
-            className="btn-primary"
-          >
-            {isSaving && <Loader2 size={13} className="animate-spin" />}
-            {initial ? 'Save changes' : 'Create Agent'}
-          </button>
+          {activeTab === 'config' && (
+            <button
+              onClick={() => onSave(form)}
+              disabled={isSaving || !form.name.trim() || !form.system_prompt.trim()}
+              className="btn-primary"
+            >
+              {isSaving && <Loader2 size={13} className="animate-spin" />}
+              {initial ? 'Save changes' : 'Create Agent'}
+            </button>
+          )}
         </div>
       </div>
     </div>
