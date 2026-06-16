@@ -64,6 +64,7 @@ All endpoints require standard dashboard authentication (same as existing agent 
 | `GET` | `/api/agents/{id}/knowledge` | — | `[{id, type, title, filename, created_at}]` |
 | `POST` | `/api/agents/{id}/knowledge/text` | `{title: str, content: str}` JSON | `{id, type, title, created_at}` |
 | `POST` | `/api/agents/{id}/knowledge/file` | `multipart/form-data` (file + optional title) | `{id, type, title, filename, created_at}` |
+| `PATCH` | `/api/agents/{id}/knowledge/{kid}` | `{title?: str, content?: str}` JSON | `{id, type, title, updated_at}` |
 | `DELETE` | `/api/agents/{id}/knowledge/{kid}` | — | `{ok: true}` |
 
 **Notes:**
@@ -128,6 +129,7 @@ A new **"Knowledge"** tab is added to the agent edit modal (not the create modal
 
 - **"+ Agregar texto"**: opens an inline form with `title` (input) + `content` (textarea). Save → `POST /knowledge/text` → item appears in list.
 - **"↑ Subir archivo"**: opens file picker. Accepted formats: `.pdf .docx .xlsx .pptx .txt .md .csv .json .yaml`. On select → shows upload spinner → `POST /knowledge/file` → item appears in list.
+- **Edit button (✏)**: opens the item inline for editing. For `text` items: editable `title` + `content` textarea → save → `PATCH /knowledge/{kid}`. For `file` items: only `title` is editable (content is fixed from the original file).
 - **Delete button**: `DELETE /knowledge/{id}` → item removed from list immediately (optimistic UI).
 - **Character counter**: shows total character count of all items. Yellow warning ≥ 30,000 chars. Red error ≥ 40,000 chars (matches backend truncation limit).
 - **Empty state**: when no items exist, shows a friendly prompt: "Agrega documentos o secciones de texto para que tu agente tenga contexto al responder."
@@ -155,4 +157,3 @@ A new **"Knowledge"** tab is added to the agent edit modal (not the create modal
 - URL/web scraping as knowledge source
 - Per-item character count display
 - Reordering knowledge items
-- Editing existing knowledge items (delete + re-add for now)
