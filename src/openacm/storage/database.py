@@ -74,6 +74,7 @@ class Database:
         # busy_timeout makes SQLite retry for up to 10s instead of failing instantly.
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA busy_timeout=10000")
+        await self._db.execute("PRAGMA foreign_keys = ON")
 
         await self._db.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -167,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 26
+    _SCHEMA_VERSION = 27
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -832,6 +833,22 @@ class Database:
             """)
             log.info("Migration 26: created gmail_reply_examples table")
 
+        if current < 27:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_knowledge (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id    INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    type        TEXT NOT NULL CHECK(type IN ('file', 'text')),
+                    title       TEXT NOT NULL,
+                    content     TEXT NOT NULL,
+                    filename    TEXT,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_knowledge_agent
+                    ON agent_knowledge(agent_id);
+            """)
+            log.info("Migration 27: created agent_knowledge table")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1391,6 +1408,63 @@ class Database:
         if not self._db:
             return False
         cursor = await self._db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Agent Knowledge ──────────────────────────────────────
+
+    async def create_agent_knowledge(
+        self,
+        agent_id: int,
+        type: str,
+        title: str,
+        content: str,
+        filename: str | None = None,
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO agent_knowledge (agent_id, type, title, content, filename) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (agent_id, type, title, content, filename),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_agent_knowledge(self, agent_id: int) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM agent_knowledge WHERE agent_id = ? ORDER BY created_at ASC",
+            (agent_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def update_agent_knowledge(self, kid: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"title", "content"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        params.append(kid)
+        await self._db.execute(
+            f"UPDATE agent_knowledge SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_agent_knowledge(self, kid: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM agent_knowledge WHERE id = ?", (kid,)
+        )
         await self._db.commit()
         return cursor.rowcount > 0
 

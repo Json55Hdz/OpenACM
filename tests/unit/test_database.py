@@ -211,3 +211,93 @@ class TestLLMUsageLogging:
             )
         stats = await db.get_stats()
         assert stats["total_tokens"] >= 45
+
+
+class TestAgentKnowledge:
+    async def _create_agent(self, db) -> int:
+        return await db.create_agent(
+            name="Bot", description="", system_prompt="You help.",
+            allowed_tools="all", webhook_secret="sec", telegram_token="",
+        )
+
+    async def test_create_and_get_knowledge(self, db):
+        agent_id = await self._create_agent(db)
+        kid = await db.create_agent_knowledge(
+            agent_id=agent_id, type="text", title="FAQ", content="Q: hi\nA: hello"
+        )
+        assert kid > 0
+        items = await db.get_agent_knowledge(agent_id)
+        assert len(items) == 1
+        assert items[0]["title"] == "FAQ"
+        assert items[0]["content"] == "Q: hi\nA: hello"
+        assert items[0]["type"] == "text"
+        assert items[0]["filename"] is None
+
+    async def test_create_file_knowledge(self, db):
+        agent_id = await self._create_agent(db)
+        kid = await db.create_agent_knowledge(
+            agent_id=agent_id, type="file", title="Manual",
+            content="# Manual\nContent here", filename="manual.pdf"
+        )
+        items = await db.get_agent_knowledge(agent_id)
+        assert items[0]["filename"] == "manual.pdf"
+        assert items[0]["type"] == "file"
+
+    async def test_update_knowledge_title_and_content(self, db):
+        agent_id = await self._create_agent(db)
+        kid = await db.create_agent_knowledge(
+            agent_id=agent_id, type="text", title="Old", content="old content"
+        )
+        ok = await db.update_agent_knowledge(kid, title="New", content="new content")
+        assert ok is True
+        items = await db.get_agent_knowledge(agent_id)
+        assert items[0]["title"] == "New"
+        assert items[0]["content"] == "new content"
+
+    async def test_update_title_only(self, db):
+        agent_id = await self._create_agent(db)
+        kid = await db.create_agent_knowledge(
+            agent_id=agent_id, type="text", title="Old", content="keep this"
+        )
+        await db.update_agent_knowledge(kid, title="New Title")
+        items = await db.get_agent_knowledge(agent_id)
+        assert items[0]["title"] == "New Title"
+        assert items[0]["content"] == "keep this"
+
+    async def test_delete_knowledge(self, db):
+        agent_id = await self._create_agent(db)
+        kid = await db.create_agent_knowledge(
+            agent_id=agent_id, type="text", title="FAQ", content="..."
+        )
+        ok = await db.delete_agent_knowledge(kid)
+        assert ok is True
+        items = await db.get_agent_knowledge(agent_id)
+        assert items == []
+
+    async def test_delete_nonexistent_returns_false(self, db):
+        ok = await db.delete_agent_knowledge(99999)
+        assert ok is False
+
+    async def test_cascade_delete_with_agent(self, db):
+        agent_id = await self._create_agent(db)
+        await db.create_agent_knowledge(
+            agent_id=agent_id, type="text", title="FAQ", content="..."
+        )
+        await db.delete_agent(agent_id)
+        items = await db.get_agent_knowledge(agent_id)
+        assert items == []
+
+    async def test_get_knowledge_ordered_by_created_at(self, db):
+        agent_id = await self._create_agent(db)
+        await db.create_agent_knowledge(agent_id=agent_id, type="text", title="First", content="1")
+        await db.create_agent_knowledge(agent_id=agent_id, type="text", title="Second", content="2")
+        items = await db.get_agent_knowledge(agent_id)
+        assert items[0]["title"] == "First"
+        assert items[1]["title"] == "Second"
+
+    async def test_knowledge_table_exists(self, db):
+        cursor = await db._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_knowledge'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
