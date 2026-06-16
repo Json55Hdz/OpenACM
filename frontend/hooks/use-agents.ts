@@ -26,6 +26,78 @@ export interface AgentFormData {
   telegram_token: string;
 }
 
+export interface KnowledgeItem {
+  id: number;
+  agent_id: number;
+  type: 'file' | 'text';
+  title: string;
+  filename: string | null;
+  char_count: number;
+  created_at: string;
+}
+
+export function useAgentKnowledge(agentId: number | null) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<KnowledgeItem[]>({
+    queryKey: ['agent-knowledge', agentId],
+    queryFn: () => fetchAPI(`/api/agents/${agentId}/knowledge`),
+    enabled: isAuthenticated && agentId !== null,
+    staleTime: 0,
+  });
+}
+
+export function useAgentKnowledgeMutations(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['agent-knowledge', agentId] });
+
+  const addText = useMutation({
+    mutationFn: ({ title, content }: { title: string; content: string }) =>
+      fetchAPI(`/api/agents/${agentId}/knowledge/text`, {
+        method: 'POST',
+        body: JSON.stringify({ title, content }),
+      }),
+    onSuccess: invalidate,
+  });
+
+  const addFile = useMutation({
+    mutationFn: ({ file, title }: { file: File; title?: string }) => {
+      const token = authStore.getState().token ?? '';
+      const form = new FormData();
+      form.append('file', file);
+      if (title) form.append('title', title);
+      return fetch(`/api/agents/${agentId}/knowledge/file`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      }).then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      });
+    },
+    onSuccess: invalidate,
+  });
+
+  const updateItem = useMutation({
+    mutationFn: ({ kid, title, content }: { kid: number; title?: string; content?: string }) =>
+      fetchAPI(`/api/agents/${agentId}/knowledge/${kid}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title, content }),
+      }),
+    onSuccess: invalidate,
+  });
+
+  const removeItem = useMutation({
+    mutationFn: (kid: number) =>
+      fetchAPI(`/api/agents/${agentId}/knowledge/${kid}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+  });
+
+  return { addText, addFile, updateItem, removeItem };
+}
+
 export function useAgents() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();
