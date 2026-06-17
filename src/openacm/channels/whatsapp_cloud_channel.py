@@ -207,15 +207,8 @@ class WhatsAppCloudChannel(BaseChannel):
             except Exception as exc:
                 log.error("WhatsApp message processing error", error=str(exc))
 
-    async def _respond(self, sender: str, content: str):
-        """Run the brain and deliver the reply (text + any ATTACHMENT: files)."""
-        response = await self.brain.process_message(
-            content=content,
-            user_id=sender,
-            channel_id=sender,
-            channel_type="whatsapp",
-        )
-
+    async def _deliver(self, sender: str, response: str):
+        """Parse ATTACHMENT: lines and send text + media to sender."""
         project_root = os.environ.get("OPENACM_PROJECT_ROOT", ".")
         media_dir = Path(project_root) / "data" / "media"
 
@@ -231,3 +224,13 @@ class WhatsAppCloudChannel(BaseChannel):
 
         if clean_text:
             await self.send_message(sender, clean_text)
+
+    async def _respond(self, sender: str, content: str):
+        """Run the brain and deliver the reply."""
+        response = await self.brain.process_message(
+            content=content,
+            user_id=sender,
+            channel_id=sender,
+            channel_type="whatsapp",
+        )
+        await self._deliver(sender, response)
