@@ -394,7 +394,35 @@ class TestAgentChannels:
         assert await db.get_agent_channel(cid) is None
 
     async def test_migration_28_clears_telegram_token(self, db):
-        # After migration 28 runs (at DB init), all telegram_tokens should be empty
-        rows = await db.get_all_agents()
-        for agent in rows:
-            assert agent.get("telegram_token", "") == ""
+        # Simulate a pre-migration agent row with a non-empty telegram_token
+        await db._db.execute(
+            "INSERT INTO agents (name, description, system_prompt, allowed_tools, "
+            "is_active, telegram_token, webhook_secret) "
+            "VALUES ('MigTestBot', '', 'x', 'all', 1, 'old_token_xyz', 'sec')"
+        )
+        await db._db.commit()
+
+        # Re-run the migration 28 data statements (DDL already applied — only DML matters)
+        await db._db.execute("""
+            INSERT OR IGNORE INTO agent_channels (agent_id, type, config)
+            SELECT id, 'telegram', json_object('token', telegram_token)
+            FROM agents
+            WHERE telegram_token IS NOT NULL AND telegram_token != ''
+        """)
+        await db._db.execute("""
+            UPDATE agents SET telegram_token = ''
+            WHERE telegram_token IS NOT NULL AND telegram_token != ''
+        """)
+        await db._db.commit()
+
+        # Verify token was cleared
+        agents = await db.get_all_agents()
+        migrated = next(a for a in agents if a["name"] == "MigTestBot")
+        assert migrated["telegram_token"] == ""
+
+        # Verify channel row was created with the old token
+        channels = await db.get_agent_channels(migrated["id"])
+        assert len(channels) == 1
+        assert channels[0]["type"] == "telegram"
+        import json
+        assert json.loads(channels[0]["config"])["token"] == "old_token_xyz"
