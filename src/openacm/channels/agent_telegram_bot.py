@@ -114,90 +114,169 @@ class AgentTelegramChannel(TelegramChannel):
             await self.send_message(target_id, text)
 
 
-class AgentBotManager:
+class AgentChannelManager:
     """
-    Manages one TelegramChannel per agent that has a telegram_token.
+    Manages one channel per agent per type (telegram, whatsapp).
 
-    Handles start, stop, and restart of individual agent bots.
-    Called at startup and whenever an agent's token changes.
+    Replaces AgentBotManager. Reads from the agent_channels table instead
+    of the agents.telegram_token field.
     """
 
     def __init__(self, agent_runner: AgentRunner, event_bus, database):
         self.agent_runner = agent_runner
         self.event_bus = event_bus
         self.database = database
-        # agent_id → TelegramChannel
-        self._bots: dict[int, TelegramChannel] = {}
+        # agent_id → {type → channel_instance}
+        self._channels: dict[int, dict[str, object]] = {}
+        # phone_number_id → AgentWhatsAppChannel (for webhook routing)
+        self._whatsapp_by_phone: dict[str, object] = {}
 
     async def start_all(self):
-        """Start a bot for every agent with a telegram_token."""
+        """Start channels for all active agents."""
         agents = await self.database.get_all_agents()
-        active = [a for a in agents if a.get("is_active") and a.get("telegram_token", "").strip()]
+        active = [a for a in agents if a.get("is_active")]
         if not active:
-            log.info("No agent Telegram bots configured")
+            log.info("No active agents with channels configured")
             return
 
+        started = 0
         for agent in active:
-            await self.start_bot(agent)
+            channel_rows = await self.database.get_agent_channels(agent["id"])
+            for row in channel_rows:
+                if row.get("is_active"):
+                    try:
+                        await self.start_channel(agent, row)
+                        started += 1
+                    except Exception as exc:
+                        log.warning(
+                            "AgentChannelManager: failed to start channel",
+                            agent=agent["name"],
+                            type=row["type"],
+                            error=str(exc),
+                        )
 
-        log.info("Agent Telegram bots started", count=len(active))
+        if started:
+            log.info("Agent channels started", count=started)
 
-    async def start_bot(self, agent: dict):
-        """Start a Telegram bot for a single agent."""
+    async def start_channel(self, agent: dict, channel_row: dict):
+        """Start a single channel for an agent based on channel_row type."""
+        channel_type = channel_row["type"]
         agent_id = agent["id"]
-        token = agent.get("telegram_token", "").strip()
-        if not token:
+        import json as _json
+        config_data = _json.loads(channel_row.get("config", "{}"))
+
+        # Stop existing channel of this type if running
+        await self.stop_channel(agent_id, channel_type)
+
+        if channel_type == "telegram":
+            channel = self._make_telegram_channel(agent, config_data)
+        elif channel_type == "whatsapp":
+            channel = self._make_whatsapp_channel(agent, config_data)
+        else:
+            log.warning("Unknown channel type", type=channel_type)
             return
 
-        # Stop existing bot if running
-        await self.stop_bot(agent_id)
+        # Register in _channels dict
+        if agent_id not in self._channels:
+            self._channels[agent_id] = {}
+        self._channels[agent_id][channel_type] = channel
 
+        # Register WhatsApp in phone lookup
+        if channel_type == "whatsapp":
+            phone_id = config_data.get("phone_number_id", "")
+            if phone_id:
+                self._whatsapp_by_phone[phone_id] = channel
+
+        asyncio.create_task(channel.start())
+        await asyncio.wait_for(channel.ready_event.wait(), timeout=15)
+
+        if channel.is_connected:
+            log.info("Agent channel started", agent=agent["name"], type=channel_type)
+        else:
+            log.warning("Agent channel failed to connect", agent=agent["name"], type=channel_type)
+
+    def _make_telegram_channel(self, agent: dict, config_data: dict):
+        token = config_data.get("token", "")
         brain_adapter = AgentBrainAdapter(agent, self.agent_runner)
-        config = TelegramConfig(token=token, enabled=True)
-
-        bot = AgentTelegramChannel(
-            config=config,
+        tg_config = TelegramConfig(token=token, enabled=True)
+        return AgentTelegramChannel(
+            config=tg_config,
             brain=brain_adapter,
             event_bus=self.event_bus,
             database=self.database,
         )
-        self._bots[agent_id] = bot
 
-        asyncio.create_task(bot.start())
-        await asyncio.wait_for(bot.ready_event.wait(), timeout=15)
+    def _make_whatsapp_channel(self, agent: dict, config_data: dict):
+        from openacm.channels.agent_whatsapp_channel import AgentWhatsAppChannel
+        from openacm.core.config import WhatsAppConfig
+        wa_config = WhatsAppConfig(
+            enabled=True,
+            access_token=config_data.get("access_token", ""),
+            phone_number_id=config_data.get("phone_number_id", ""),
+            verify_token=config_data.get("verify_token", ""),
+            app_secret=config_data.get("app_secret", ""),
+        )
+        return AgentWhatsAppChannel(
+            config=wa_config,
+            agent_runner=self.agent_runner,
+            agent=agent,
+            event_bus=self.event_bus,
+        )
 
-        if bot.is_connected:
-            log.info("Agent bot started", agent=agent["name"], agent_id=agent_id)
-        else:
-            log.warning("Agent bot failed to start", agent=agent["name"], agent_id=agent_id)
-            self._bots.pop(agent_id, None)
+    async def stop_channel(self, agent_id: int, channel_type: str):
+        """Stop a specific channel type for an agent."""
+        agent_channels = self._channels.get(agent_id, {})
+        ch = agent_channels.pop(channel_type, None)
+        if not agent_channels:
+            self._channels.pop(agent_id, None)
+        if ch is None:
+            return
+        # Remove from whatsapp phone lookup
+        if channel_type == "whatsapp":
+            dead_phones = [k for k, v in self._whatsapp_by_phone.items() if v is ch]
+            for k in dead_phones:
+                del self._whatsapp_by_phone[k]
+        try:
+            await ch.stop()
+        except Exception:
+            pass
+        log.info("Agent channel stopped", agent_id=agent_id, type=channel_type)
 
-    async def stop_bot(self, agent_id: int):
-        """Stop the bot for a given agent."""
-        bot = self._bots.pop(agent_id, None)
-        if bot:
-            await bot.stop()
-            log.info("Agent bot stopped", agent_id=agent_id)
-
-    async def restart_bot(self, agent_id: int):
-        """Reload agent from DB and restart its bot."""
+    async def restart_channel(self, agent_id: int, channel_type: str):
+        """Reload channel config from DB and restart."""
         agent = await self.database.get_agent(agent_id)
-        if not agent:
-            await self.stop_bot(agent_id)
+        if not agent or not agent.get("is_active"):
+            await self.stop_channel(agent_id, channel_type)
             return
-        if not agent.get("telegram_token", "").strip() or not agent.get("is_active"):
-            await self.stop_bot(agent_id)
+        channel_rows = await self.database.get_agent_channels(agent_id)
+        row = next((r for r in channel_rows if r["type"] == channel_type), None)
+        if not row or not row.get("is_active"):
+            await self.stop_channel(agent_id, channel_type)
             return
-        await self.start_bot(agent)
+        await self.start_channel(agent, row)
 
     async def stop_all(self):
-        """Stop all running agent bots."""
-        for agent_id in list(self._bots.keys()):
-            await self.stop_bot(agent_id)
+        """Stop all running channels."""
+        for agent_id in list(self._channels.keys()):
+            for channel_type in list(self._channels.get(agent_id, {}).keys()):
+                await self.stop_channel(agent_id, channel_type)
+
+    def get_channel_by_phone(self, phone_number_id: str):
+        """Return the AgentWhatsAppChannel for this phone_number_id, or None."""
+        return self._whatsapp_by_phone.get(phone_number_id)
 
     def get_status(self) -> list[dict]:
-        """Return status of all agent bots."""
-        return [
-            {"agent_id": agent_id, "connected": bot.is_connected}
-            for agent_id, bot in self._bots.items()
-        ]
+        """Return live connection status for all managed channels."""
+        result = []
+        for agent_id, type_map in self._channels.items():
+            for channel_type, ch in type_map.items():
+                result.append({
+                    "agent_id": agent_id,
+                    "type": channel_type,
+                    "connected": ch.is_connected,
+                })
+        return result
+
+
+# Keep old name as alias so existing code referencing AgentBotManager still imports
+AgentBotManager = AgentChannelManager
