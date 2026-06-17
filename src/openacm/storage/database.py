@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 27
+    _SCHEMA_VERSION = 28
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -849,6 +849,36 @@ class Database:
             """)
             log.info("Migration 27: created agent_knowledge table")
 
+        if current < 28:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS agent_channels (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id    INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    type        TEXT NOT NULL CHECK(type IN ('telegram', 'whatsapp')),
+                    config      TEXT NOT NULL DEFAULT '{}',
+                    is_active   INTEGER NOT NULL DEFAULT 1,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_channels_agent
+                    ON agent_channels(agent_id);
+                CREATE INDEX IF NOT EXISTS idx_agent_channels_type_active
+                    ON agent_channels(type, is_active);
+            """)
+            # Migrate existing telegram_token values into agent_channels
+            await self._db.execute("""
+                INSERT INTO agent_channels (agent_id, type, config)
+                SELECT id, 'telegram', json_object('token', telegram_token)
+                FROM agents
+                WHERE telegram_token IS NOT NULL AND telegram_token != ''
+            """)
+            await self._db.execute("""
+                UPDATE agents SET telegram_token = ''
+                WHERE telegram_token IS NOT NULL AND telegram_token != ''
+            """)
+            await self._db.commit()
+            log.info("Migration 28: created agent_channels table, migrated telegram_token values")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1464,6 +1494,71 @@ class Database:
             return False
         cursor = await self._db.execute(
             "DELETE FROM agent_knowledge WHERE id = ?", (kid,)
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Agent Channels ───────────────────────────────────────
+
+    async def create_agent_channel(
+        self,
+        agent_id: int,
+        type: str,
+        config_json: str,
+        is_active: int = 1,
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO agent_channels (agent_id, type, config, is_active) VALUES (?, ?, ?, ?)",
+            (agent_id, type, config_json, is_active),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_agent_channels(self, agent_id: int) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM agent_channels WHERE agent_id = ? ORDER BY created_at ASC",
+            (agent_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_agent_channel(self, channel_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM agent_channels WHERE id = ?", (channel_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_agent_channel(self, channel_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"config", "is_active"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(channel_id)
+        await self._db.execute(
+            f"UPDATE agent_channels SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return True
+
+    async def delete_agent_channel(self, channel_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            "DELETE FROM agent_channels WHERE id = ?", (channel_id,)
         )
         await self._db.commit()
         return cursor.rowcount > 0

@@ -301,3 +301,100 @@ class TestAgentKnowledge:
         )
         row = await cursor.fetchone()
         assert row is not None
+
+
+class TestAgentChannels:
+    async def test_create_and_get(self, db):
+        agent_id = await db.create_agent(
+            name="A", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="telegram",
+            config_json='{"token":"abc123"}', is_active=1
+        )
+        assert cid > 0
+        rows = await db.get_agent_channels(agent_id)
+        assert len(rows) == 1
+        assert rows[0]["type"] == "telegram"
+        assert rows[0]["is_active"] == 1
+        import json
+        assert json.loads(rows[0]["config"])["token"] == "abc123"
+
+    async def test_get_agent_channel_by_id(self, db):
+        agent_id = await db.create_agent(
+            name="B", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="whatsapp",
+            config_json='{"phone_number_id":"555"}', is_active=1
+        )
+        row = await db.get_agent_channel(cid)
+        assert row is not None
+        assert row["id"] == cid
+        assert row["type"] == "whatsapp"
+
+    async def test_get_agent_channel_not_found(self, db):
+        row = await db.get_agent_channel(9999)
+        assert row is None
+
+    async def test_update_config(self, db):
+        agent_id = await db.create_agent(
+            name="C", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="telegram",
+            config_json='{"token":"old"}', is_active=1
+        )
+        ok = await db.update_agent_channel(cid, config='{"token":"new"}')
+        assert ok
+        row = await db.get_agent_channel(cid)
+        import json
+        assert json.loads(row["config"])["token"] == "new"
+
+    async def test_update_is_active(self, db):
+        agent_id = await db.create_agent(
+            name="D", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="telegram",
+            config_json='{"token":"x"}', is_active=1
+        )
+        ok = await db.update_agent_channel(cid, is_active=0)
+        assert ok
+        row = await db.get_agent_channel(cid)
+        assert row["is_active"] == 0
+
+    async def test_delete(self, db):
+        agent_id = await db.create_agent(
+            name="E", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="telegram",
+            config_json='{"token":"y"}', is_active=1
+        )
+        ok = await db.delete_agent_channel(cid)
+        assert ok
+        assert await db.get_agent_channel(cid) is None
+
+    async def test_cascade_delete(self, db):
+        agent_id = await db.create_agent(
+            name="F", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="telegram",
+            config_json='{"token":"z"}', is_active=1
+        )
+        await db.delete_agent(agent_id)
+        assert await db.get_agent_channel(cid) is None
+
+    async def test_migration_28_clears_telegram_token(self, db):
+        # After migration 28 runs (at DB init), all telegram_tokens should be empty
+        rows = await db.get_all_agents()
+        for agent in rows:
+            assert agent.get("telegram_token", "") == ""
