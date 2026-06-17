@@ -1,4 +1,5 @@
 """Tests for /api/agents/{id}/channels endpoints."""
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
@@ -137,3 +138,36 @@ class TestRestartChannel:
         assert r.status_code == 200
         assert r.json()["ok"] is True
         assert r.json()["connected"] is True
+
+
+class TestPatchChannel:
+    async def test_patch_merges_config_and_restarts(self):
+        row_before = {"id": 1, "agent_id": 1, "type": "telegram",
+                      "config": '{"token":"oldtoken"}', "is_active": 1,
+                      "created_at": "2026-06-16T10:00:00"}
+        row_after = {"id": 1, "agent_id": 1, "type": "telegram",
+                     "config": '{"token":"newtoken"}', "is_active": 1,
+                     "created_at": "2026-06-16T10:00:00"}
+        db = _make_db(agent=_AGENT, channels=[row_before])
+        db.get_agent_channel = AsyncMock(side_effect=[row_before, row_after])
+        mgr = MagicMock()
+        mgr.restart_channel = AsyncMock()
+        mgr.get_status = MagicMock(return_value=[])
+        app = _make_app(db=db, mgr=mgr)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.patch("/api/agents/1/channels/1",
+                              json={"config": {"token": "newtoken"}})
+        assert r.status_code == 200
+        # Allow background task time to be scheduled
+        await asyncio.sleep(0.01)
+        db.update_agent_channel.assert_awaited_once()
+        mgr.restart_channel.assert_awaited_once_with(1, "telegram")
+
+    async def test_patch_returns_404_when_channel_not_found(self):
+        db = _make_db(agent=_AGENT, channels=[])
+        db.get_agent_channel = AsyncMock(return_value=None)
+        app = _make_app(db=db)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.patch("/api/agents/1/channels/99",
+                              json={"config": {"token": "x"}})
+        assert r.status_code == 404

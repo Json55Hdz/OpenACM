@@ -265,7 +265,7 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=422, detail=f"Invalid channel type: {channel_type}")
 
         required = _REQUIRED_CONFIG.get(channel_type, set())
-        missing = [k for k in required if not config_data.get(k, "").strip()]
+        missing = [k for k in required if not str(config_data.get(k) or "").strip()]
         if missing:
             raise HTTPException(
                 status_code=422,
