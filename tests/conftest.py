@@ -163,7 +163,7 @@ async def client(app_config, brain, db, tool_registry, event_bus):
     from httpx import AsyncClient, ASGITransport
     import openacm.web.server as server_module
 
-    app = server_module.create_server(
+    app = server_module.create_web_server(
         brain=brain,
         database=db,
         event_bus=event_bus,
@@ -171,7 +171,7 @@ async def client(app_config, brain, db, tool_registry, event_bus):
         config=app_config,
         command_processor=None,
         channels=[],
-        agent_bot_manager=None,
+        agent_channel_manager=None,
         mcp_manager=None,
         activity_watcher=None,
         cron_scheduler=None,

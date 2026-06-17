@@ -84,6 +84,14 @@ def register_routes(app: FastAPI) -> None:
         ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+        # When is_active changes, restart all channels for this agent
+        if _state.agent_channel_manager and "is_active" in kwargs:
+            for ch_type in ["telegram", "whatsapp"]:
+                asyncio.create_task(
+                    _state.agent_channel_manager.restart_channel(agent_id, ch_type)
+                )
+
         agent = await _state.database.get_agent(agent_id)
         return _agent_public(agent)
 
