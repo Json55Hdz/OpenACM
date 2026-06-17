@@ -54,18 +54,25 @@ def register_routes(app: FastAPI) -> None:
             log.warning("WhatsApp webhook signature invalid — dropping")
             return Response(status_code=403)
 
-        channel = get_active_channel()
-        if channel is None:
-            # Still 200 so Meta doesn't disable the webhook while we're booting.
-            return JSONResponse({"status": "no_channel"}, status_code=200)
-
         try:
             payload = await request.json()
             for entry in payload.get("entry", []):
                 for change in entry.get("changes", []):
-                    await channel.handle_incoming(change.get("value", {}))
+                    value = change.get("value", {})
+                    phone_id = value.get("metadata", {}).get("phone_number_id", "")
+
+                    # Route to agent channel first, fall back to global Brain channel
+                    channel = None
+                    if phone_id and getattr(_state, "agent_channel_manager", None):
+                        channel = _state.agent_channel_manager.get_channel_by_phone(phone_id)
+                    if channel is None:
+                        channel = get_active_channel()
+
+                    if channel is None:
+                        continue
+
+                    await channel.handle_incoming(value)
         except Exception as exc:
             log.error("WhatsApp webhook processing failed", error=str(exc))
 
-        # Always 200 quickly — Meta retries (and eventually disables) on non-2xx.
         return JSONResponse({"status": "ok"})
