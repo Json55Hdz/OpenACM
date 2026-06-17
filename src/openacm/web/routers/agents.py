@@ -198,6 +198,165 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="Knowledge item not found")
         return {"ok": True}
 
+    # ─── Agent Channels ───────────────────────────────────────
+
+    _MASKED_KEYS = {"token", "access_token", "app_secret"}
+    _REQUIRED_CONFIG = {
+        "telegram": {"token"},
+        "whatsapp": {"access_token", "phone_number_id"},
+    }
+
+    def _mask_config(config_data: dict) -> dict:
+        """Mask sensitive credential fields, keeping first 8 chars."""
+        result = {}
+        for k, v in config_data.items():
+            if k in _MASKED_KEYS and isinstance(v, str) and len(v) > 8:
+                result[k] = v[:8] + "..."
+            else:
+                result[k] = v
+        return result
+
+    def _channel_public(row: dict, is_connected: bool = False) -> dict:
+        config_data = json.loads(row.get("config", "{}"))
+        return {
+            "id": row["id"],
+            "agent_id": row["agent_id"],
+            "type": row["type"],
+            "config": _mask_config(config_data),
+            "is_active": bool(row.get("is_active", 1)),
+            "is_connected": is_connected,
+            "created_at": row.get("created_at", ""),
+        }
+
+    def _get_connected_set() -> set:
+        """Return set of (agent_id, type) tuples that are currently connected."""
+        if not _state.agent_channel_manager:
+            return set()
+        return {
+            (s["agent_id"], s["type"])
+            for s in _state.agent_channel_manager.get_status()
+            if s["connected"]
+        }
+
+    @app.get("/api/agents/{agent_id}/channels")
+    async def list_agent_channels(agent_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        rows = await _state.database.get_agent_channels(agent_id)
+        connected = _get_connected_set()
+        return [_channel_public(r, (agent_id, r["type"]) in connected) for r in rows]
+
+    @app.post("/api/agents/{agent_id}/channels")
+    async def create_agent_channel(agent_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        agent = await _state.database.get_agent(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        data = await request.json()
+        channel_type = data.get("type", "")
+        config_data = data.get("config", {})
+
+        if channel_type not in ("telegram", "whatsapp"):
+            raise HTTPException(status_code=422, detail=f"Invalid channel type: {channel_type}")
+
+        required = _REQUIRED_CONFIG.get(channel_type, set())
+        missing = [k for k in required if not config_data.get(k, "").strip()]
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Missing required config fields: {', '.join(missing)}"
+            )
+
+        # Check for duplicate active channel of same type
+        existing = await _state.database.get_agent_channels(agent_id)
+        if any(r["type"] == channel_type and r.get("is_active") for r in existing):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Este agente ya tiene un canal de tipo {channel_type}"
+            )
+
+        cid = await _state.database.create_agent_channel(
+            agent_id=agent_id,
+            type=channel_type,
+            config_json=json.dumps(config_data),
+            is_active=1,
+        )
+
+        row = await _state.database.get_agent_channel(cid)
+
+        # Start the channel if agent is active
+        if _state.agent_channel_manager and agent.get("is_active"):
+            asyncio.create_task(
+                _state.agent_channel_manager.start_channel(agent, row)
+            )
+
+        connected = _get_connected_set()
+        return _channel_public(row, (agent_id, channel_type) in connected)
+
+    @app.patch("/api/agents/{agent_id}/channels/{channel_id}")
+    async def update_agent_channel(agent_id: int, channel_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        row = await _state.database.get_agent_channel(channel_id)
+        if not row or row["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Channel not found")
+
+        data = await request.json()
+        updates = {}
+
+        if "config" in data:
+            existing_config = json.loads(row.get("config", "{}"))
+            merged = {**existing_config, **data["config"]}
+            updates["config"] = json.dumps(merged)
+
+        if "is_active" in data:
+            updates["is_active"] = int(bool(data["is_active"]))
+
+        if updates:
+            await _state.database.update_agent_channel(channel_id, **updates)
+            if _state.agent_channel_manager:
+                asyncio.create_task(
+                    _state.agent_channel_manager.restart_channel(agent_id, row["type"])
+                )
+
+        updated = await _state.database.get_agent_channel(channel_id)
+        connected = _get_connected_set()
+        return _channel_public(updated, (agent_id, row["type"]) in connected)
+
+    @app.delete("/api/agents/{agent_id}/channels/{channel_id}")
+    async def delete_agent_channel(agent_id: int, channel_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        row = await _state.database.get_agent_channel(channel_id)
+        if not row or row["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Channel not found")
+
+        if _state.agent_channel_manager:
+            await _state.agent_channel_manager.stop_channel(agent_id, row["type"])
+
+        await _state.database.delete_agent_channel(channel_id)
+        return {"ok": True}
+
+    @app.post("/api/agents/{agent_id}/channels/{channel_id}/restart")
+    async def restart_agent_channel(agent_id: int, channel_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        row = await _state.database.get_agent_channel(channel_id)
+        if not row or row["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Channel not found")
+
+        if _state.agent_channel_manager:
+            await _state.agent_channel_manager.restart_channel(agent_id, row["type"])
+
+        connected = _get_connected_set()
+        is_connected = (agent_id, row["type"]) in connected
+        return {"ok": True, "connected": is_connected}
+
     @app.get("/api/agents/{agent_id}/secret")
     async def get_agent_secret(agent_id: int):
         """Return the webhook secret (used once after creation)."""
