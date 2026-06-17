@@ -220,7 +220,7 @@ async def create_web_server(
     event_bus: EventBus,
     tool_registry: ToolRegistry,
     channels: list | None = None,
-    agent_bot_manager=None,
+    agent_channel_manager=None,
     mcp_manager=None,
     activity_watcher=None,
     cron_scheduler=None,
@@ -241,7 +241,7 @@ async def create_web_server(
     _state.config = config
     _state.command_processor = CommandProcessor(brain, database)
     _state.channels = channels or []
-    _state.agent_bot_manager = agent_bot_manager
+    _state.agent_channel_manager = agent_channel_manager
     _state.mcp_manager = mcp_manager
 
     # Load and apply user-defined custom providers on startup

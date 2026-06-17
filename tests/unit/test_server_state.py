@@ -11,7 +11,7 @@ def test_defaults_are_none_for_services():
     assert s.tool_registry is None
     assert s.config is None
     assert s.command_processor is None
-    assert s.agent_bot_manager is None
+    assert s.agent_channel_manager is None
     assert s.mcp_manager is None
     assert s.activity_watcher is None
     assert s.cron_scheduler is None

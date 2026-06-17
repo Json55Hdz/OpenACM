@@ -59,7 +59,7 @@ class OpenACM:
         self.security_policy: SecurityPolicy | None = None
         self.command_processor: CommandProcessor | None = None
         self._channels: list = []
-        self._agent_bot_manager = None
+        self._agent_channel_manager = None
         self._mcp_manager = None
         self._web_server = None
         self._activity_watcher = None
@@ -114,7 +114,7 @@ class OpenACM:
             # Phase 5: Start channels
             progress.update(task, description=steps[4])
             await self._init_channels()
-            await self._init_agent_bots()
+            await self._init_agent_channels()
             progress.advance(task)
 
             # Generate dashboard token
@@ -403,11 +403,11 @@ class OpenACM:
             status = "[green]✓[/green]" if ch.is_connected else "[yellow]~[/yellow]"
             console.print(f"  {status} {ch.name.capitalize()} channel ready")
 
-    async def _init_agent_bots(self):
-        """Start individual Telegram bots for agents that have a telegram_token."""
+    async def _init_agent_channels(self):
+        """Start per-agent channels (Telegram bots, WhatsApp numbers)."""
         try:
             from openacm.core.agent_runner import AgentRunner
-            from openacm.channels.agent_telegram_bot import AgentBotManager
+            from openacm.channels.agent_telegram_bot import AgentChannelManager
 
             agent_runner = AgentRunner(
                 llm_router=self.llm_router,
@@ -416,18 +416,18 @@ class OpenACM:
                 event_bus=self.event_bus,
                 database=self.database,
             )
-            self._agent_bot_manager = AgentBotManager(
+            self._agent_channel_manager = AgentChannelManager(
                 agent_runner=agent_runner,
                 event_bus=self.event_bus,
                 database=self.database,
             )
-            await self._agent_bot_manager.start_all()
+            await self._agent_channel_manager.start_all()
 
-            active = [b for b in self._agent_bot_manager.get_status() if b["connected"]]
+            active = [b for b in self._agent_channel_manager.get_status() if b["connected"]]
             if active:
-                console.print(f"  [green]✓[/green] {len(active)} agent Telegram bot(s) running")
+                console.print(f"  [green]✓[/green] {len(active)} agent channel(s) running")
         except Exception as e:
-            console.print(f"  [yellow]~[/yellow] Agent bots skipped: {e}")
+            console.print(f"  [yellow]~[/yellow] Agent channels skipped: {e}")
 
     async def _init_watchers(self):
         """Start OS activity watcher and cron scheduler."""
@@ -522,7 +522,7 @@ class OpenACM:
                 event_bus=self.event_bus,
                 tool_registry=self.tool_registry,
                 channels=self._channels,
-                agent_bot_manager=self._agent_bot_manager,
+                agent_channel_manager=self._agent_channel_manager,
                 mcp_manager=self._mcp_manager,
                 activity_watcher=self._activity_watcher,
                 cron_scheduler=self._cron_scheduler,
@@ -654,10 +654,9 @@ class OpenACM:
             except Exception:
                 pass
 
-        # Stop agent Telegram bots
-        if self._agent_bot_manager:
+        if self._agent_channel_manager:
             try:
-                await self._agent_bot_manager.stop_all()
+                await self._agent_channel_manager.stop_all()
             except Exception:
                 pass
 

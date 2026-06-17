@@ -17,7 +17,7 @@ class ServerState:
     config: object = None
     command_processor: object = None
     channels: list = field(default_factory=list)
-    agent_bot_manager: object = None
+    agent_channel_manager: object = None
     mcp_manager: object = None
     activity_watcher: object = None
     cron_scheduler: object = None

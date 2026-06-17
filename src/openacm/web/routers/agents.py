@@ -63,9 +63,6 @@ def register_routes(app: FastAPI) -> None:
             telegram_token=data.get("telegram_token", ""),
         )
         agent = await _state.database.get_agent(agent_id)
-        # Start Telegram bot if token provided
-        if _state.agent_bot_manager and agent.get("telegram_token", "").strip():
-            asyncio.create_task(_state.agent_bot_manager.start_bot(agent))
         return agent  # include secret on creation so user can copy it
 
     @app.get("/api/agents/{agent_id}")
@@ -82,24 +79,23 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
-        allowed_fields = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
+        allowed_fields = {"name", "description", "system_prompt", "allowed_tools", "is_active"}
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
         ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
         agent = await _state.database.get_agent(agent_id)
-        # Restart bot if telegram_token was part of the update
-        if _state.agent_bot_manager and ("telegram_token" in kwargs or "is_active" in kwargs):
-            asyncio.create_task(_state.agent_bot_manager.restart_bot(agent_id))
         return _agent_public(agent)
 
     @app.delete("/api/agents/{agent_id}")
     async def delete_agent(agent_id: int):
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        # Stop bot before deleting
-        if _state.agent_bot_manager:
-            asyncio.create_task(_state.agent_bot_manager.stop_bot(agent_id))
+        if _state.agent_channel_manager:
+            for ch_type in ["telegram", "whatsapp"]:
+                asyncio.create_task(
+                    _state.agent_channel_manager.stop_channel(agent_id, ch_type)
+                )
         ok = await _state.database.delete_agent(agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
