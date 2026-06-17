@@ -257,8 +257,8 @@ class AgentChannelManager:
 
     async def stop_all(self):
         """Stop all running channels."""
-        for agent_id in list(self._channels.keys()):
-            for channel_type in list(self._channels.get(agent_id, {}).keys()):
+        for agent_id, type_map in list(self._channels.items()):
+            for channel_type in list(type_map.keys()):
                 await self.stop_channel(agent_id, channel_type)
 
     def get_channel_by_phone(self, phone_number_id: str):
