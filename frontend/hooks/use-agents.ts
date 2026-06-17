@@ -36,6 +36,20 @@ export interface KnowledgeItem {
   created_at: string;
 }
 
+export interface ChannelItem {
+  id: number;
+  agent_id: number;
+  type: 'telegram' | 'whatsapp';
+  config: Record<string, string>;
+  is_active: boolean;
+  is_connected: boolean;
+  created_at: string;
+}
+
+export type ChannelConfig =
+  | { type: 'telegram'; token: string }
+  | { type: 'whatsapp'; access_token: string; phone_number_id: string; verify_token?: string; app_secret?: string };
+
 export function useAgentKnowledge(agentId: number | null) {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();
@@ -96,6 +110,47 @@ export function useAgentKnowledgeMutations(agentId: number) {
   });
 
   return { addText, addFile, updateItem, removeItem };
+}
+
+export function useAgentChannels(agentId: number | null) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<ChannelItem[]>({
+    queryKey: ['agent-channels', agentId],
+    queryFn: () => fetchAPI(`/api/agents/${agentId}/channels`),
+    enabled: isAuthenticated && agentId !== null,
+    staleTime: 0,
+  });
+}
+
+export function useAgentChannelMutations(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['agent-channels', agentId] });
+
+  const addChannel = useMutation({
+    mutationFn: ({ type, config }: { type: string; config: Record<string, string> }) =>
+      fetchAPI(`/api/agents/${agentId}/channels`, {
+        method: 'POST',
+        body: JSON.stringify({ type, config }),
+      }),
+    onSuccess: invalidate,
+  });
+
+  const removeChannel = useMutation({
+    mutationFn: (channelId: number) =>
+      fetchAPI(`/api/agents/${agentId}/channels/${channelId}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+  });
+
+  const restartChannel = useMutation({
+    mutationFn: (channelId: number) =>
+      fetchAPI(`/api/agents/${agentId}/channels/${channelId}/restart`, { method: 'POST' }),
+    onSuccess: invalidate,
+  });
+
+  return { addChannel, removeChannel, restartChannel };
 }
 
 export function useAgents() {
