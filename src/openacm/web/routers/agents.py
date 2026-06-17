@@ -312,6 +312,14 @@ def register_routes(app: FastAPI) -> None:
         if "config" in data:
             existing_config = json.loads(row.get("config", "{}"))
             merged = {**existing_config, **data["config"]}
+            # Validate merged config still satisfies required fields
+            required = _REQUIRED_CONFIG.get(row["type"], set())
+            missing = [k for k in required if not str(merged.get(k) or "").strip()]
+            if missing:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Missing required config fields after merge: {', '.join(missing)}"
+                )
             updates["config"] = json.dumps(merged)
 
         if "is_active" in data:

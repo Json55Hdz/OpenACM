@@ -171,3 +171,15 @@ class TestPatchChannel:
             r = await c.patch("/api/agents/1/channels/99",
                               json={"config": {"token": "x"}})
         assert r.status_code == 404
+
+    async def test_patch_returns_422_when_required_field_cleared(self):
+        row = {"id": 1, "agent_id": 1, "type": "telegram",
+               "config": '{"token":"validtoken"}', "is_active": 1,
+               "created_at": "2026-06-16T10:00:00"}
+        db = _make_db(agent=_AGENT, channels=[row])
+        db.get_agent_channel = AsyncMock(return_value=row)
+        app = _make_app(db=db)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            r = await c.patch("/api/agents/1/channels/1",
+                              json={"config": {"token": ""}})
+        assert r.status_code == 422
