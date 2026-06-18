@@ -326,7 +326,7 @@ function ChannelsTab({ agentId }: { agentId: number }) {
   const { addChannel, removeChannel, restartChannel } = useAgentChannelMutations(agentId);
 
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addType, setAddType] = useState<'telegram' | 'whatsapp'>('telegram');
+  const [addType, setAddType] = useState<'telegram' | 'whatsapp' | 'whatsapp_web'>('telegram');
   const [addConfig, setAddConfig] = useState<Record<string, string>>({});
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [restartingId, setRestartingId] = useState<number | null>(null);
@@ -334,7 +334,7 @@ function ChannelsTab({ agentId }: { agentId: number }) {
   const [webhookTab, setWebhookTab] = useState<'curl' | 'python' | 'js'>('curl');
   const [copied, setCopied] = useState(false);
 
-  const hasWhatsApp = channels.some((c) => c.type === 'whatsapp') || (showAddForm && addType === 'whatsapp');
+  const hasWhatsApp = channels.some((c) => c.type === 'whatsapp' || c.type === 'whatsapp_web') || (showAddForm && (addType === 'whatsapp' || addType === 'whatsapp_web'));
 
   const handleAdd = async () => {
     try {
@@ -406,11 +406,12 @@ function ChannelsTab({ agentId }: { agentId: number }) {
             <label className="block text-xs text-zinc-400 mb-1">Tipo de canal</label>
             <select
               value={addType}
-              onChange={(e) => { setAddType(e.target.value as 'telegram' | 'whatsapp'); setAddConfig({}); }}
+              onChange={(e) => { setAddType(e.target.value as 'telegram' | 'whatsapp' | 'whatsapp_web'); setAddConfig({}); }}
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500"
             >
               <option value="telegram">Telegram</option>
               <option value="whatsapp">WhatsApp Business</option>
+              <option value="whatsapp_web">WhatsApp Web</option>
             </select>
           </div>
 
@@ -467,6 +468,18 @@ function ChannelsTab({ agentId }: { agentId: number }) {
             </>
           )}
 
+          {addType === 'whatsapp_web' && (
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Bridge URL</label>
+              <input
+                value={addConfig.bridge_url || ''}
+                onChange={(e) => setAddConfig({ bridge_url: e.target.value })}
+                placeholder="http://localhost:3000"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+              />
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button
               onClick={handleAdd}
@@ -489,7 +502,7 @@ function ChannelsTab({ agentId }: { agentId: number }) {
       {channels.length === 0 && !showAddForm && (
         <div className="text-center py-8 text-zinc-500 text-sm">
           <Radio className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          Conecta este agente a Telegram o WhatsApp Business.
+          Conecta este agente a Telegram, WhatsApp Business o WhatsApp Web.
         </div>
       )}
 
@@ -502,7 +515,7 @@ function ChannelsTab({ agentId }: { agentId: number }) {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm text-zinc-100">
-                    {ch.type === 'telegram' ? 'Telegram' : 'WhatsApp Business'}
+                    {ch.type === 'telegram' ? 'Telegram' : ch.type === 'whatsapp' ? 'WhatsApp Business' : 'WhatsApp Web'}
                   </p>
                   <span className={cn(
                     'inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full',
@@ -520,7 +533,9 @@ function ChannelsTab({ agentId }: { agentId: number }) {
                 <p className="text-xs text-zinc-500 mt-0.5 truncate">
                   {ch.type === 'telegram'
                     ? `Token: ${ch.config.token ?? '—'}`
-                    : `ID: ${ch.config.phone_number_id ?? '—'}`}
+                    : ch.type === 'whatsapp'
+                    ? `ID: ${ch.config.phone_number_id ?? '—'}`
+                    : `Bridge: ${ch.config.bridge_url ?? '—'}`}
                 </p>
               </div>
             </div>

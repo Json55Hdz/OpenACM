@@ -17,6 +17,7 @@ import {
 } from '@/hooks/use-setup';
 import { ProviderSetupForm } from '@/components/setup/provider-setup-form';
 import { TelegramSetup } from '@/components/setup/telegram-setup';
+import { WhatsAppSetup, WhatsAppMode } from '@/components/setup/whatsapp-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
 import { PROVIDERS, getProviderById } from '@/lib/providers';
 import { translations } from '@/lib/translations';
@@ -55,6 +56,7 @@ import {
   ScrollText,
   Mic,
   Volume2,
+  Smartphone,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -473,6 +475,7 @@ type NavSection =
   | 'model'
   | 'memory'
   | 'telegram'
+  | 'whatsapp'
   | 'google'
   | 'stitch'
   | 'router'
@@ -497,6 +500,7 @@ const NAV_GROUPS: { group: string; items: { id: NavSection; label: string; icon:
     group: 'Integrations',
     items: [
       { id: 'telegram', label: 'Telegram', icon: Send },
+      { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone },
       { id: 'google', label: 'Google Services', icon: Globe2 },
       { id: 'stitch', label: 'Google Stitch', icon: Paintbrush },
     ],
@@ -940,6 +944,44 @@ export default function ConfigPage() {
       setTelegramToken('');
     }
   };
+
+  // ─── WhatsApp ────────────────────────────────────────────────────────────────
+  const [waMode, setWaMode] = useState<WhatsAppMode>('cloud_api');
+  const [waAccessToken, setWaAccessToken] = useState('');
+  const [waPhoneNumberId, setWaPhoneNumberId] = useState('');
+  const [waVerifyToken, setWaVerifyToken] = useState('');
+  const [waAppSecret, setWaAppSecret] = useState('');
+  const [waBridgeUrl, setWaBridgeUrl] = useState('');
+
+  const handleWhatsAppSave = async () => {
+    if (waMode === 'cloud_api') {
+      if (!waAccessToken.trim() || !waPhoneNumberId.trim()) return;
+      await saveSetup.mutateAsync({
+        WHATSAPP_MODE: 'cloud_api',
+        WHATSAPP_ACCESS_TOKEN: waAccessToken.trim(),
+        WHATSAPP_PHONE_NUMBER_ID: waPhoneNumberId.trim(),
+        ...(waVerifyToken.trim() && { WHATSAPP_VERIFY_TOKEN: waVerifyToken.trim() }),
+        ...(waAppSecret.trim() && { WHATSAPP_APP_SECRET: waAppSecret.trim() }),
+      });
+      toast.success('WhatsApp Cloud API saved');
+      setWaAccessToken('');
+      setWaPhoneNumberId('');
+      setWaVerifyToken('');
+      setWaAppSecret('');
+    } else {
+      if (!waBridgeUrl.trim()) return;
+      await saveSetup.mutateAsync({
+        WHATSAPP_MODE: 'bridge',
+        WHATSAPP_BRIDGE_URL: waBridgeUrl.trim(),
+      });
+      toast.success('WhatsApp Bridge saved');
+      setWaBridgeUrl('');
+    }
+  };
+
+  const waCanSave = waMode === 'cloud_api'
+    ? !!(waAccessToken.trim() && waPhoneNumberId.trim())
+    : !!waBridgeUrl.trim();
 
   // ─── Stitch ─────────────────────────────────────────────────────────────────
   const [stitchKey, setStitchKey] = useState('');
@@ -2364,6 +2406,66 @@ export default function ConfigPage() {
                     <Save size={14} />
                   )}
                   Save Telegram Token
+                </button>
+              </div>
+            </ConfigSection>
+
+            {/* ── WhatsApp ── */}
+            <ConfigSection
+              id="section-whatsapp"
+              title="WhatsApp"
+              subtitle="Conecta WhatsApp Business o un bridge de WhatsApp Web."
+              icon={Smartphone}
+            >
+              {/* Integration row */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 0',
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span className="dot dot-idle" />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--acm-fg-2)' }}>WhatsApp</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>
+                      Receive and send messages via WhatsApp
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <WhatsAppSetup
+                mode={waMode}
+                onModeChange={setWaMode}
+                accessToken={waAccessToken}
+                onAccessTokenChange={setWaAccessToken}
+                phoneNumberId={waPhoneNumberId}
+                onPhoneNumberIdChange={setWaPhoneNumberId}
+                verifyToken={waVerifyToken}
+                onVerifyTokenChange={setWaVerifyToken}
+                appSecret={waAppSecret}
+                onAppSecretChange={setWaAppSecret}
+                bridgeUrl={waBridgeUrl}
+                onBridgeUrlChange={setWaBridgeUrl}
+              />
+
+              <div style={{ marginTop: 16 }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleWhatsAppSave}
+                  disabled={!waCanSave || saveSetup.isPending}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  {saveSetup.isPending ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Save size={14} />
+                  )}
+                  {waMode === 'cloud_api' ? 'Save WhatsApp Cloud API' : 'Save WhatsApp Bridge'}
                 </button>
               </div>
             </ConfigSection>

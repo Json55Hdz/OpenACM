@@ -13,6 +13,7 @@ interface ProviderStatus {
   providers: Record<string, boolean>;
   telegram_configured: boolean;
   stitch_configured: boolean;
+  whatsapp_configured?: boolean;
 }
 
 interface OllamaStatus {

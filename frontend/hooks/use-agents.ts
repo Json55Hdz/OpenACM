@@ -39,7 +39,7 @@ export interface KnowledgeItem {
 export interface ChannelItem {
   id: number;
   agent_id: number;
-  type: 'telegram' | 'whatsapp';
+  type: 'telegram' | 'whatsapp' | 'whatsapp_web';
   config: Record<string, string>;
   is_active: boolean;
   is_connected: boolean;
@@ -48,7 +48,8 @@ export interface ChannelItem {
 
 export type ChannelConfig =
   | { type: 'telegram'; token: string }
-  | { type: 'whatsapp'; access_token: string; phone_number_id: string; verify_token?: string; app_secret?: string };
+  | { type: 'whatsapp'; access_token: string; phone_number_id: string; verify_token?: string; app_secret?: string }
+  | { type: 'whatsapp_web'; bridge_url: string };
 
 export function useAgentKnowledge(agentId: number | null) {
   const { fetchAPI } = useAPI();
