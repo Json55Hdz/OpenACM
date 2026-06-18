@@ -212,6 +212,7 @@ def register_routes(app: FastAPI) -> None:
     _REQUIRED_CONFIG = {
         "telegram": {"token"},
         "whatsapp": {"access_token", "phone_number_id"},
+        "whatsapp_web": {"bridge_url"},
     }
 
     def _mask_config(config_data: dict) -> dict:
@@ -269,7 +270,7 @@ def register_routes(app: FastAPI) -> None:
         channel_type = data.get("type", "")
         config_data = data.get("config", {})
 
-        if channel_type not in ("telegram", "whatsapp"):
+        if channel_type not in ("telegram", "whatsapp", "whatsapp_web"):
             raise HTTPException(status_code=422, detail=f"Invalid channel type: {channel_type}")
 
         required = _REQUIRED_CONFIG.get(channel_type, set())

@@ -93,3 +93,33 @@ class TestAgentChannelManager:
         assert status[0]["agent_id"] == 1
         assert status[0]["type"] == "telegram"
         assert status[0]["connected"] is True
+
+    async def test_start_channel_whatsapp_web(self):
+        from openacm.channels.agent_telegram_bot import AgentChannelManager
+        runner = MagicMock()
+        event_bus = MagicMock()
+        event_bus.emit = AsyncMock()
+        event_bus.on = MagicMock()
+        db = MagicMock()
+        db.get_all_agents = AsyncMock(return_value=[])
+        db.get_agent_channels = AsyncMock(return_value=[])
+        db.get_agent = AsyncMock(return_value=None)
+        mgr = AgentChannelManager(agent_runner=runner, event_bus=event_bus, database=db)
+
+        agent = {"id": 5, "name": "WebBot", "is_active": 1, "system_prompt": "x", "allowed_tools": "none"}
+        channel_row = {
+            "id": 1, "agent_id": 5, "type": "whatsapp_web",
+            "config": '{"bridge_url":"http://localhost:3001"}', "is_active": 1
+        }
+
+        with patch.object(mgr, '_make_whatsapp_web_channel') as mock_factory:
+            mock_ch = MagicMock()
+            mock_ch.start = AsyncMock()
+            mock_ch.ready_event = MagicMock()
+            mock_ch.ready_event.wait = AsyncMock()
+            mock_ch.is_connected = False
+            mock_factory.return_value = mock_ch
+
+            await mgr.start_channel(agent, channel_row)
+
+        mock_factory.assert_called_once_with(agent, {"bridge_url": "http://localhost:3001"})

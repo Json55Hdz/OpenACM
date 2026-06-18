@@ -172,6 +172,8 @@ class AgentChannelManager:
             channel = self._make_telegram_channel(agent, config_data)
         elif channel_type == "whatsapp":
             channel = self._make_whatsapp_channel(agent, config_data)
+        elif channel_type == "whatsapp_web":
+            channel = self._make_whatsapp_web_channel(agent, config_data)
         else:
             log.warning("Unknown channel type", type=channel_type)
             return
@@ -204,6 +206,21 @@ class AgentChannelManager:
             brain=brain_adapter,
             event_bus=self.event_bus,
             database=self.database,
+        )
+
+    def _make_whatsapp_web_channel(self, agent: dict, config_data: dict):
+        from openacm.channels.agent_whatsapp_web_channel import AgentWhatsAppWebChannel
+        from openacm.core.config import WhatsAppConfig
+        wa_config = WhatsAppConfig(
+            enabled=True,
+            mode="bridge",
+            bridge_url=config_data.get("bridge_url", "http://localhost:3000"),
+        )
+        return AgentWhatsAppWebChannel(
+            config=wa_config,
+            agent_runner=self.agent_runner,
+            agent=agent,
+            event_bus=self.event_bus,
         )
 
     def _make_whatsapp_channel(self, agent: dict, config_data: dict):

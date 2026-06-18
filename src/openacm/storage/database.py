@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 28
+    _SCHEMA_VERSION = 29
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -878,6 +878,38 @@ class Database:
             """)
             await self._db.commit()
             log.info("Migration 28: created agent_channels table, migrated telegram_token values")
+
+        if current < 29:
+            # Recreate agent_channels with expanded type CHECK to include whatsapp_web
+            await self._db.execute("PRAGMA foreign_keys = OFF")
+            await self._db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_channels_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id    INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    type        TEXT NOT NULL CHECK(type IN ('telegram', 'whatsapp', 'whatsapp_web')),
+                    config      TEXT NOT NULL DEFAULT '{}',
+                    is_active   INTEGER NOT NULL DEFAULT 1,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await self._db.execute(
+                "INSERT INTO agent_channels_new SELECT * FROM agent_channels"
+            )
+            await self._db.execute("DROP TABLE agent_channels")
+            await self._db.execute(
+                "ALTER TABLE agent_channels_new RENAME TO agent_channels"
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_channels_agent ON agent_channels(agent_id)"
+            )
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_channels_type_active ON agent_channels(type, is_active)"
+            )
+            # Commit before re-enabling FK: SQLite ignores PRAGMA foreign_keys inside a transaction
+            await self._db.commit()
+            await self._db.execute("PRAGMA foreign_keys = ON")
+            log.info("Migration 29: expanded agent_channels type to include whatsapp_web")
 
         # Save new version
         await self._db.execute(

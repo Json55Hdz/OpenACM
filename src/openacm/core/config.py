@@ -292,9 +292,14 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     wa.phone_number_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "") or wa.phone_number_id
     wa.verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "") or wa.verify_token
     wa.app_secret = os.environ.get("WHATSAPP_APP_SECRET", "") or wa.app_secret
-    # Auto-enable once the minimum Cloud API credentials are present.
-    if wa.mode == "cloud_api" and wa.access_token and wa.phone_number_id and not wa.enabled:
-        wa.enabled = True
+    wa.mode = os.environ.get("WHATSAPP_MODE", "") or wa.mode
+    wa.bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "") or wa.bridge_url
+    # Auto-enable once minimum credentials are present.
+    if not wa.enabled:
+        if wa.mode == "cloud_api" and wa.access_token and wa.phone_number_id:
+            wa.enabled = True
+        elif wa.mode == "bridge" and wa.bridge_url:
+            wa.enabled = True
 
     # Auto-inject CLI providers for any detected binary not already in config.
     # This means the user only needs to install the CLI — no YAML editing required.

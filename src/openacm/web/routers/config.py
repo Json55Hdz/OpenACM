@@ -315,8 +315,9 @@ def register_routes(app: FastAPI) -> None:
         """Return boolean status for each LLM provider (no keys exposed)."""
         providers = _get_provider_status()
         telegram_configured = _is_real_key("TELEGRAM_TOKEN")
+        whatsapp_configured = _is_real_key("WHATSAPP_ACCESS_TOKEN") or _is_real_key("WHATSAPP_BRIDGE_URL")
         stitch_configured = _is_real_key("STITCH_API_KEY")
-        return {"providers": providers, "telegram_configured": telegram_configured, "stitch_configured": stitch_configured}
+        return {"providers": providers, "telegram_configured": telegram_configured, "whatsapp_configured": whatsapp_configured, "stitch_configured": stitch_configured}
 
     @app.post("/api/config/setup")
     async def post_config_setup(request: Request):
@@ -361,6 +362,51 @@ def register_routes(app: FastAPI) -> None:
                 _state.channels.append(ch)
                 asyncio.create_task(ch.start())
                 log.info("Telegram bot (re)created with updated token")
+
+        # Restart WhatsApp channel if its config was updated
+        _whatsapp_keys = {
+            "WHATSAPP_ACCESS_TOKEN", "WHATSAPP_PHONE_NUMBER_ID",
+            "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_APP_SECRET",
+            "WHATSAPP_MODE", "WHATSAPP_BRIDGE_URL",
+        }
+        if _whatsapp_keys & set(updated):
+            from openacm.channels.whatsapp_cloud_channel import WhatsAppCloudChannel
+            from openacm.channels.whatsapp_channel import WhatsAppChannel
+
+            # Stop and remove existing WhatsApp channels
+            existing_wa = [
+                ch for ch in _state.channels
+                if isinstance(ch, (WhatsAppCloudChannel, WhatsAppChannel))
+            ]
+            for ch in existing_wa:
+                asyncio.create_task(ch.stop())
+                _state.channels.remove(ch)
+
+            # Update in-memory config
+            if _state.config:
+                wa = _state.config.channels.whatsapp
+                wa.access_token = os.environ.get("WHATSAPP_ACCESS_TOKEN", "") or wa.access_token
+                wa.phone_number_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "") or wa.phone_number_id
+                wa.verify_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "") or wa.verify_token
+                wa.app_secret = os.environ.get("WHATSAPP_APP_SECRET", "") or wa.app_secret
+                wa.mode = os.environ.get("WHATSAPP_MODE", "") or wa.mode
+                wa.bridge_url = os.environ.get("WHATSAPP_BRIDGE_URL", "") or wa.bridge_url
+                if not wa.enabled:
+                    if wa.mode == "cloud_api" and wa.access_token and wa.phone_number_id:
+                        wa.enabled = True
+                    elif wa.mode == "bridge" and wa.bridge_url:
+                        wa.enabled = True
+
+            # Create and start the new channel
+            if _state.config and _state.brain and _state.event_bus and _state.config.channels.whatsapp.enabled:
+                wa = _state.config.channels.whatsapp
+                if wa.mode == "bridge":
+                    ch = WhatsAppChannel(wa, _state.brain, _state.event_bus)
+                else:
+                    ch = WhatsAppCloudChannel(wa, _state.brain, _state.event_bus)
+                _state.channels.append(ch)
+                asyncio.create_task(ch.start())
+                log.info("WhatsApp channel (re)created", mode=wa.mode)
 
         return {"status": "ok", "updated": updated}
 

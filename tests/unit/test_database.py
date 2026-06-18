@@ -393,6 +393,18 @@ class TestAgentChannels:
         await db.delete_agent(agent_id)
         assert await db.get_agent_channel(cid) is None
 
+    async def test_create_whatsapp_web_channel(self, db):
+        agent_id = await db.create_agent(
+            name="WW", description="", system_prompt="p",
+            allowed_tools="all", webhook_secret="s", telegram_token=""
+        )
+        cid = await db.create_agent_channel(
+            agent_id=agent_id, type="whatsapp_web",
+            config_json='{"bridge_url":"http://localhost:3001"}', is_active=1
+        )
+        row = await db.get_agent_channel(cid)
+        assert row["type"] == "whatsapp_web"
+
     async def test_migration_28_clears_telegram_token(self, db):
         # Simulate a pre-migration agent row with a non-empty telegram_token
         await db._db.execute(
