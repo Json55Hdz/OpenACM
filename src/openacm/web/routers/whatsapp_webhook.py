@@ -55,8 +55,10 @@ def register_routes(app: FastAPI) -> None:
         """Receive message/status events from Meta."""
         from openacm.channels.whatsapp_cloud_channel import get_active_channel, verify_signature
 
+        log.info("WhatsApp POST received", headers=dict(request.headers))
         wa = _wa_config()
         raw = await request.body()
+        log.info("WhatsApp POST body", size=len(raw), has_signature="X-Hub-Signature-256" in request.headers)
 
         if wa and not verify_signature(wa.app_secret, raw, request.headers.get("X-Hub-Signature-256", "")):
             log.warning("WhatsApp webhook signature invalid — dropping")
