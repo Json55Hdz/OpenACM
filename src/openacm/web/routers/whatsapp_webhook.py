@@ -55,7 +55,7 @@ def register_routes(app: FastAPI) -> None:
         """Receive message/status events from Meta."""
         from openacm.channels.whatsapp_cloud_channel import get_active_channel, verify_signature
 
-        log.info("WhatsApp POST received", headers=dict(request.headers))
+        log.info("WhatsApp POST received", content_type=request.headers.get("content-type"), has_signature="X-Hub-Signature-256" in request.headers)
         wa = _wa_config()
         raw = await request.body()
         log.info("WhatsApp POST body", size=len(raw), has_signature="X-Hub-Signature-256" in request.headers)
