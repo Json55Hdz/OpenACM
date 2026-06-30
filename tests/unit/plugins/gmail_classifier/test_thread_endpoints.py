@@ -36,7 +36,8 @@ async def db_with_threads(tmp_path):
             is_read INTEGER DEFAULT 0,
             is_replied INTEGER DEFAULT 0,
             received_at TEXT,
-            manual_override INTEGER DEFAULT 0
+            manual_override INTEGER DEFAULT 0,
+            thread_last_sender_email TEXT
         );
     """)
     await conn.execute("INSERT INTO gmail_categories VALUES (1, 'Work', '#6366f1', 'Tag')")

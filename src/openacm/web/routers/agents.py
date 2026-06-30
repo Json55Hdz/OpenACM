@@ -516,7 +516,7 @@ def register_routes(app: FastAPI) -> None:
             }
         except Exception as e:
             log.error("Agent generation failed", error=str(e))
-            raise HTTPException(status_code=500, detail=f"Generation failed: {e}")
+            raise HTTPException(status_code=500, detail="Agent generation failed")
 
     @app.post("/api/agents/{agent_id}/test")
     async def test_agent(agent_id: int, request: Request):

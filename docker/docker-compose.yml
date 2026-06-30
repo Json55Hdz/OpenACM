@@ -1,12 +1,25 @@
 services:
   openacm:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: openacm
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"   # solo localhost — NPM o nginx hace el proxy
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
+      - ../data:/app/data
+      - ../config:/app/config
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

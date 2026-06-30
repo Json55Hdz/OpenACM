@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 29
+    _SCHEMA_VERSION = 30
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -910,6 +910,16 @@ class Database:
             await self._db.commit()
             await self._db.execute("PRAGMA foreign_keys = ON")
             log.info("Migration 29: expanded agent_channels type to include whatsapp_web")
+
+        if current < 30:
+            # Expression index speeds up PARTITION BY COALESCE(thread_id, gmail_id)
+            # used in the threads window-function query.
+            await self._db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_gmail_emails_eff_thread "
+                "ON gmail_emails((COALESCE(thread_id, gmail_id)), received_at)"
+            )
+            await self._db.commit()
+            log.info("Migration 30: add expression index on gmail_emails eff_thread")
 
         # Save new version
         await self._db.execute(

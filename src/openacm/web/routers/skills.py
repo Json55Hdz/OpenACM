@@ -111,5 +111,5 @@ def register_routes(app: FastAPI) -> None:
             return skill
         except Exception as e:
             log.error("Failed to generate skill", error=str(e))
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Failed to generate skill")
 

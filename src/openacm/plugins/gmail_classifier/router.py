@@ -417,11 +417,11 @@ async def list_threads(
     category_id: int | None = None,
     search: str | None = None,
     page: int = 1,
-    per_page: int = 50,
+    per_page: int = 100,
 ):
     db = _require_db()
 
-    # Build WHERE conditions that apply to the outer (post-aggregation) query.
+    # Build WHERE conditions on the aggregated threads CTE.
     outer_conditions: list[str] = []
     params: list = []
 
@@ -445,44 +445,53 @@ async def list_threads(
 
     where = ("WHERE " + " AND ".join(outer_conditions)) if outer_conditions else ""
 
-    # CTE groups emails by effective thread_id (falls back to gmail_id for NULL thread_id).
-    inner = f"""
-        WITH threads AS (
+    # Window-function CTE: single table scan, no correlated subqueries.
+    # COUNT(*) OVER() gives total matching threads in the same pass — no second query needed.
+    query = f"""
+        WITH emails_ranked AS (
           SELECT
-            COALESCE(ge.thread_id, ge.gmail_id) AS thread_id,
-            (SELECT m.subject FROM gmail_emails m
-             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
-             ORDER BY m.received_at ASC LIMIT 1) AS subject,
-            (SELECT m.category_id FROM gmail_emails m
-             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
-             ORDER BY m.received_at ASC LIMIT 1) AS category_id,
-            COUNT(ge.id) AS message_count,
-            SUM(CASE WHEN ge.is_read = 0 THEN 1 ELSE 0 END) AS unread_count,
-            MAX(ge.received_at) AS latest_at,
-            (SELECT m.snippet FROM gmail_emails m
-             WHERE COALESCE(m.thread_id, m.gmail_id) = COALESCE(ge.thread_id, ge.gmail_id)
-             ORDER BY m.received_at DESC LIMIT 1) AS latest_snippet
-          FROM gmail_emails ge
-          GROUP BY COALESCE(ge.thread_id, ge.gmail_id)
+            COALESCE(thread_id, gmail_id) AS eff_tid,
+            subject, category_id, snippet, sender_name,
+            COALESCE(NULLIF(thread_last_sender_email, ''), sender_email) AS eff_sender_email,
+            received_at, is_read,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(thread_id, gmail_id) ORDER BY received_at ASC
+            ) AS rn_asc,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(thread_id, gmail_id) ORDER BY received_at DESC
+            ) AS rn_desc
+          FROM gmail_emails
+        ),
+        threads AS (
+          SELECT
+            eff_tid AS thread_id,
+            MAX(CASE WHEN rn_asc = 1 THEN subject END)        AS subject,
+            MAX(CASE WHEN rn_asc = 1 THEN category_id END)    AS category_id,
+            COUNT(*)                                           AS message_count,
+            SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END)      AS unread_count,
+            MAX(received_at)                                   AS latest_at,
+            MAX(CASE WHEN rn_desc = 1 THEN snippet END)        AS latest_snippet,
+            MAX(CASE WHEN rn_desc = 1 THEN eff_sender_email END) AS latest_sender_email,
+            MAX(CASE WHEN rn_desc = 1 THEN sender_name END)   AS latest_sender_name
+          FROM emails_ranked
+          GROUP BY eff_tid
         )
-        SELECT t.thread_id, t.subject, t.category_id, t.message_count,
-               t.unread_count, t.latest_at, t.latest_snippet,
-               gc.name AS category_name, gc.color AS category_color, gc.icon AS category_icon
+        SELECT
+          t.thread_id, t.subject, t.category_id, t.message_count,
+          t.unread_count, t.latest_at, t.latest_snippet,
+          t.latest_sender_email, t.latest_sender_name,
+          gc.name AS category_name, gc.color AS category_color, gc.icon AS category_icon,
+          COUNT(*) OVER() AS total_count
         FROM threads t
         LEFT JOIN gmail_categories gc ON t.category_id = gc.id
         {where}
+        ORDER BY t.latest_at DESC
+        LIMIT ? OFFSET ?
     """
 
-    count_row = await (await db._db.execute(
-        f"SELECT COUNT(*) AS total FROM ({inner}) _sub", params
-    )).fetchone()
-    total = count_row["total"]
-
     offset = (page - 1) * per_page
-    rows = await (await db._db.execute(
-        f"{inner} ORDER BY t.latest_at DESC LIMIT ? OFFSET ?",
-        params + [per_page, offset],
-    )).fetchall()
+    rows = await (await db._db.execute(query, params + [per_page, offset])).fetchall()
+    total = rows[0]["total_count"] if rows else 0
 
     # Fetch participants in a single bulk query for all returned threads.
     thread_ids = [r["thread_id"] for r in rows]
@@ -515,6 +524,40 @@ async def list_threads(
         items.append(d)
 
     return {"items": items, "total": total, "page": page, "per_page": per_page}
+
+
+@router.get("/threads/{thread_id}/messages")
+async def get_thread_messages(thread_id: str):
+    """Return all emails in a thread, oldest first."""
+    db = _require_db()
+    cursor = await db._db.execute(
+        """
+        SELECT ge.*, gc.name as category_name, gc.color as category_color, gc.icon as category_icon
+        FROM gmail_emails ge
+        LEFT JOIN gmail_categories gc ON ge.category_id = gc.id
+        WHERE COALESCE(ge.thread_id, ge.gmail_id) = ?
+        ORDER BY ge.received_at ASC
+        """,
+        (thread_id,),
+    )
+    rows = await cursor.fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+
+@router.patch("/threads/{thread_id}/category")
+async def recategorize_thread(thread_id: str, body: RecategorizeBody):
+    """Update the category of all emails in a thread at once."""
+    db = _require_db()
+    cat_cursor = await db._db.execute("SELECT id FROM gmail_categories WHERE id = ?", (body.category_id,))
+    if not await cat_cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Category not found")
+    await db._db.execute(
+        "UPDATE gmail_emails SET category_id = ?, manual_override = 1 "
+        "WHERE COALESCE(thread_id, gmail_id) = ?",
+        (body.category_id, thread_id),
+    )
+    await db._db.commit()
+    return {"updated": True, "thread_id": thread_id, "category_id": body.category_id}
 
 
 @router.patch("/emails/{email_id}/read")
@@ -602,9 +645,12 @@ async def reply_email(email_id: int, body: ReplyBody):
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
-        # Mark as replied and read
+        # Mark as replied and read; record the user as last thread sender so the
+        # "respondido" badge reflects this immediately on the next threads query.
         await db._db.execute(
-            "UPDATE gmail_emails SET is_replied = 1, is_read = 1 WHERE id = ?", (email_id,)
+            "UPDATE gmail_emails SET is_replied = 1, is_read = 1, "
+            "thread_last_sender_email = ? WHERE id = ?",
+            (_cached_auth_email or "", email_id),
         )
         await db._db.commit()
         try:
@@ -756,13 +802,16 @@ def _collect_attachment_parts(payload: dict) -> list[dict]:
         if att_id:
             hdrs = {h.get("name", "").lower(): h.get("value", "") for h in part.get("headers", []) or []}
             content_id = hdrs.get("content-id", "").strip().strip("<>")
-            disposition = hdrs.get("content-disposition", "").lower()
-            inline = "inline" in disposition or bool(content_id)
+            mime_type = part.get("mimeType", "application/octet-stream")
+            # Truly inline = image referenced from the HTML body via cid:.
+            # Non-image types (Word, Excel, PDF…) are never inline images,
+            # regardless of Content-ID or Content-Disposition headers.
+            inline = bool(content_id) and mime_type.startswith("image/")
             filename = part.get("filename") or content_id or "archivo"
             out.append({
                 "attachment_id": att_id,
                 "filename": filename,
-                "mime_type": part.get("mimeType", "application/octet-stream"),
+                "mime_type": mime_type,
                 "size": body.get("size", 0),
                 "content_id": content_id,
                 "inline": inline,

@@ -62,7 +62,8 @@ def register_routes(app: FastAPI) -> None:
             await _state.database.record_routine_run(routine_id)
             return {"status": "ok", "results": results}
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+            log.error("Routine execution failed", routine_id=routine_id, error=str(exc))
+            raise HTTPException(status_code=500, detail="Failed to execute routine")
 
     @app.put("/api/routines/{routine_id}")
     async def update_routine(routine_id: int, request: Request):
@@ -150,7 +151,7 @@ def register_routes(app: FastAPI) -> None:
             return {"status": "ok", "new_routines": len(new_routines), "routines": new_routines}
         except Exception as exc:
             log.error("Pattern analysis failed", error=str(exc))
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Pattern analysis failed")
 
     # ─── API: Activity Stats ─────────────────────────────────
 

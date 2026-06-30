@@ -7,6 +7,7 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { useAuthStore } from '@/stores/auth-store';
 import { CategoryTabs } from './components/CategoryTabs';
 import { EmailList } from './components/EmailList';
+import type { Thread } from './components/EmailList';
 import { EmailDetail } from './components/EmailDetail';
 import { CategoryManager } from './components/CategoryManager';
 import { ProcessingProgress } from './components/ProcessingProgress';
@@ -33,25 +34,6 @@ interface Category {
   email_count: number;
 }
 
-interface Email {
-  id: number;
-  gmail_id: string;
-  thread_id: string;
-  subject: string;
-  sender_name: string;
-  sender_email: string;
-  snippet: string;
-  body_text: string;
-  body_html: string;
-  category_id: number;
-  category_name: string;
-  category_color: string;
-  category_icon: string;
-  is_read: number;
-  is_replied: number;
-  received_at: string;
-}
-
 interface ProcessStatus {
   running: boolean;
   processed: number;
@@ -66,6 +48,62 @@ interface AuthStatus {
   configured: boolean;
   has_token: boolean;
   ready: boolean;
+  email?: string;
+}
+
+// ─── Thread Pagination ────────────────────────────────────────────────────────
+
+function getPageNumbers(current: number, total: number): (number | '...')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | '...')[] = [1];
+  if (current > 3) pages.push('...');
+  for (let p = Math.max(2, current - 1); p <= Math.min(total - 1, current + 1); p++) pages.push(p);
+  if (current < total - 2) pages.push('...');
+  pages.push(total);
+  return pages;
+}
+
+function ThreadPagination({ currentPage, totalPages, onPageChange }: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  const pages = getPageNumbers(currentPage, totalPages);
+  return (
+    <div className="flex items-center justify-center gap-0.5 px-2 py-2 border-t border-[var(--acm-border)] flex-shrink-0">
+      <button
+        onClick={() => onPageChange(currentPage - 1)}
+        disabled={currentPage === 1}
+        className="px-1.5 py-1 text-[11px] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        ‹
+      </button>
+      {pages.map((p, i) =>
+        p === '...' ? (
+          <span key={`e-${i}`} className="px-1 text-[11px] text-[var(--acm-fg-4)]">…</span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onPageChange(p as number)}
+            className={`w-6 h-6 text-[11px] rounded transition-colors ${
+              p === currentPage
+                ? 'bg-[var(--acm-accent)] text-white'
+                : 'text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] hover:bg-[var(--acm-elev)]'
+            }`}
+          >
+            {p}
+          </button>
+        )
+      )}
+      <button
+        onClick={() => onPageChange(currentPage + 1)}
+        disabled={currentPage === totalPages}
+        className="px-1.5 py-1 text-[11px] text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        ›
+      </button>
+    </div>
+  );
 }
 
 // ─── Gmail Setup Screen ───────────────────────────────────────────────────────
@@ -134,9 +172,9 @@ export default function GmailClassifierPage() {
 
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [emails, setEmails] = useState<Email[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
-  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
+  const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [processStatus, setProcessStatus] = useState<ProcessStatus>({
     running: false, processed: 0, total: 0, errors: 0, started_at: null, last_completed_at: null, cron_active: false,
   });
@@ -153,6 +191,9 @@ export default function GmailClassifierPage() {
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalThreads, setTotalThreads] = useState(0);
+  const PER_PAGE = 100;
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -177,7 +218,7 @@ export default function GmailClassifierPage() {
         try {
           const parsed = cats ? JSON.parse(cats) : [];
           if (Array.isArray(parsed)) setAutoReplyCategoryIds(parsed);
-        } catch { /* malformed setting — keep default [] */ }
+        } catch { /* malformed setting */ }
         const timeoutSecs = parseInt(s?.autoreply_timeout_seconds ?? '60', 10);
         if (!isNaN(timeoutSecs) && timeoutSecs > 0) setSuggestionTimeoutMs(timeoutSecs * 1000);
       }
@@ -189,21 +230,21 @@ export default function GmailClassifierPage() {
     if (res.ok) setCategories(await res.json());
   }, [apiFetch]);
 
-  const fetchEmails = useCallback(async () => {
+  const fetchThreads = useCallback(async () => {
     const q = searchQuery.trim();
-    const params = new URLSearchParams({ page: '1', per_page: '50' });
+    const params = new URLSearchParams({ page: String(currentPage), per_page: String(PER_PAGE) });
     if (q) {
-      // Searching is global — span every category so nothing is hidden by the tab.
       params.set('search', q);
     } else if (selectedCategoryId !== null) {
       params.set('category_id', String(selectedCategoryId));
     }
-    const res = await apiFetch(`/emails?${params}`);
+    const res = await apiFetch(`/threads?${params}`);
     if (res.ok) {
       const data = await res.json();
-      setEmails(data.items);
+      setThreads(data.items);
+      setTotalThreads(data.total);
     }
-  }, [apiFetch, selectedCategoryId, searchQuery]);
+  }, [apiFetch, selectedCategoryId, searchQuery, currentPage, PER_PAGE]);
 
   const pollStatus = useCallback(async () => {
     const res = await apiFetch('/process/status');
@@ -213,20 +254,20 @@ export default function GmailClassifierPage() {
     if (status.running) {
       setTimeout(pollStatus, 1500);
     } else if (status.total > 0) {
-      fetchEmails();
+      fetchThreads();
       fetchCategories();
     }
-  }, [apiFetch, fetchEmails, fetchCategories]);
+  }, [apiFetch, fetchThreads, fetchCategories]);
 
   useEffect(() => {
     fetchAuthStatus();
     fetchSinceDate();
     fetchCategories();
-    fetchEmails();
+    fetchThreads();
     pollStatus();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Silent background poll every 30s to catch cron-triggered runs
+  // Silent background poll every 30s
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
@@ -234,9 +275,8 @@ export default function GmailClassifierPage() {
         if (!res.ok) return;
         const next: ProcessStatus = await res.json();
         setProcessStatus(prev => {
-          // If a background run just completed (new last_completed_at), refresh data
           if (!next.running && next.last_completed_at && next.last_completed_at !== prev.last_completed_at) {
-            fetchEmails();
+            fetchThreads();
             fetchCategories();
           }
           return next;
@@ -244,17 +284,22 @@ export default function GmailClassifierPage() {
       } catch { /* ignore */ }
     }, 30_000);
     return () => clearInterval(interval);
-  }, [apiFetch, fetchEmails, fetchCategories]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiFetch, fetchThreads, fetchCategories]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    fetchEmails();
-  }, [fetchEmails]);
+    fetchThreads();
+  }, [fetchThreads]);
 
-  // Debounce the search box so we don't hit the API on every keystroke.
+  // Debounce the search box
   useEffect(() => {
     const t = setTimeout(() => setSearchQuery(searchInput), 300);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategoryId, searchQuery]);
 
   const handleProcess = async () => {
     if (!sinceDate) {
@@ -280,17 +325,11 @@ export default function GmailClassifierPage() {
     setSummaryError(null);
     setSummaryText(null);
     try {
-      const res = await fetch(`${API}/summary`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${API}/summary`, { headers: { Authorization: `Bearer ${token}` } });
       const ct = res.headers.get('content-type') ?? '';
-      if (!ct.includes('application/json')) {
-        throw new Error('Servidor no disponible — reinicia la aplicación');
-      }
+      if (!ct.includes('application/json')) throw new Error('Servidor no disponible — reinicia la aplicación');
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.detail ?? `Error ${res.status}`);
-      }
+      if (!res.ok) throw new Error(data?.detail ?? `Error ${res.status}`);
       setSummaryText(data.summary);
     } catch (err: any) {
       setSummaryError(err.message || 'Error generando resumen');
@@ -299,29 +338,31 @@ export default function GmailClassifierPage() {
     }
   };
 
-  const handleEmailSelect = (email: Email) => {
-    setSelectedEmail(email);
-    if (!email.is_read) void handleEmailRead(email.id, true);
+  const handleThreadSelect = (thread: Thread) => {
+    setSelectedThread(thread);
+    // Optimistically clear unread count in list
+    setThreads(prev => prev.map(t =>
+      t.thread_id === thread.thread_id ? { ...t, unread_count: 0 } : t
+    ));
   };
 
-  const handleEmailRead = async (emailId: number, isRead: boolean) => {
-    await apiFetch(`/emails/${emailId}/read`, {
-      method: 'PATCH',
-      body: JSON.stringify({ is_read: isRead }),
-    });
-    setEmails(prev => prev.map(e => e.id === emailId ? { ...e, is_read: isRead ? 1 : 0 } : e));
-    setSelectedEmail(prev => prev?.id === emailId ? { ...prev, is_read: isRead ? 1 : 0 } : prev);
+  const handleThreadRead = (threadId: string) => {
+    setThreads(prev => prev.map(t =>
+      t.thread_id === threadId ? { ...t, unread_count: 0 } : t
+    ));
   };
 
-  const handleRecategorize = async (emailId: number, categoryId: number) => {
-    const res = await apiFetch(`/emails/${emailId}/category`, {
+  const handleRecategorizeThread = async (threadId: string, categoryId: number) => {
+    const res = await apiFetch(`/threads/${threadId}/category`, {
       method: 'PATCH',
       body: JSON.stringify({ category_id: categoryId }),
     });
     if (res.ok) {
-      fetchEmails();
+      fetchThreads();
       fetchCategories();
-      setSelectedEmail(prev => prev?.id === emailId ? { ...prev, category_id: categoryId } : prev);
+      setSelectedThread(prev =>
+        prev?.thread_id === threadId ? { ...prev, category_id: categoryId } : prev
+      );
     }
   };
 
@@ -331,8 +372,16 @@ export default function GmailClassifierPage() {
       body: JSON.stringify({ body }),
     });
     if (res.ok) {
-      setEmails(prev => prev.map(e => e.id === emailId ? { ...e, is_replied: 1, is_read: 1 } : e));
-      setSelectedEmail(prev => prev?.id === emailId ? { ...prev, is_replied: 1, is_read: 1 } : prev);
+      const authEmail = authStatus?.email ?? '';
+      // Mark the thread as replied by the user
+      setThreads(prev => prev.map(t =>
+        t.thread_id === selectedThread?.thread_id
+          ? { ...t, latest_sender_email: authEmail }
+          : t
+      ));
+      setSelectedThread(prev =>
+        prev ? { ...prev, latest_sender_email: authEmail } : null
+      );
       return true;
     }
     return false;
@@ -367,9 +416,7 @@ export default function GmailClassifierPage() {
                 {processStatus.running && (
                   <>
                     <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
-                    <span className="text-[11px] text-[var(--acm-accent)] acm-pulse">
-                      Clasificando…
-                    </span>
+                    <span className="text-[11px] text-[var(--acm-accent)] acm-pulse">Clasificando…</span>
                   </>
                 )}
                 {!processStatus.running && processStatus.cron_active && (
@@ -378,6 +425,12 @@ export default function GmailClassifierPage() {
                     <span className="text-[11px] text-[var(--acm-fg-4)] flex items-center gap-1">
                       <span className="dot dot-ok" /> Cron activo
                     </span>
+                  </>
+                )}
+                {authStatus?.email && (
+                  <>
+                    <span className="text-[var(--acm-fg-4)] text-[11px]">·</span>
+                    <span className="text-[11px] text-[var(--acm-fg-4)]">{authStatus.email}</span>
                   </>
                 )}
               </div>
@@ -404,7 +457,6 @@ export default function GmailClassifierPage() {
                   />
                 </div>
 
-                {/* Re-process warning */}
                 {!processStatus.running && (
                   <p className="text-[11px] text-amber-500/80">
                     ⚠ Al procesar se reclasificarán todos los correos desde la fecha seleccionada, incluyendo los que ya tenías guardados.
@@ -413,19 +465,14 @@ export default function GmailClassifierPage() {
 
                 {processStatus.running ? (
                   <button
-                    onClick={async () => {
-                      await apiFetch('/process/stop', { method: 'POST' });
-                    }}
+                    onClick={async () => { await apiFetch('/process/stop', { method: 'POST' }); }}
                     className="btn-secondary text-[12px] py-[7px] px-3 border-[var(--acm-err)] text-[var(--acm-err)] hover:border-[var(--acm-err)]"
                   >
                     <Square size={12} />
                     Detener
                   </button>
                 ) : (
-                  <button
-                    onClick={handleProcess}
-                    className="btn-primary text-[12px] py-[7px] px-3"
-                  >
+                  <button onClick={handleProcess} className="btn-primary text-[12px] py-[7px] px-3">
                     <RefreshCw size={13} />
                     Procesar
                   </button>
@@ -436,9 +483,7 @@ export default function GmailClassifierPage() {
                   className="btn-secondary text-[12px] py-[7px] px-3"
                   title="Resumen de bandeja de entrada"
                 >
-                  {summaryLoading
-                    ? <Loader2 size={13} className="animate-spin" />
-                    : <Sparkles size={13} />}
+                  {summaryLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                   ¿Qué hay?
                 </button>
                 <button
@@ -453,7 +498,7 @@ export default function GmailClassifierPage() {
                       } else {
                         alert(`Error al sugerir categorías: ${data.detail ?? 'Error desconocido'}`);
                       }
-                    } catch (e) {
+                    } catch {
                       alert('Error de conexión al sugerir categorías');
                     } finally {
                       setSuggesting(false);
@@ -504,15 +549,8 @@ export default function GmailClassifierPage() {
             {/* Inbox summary panel */}
             {summaryText && (
               <div className="mx-4 mb-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2">
-                <pre className="flex-1 whitespace-pre-wrap text-[12px] text-amber-200/90 font-sans">
-                  {summaryText}
-                </pre>
-                <button
-                  onClick={() => setSummaryText(null)}
-                  className="text-amber-400/60 hover:text-amber-300 text-[14px] leading-none mt-0.5 shrink-0"
-                >
-                  ✕
-                </button>
+                <pre className="flex-1 whitespace-pre-wrap text-[12px] text-amber-200/90 font-sans">{summaryText}</pre>
+                <button onClick={() => setSummaryText(null)} className="text-amber-400/60 hover:text-amber-300 text-[14px] leading-none mt-0.5 shrink-0">✕</button>
               </div>
             )}
             {summaryError && (
@@ -537,7 +575,6 @@ export default function GmailClassifierPage() {
                   <button
                     onClick={() => setSearchInput('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--acm-fg-4)] hover:text-[var(--acm-fg)] transition-colors"
-                    title="Limpiar búsqueda"
                   >
                     <X size={14} />
                   </button>
@@ -545,8 +582,8 @@ export default function GmailClassifierPage() {
               </div>
               {searchQuery.trim() && (
                 <p className="text-[11px] text-[var(--acm-fg-4)] mt-1.5 px-1">
-                  Búsqueda global · {emails.length} resultado{emails.length === 1 ? '' : 's'}
-                  {' '}para “{searchQuery.trim()}” — se ignoran las categorías
+                  Búsqueda global · {threads.length} resultado{threads.length === 1 ? '' : 's'}
+                  {' '}para "{searchQuery.trim()}" — se ignoran las categorías
                 </p>
               )}
             </div>
@@ -556,27 +593,38 @@ export default function GmailClassifierPage() {
               <CategoryTabs
                 categories={categories}
                 selectedId={selectedCategoryId}
-                onSelect={id => { setSelectedCategoryId(id); setSelectedEmail(null); }}
+                onSelect={id => { setSelectedCategoryId(id); setSelectedThread(null); }}
                 onManage={() => setShowCategoryManager(true)}
               />
             </div>
 
             {/* Split view */}
             <div className="flex flex-1 min-h-0">
-              <EmailList
-                emails={emails}
-                selectedId={selectedEmail?.id ?? null}
-                onSelect={handleEmailSelect}
-              />
+              <div className="w-72 flex-shrink-0 border-r border-[var(--acm-border)] flex flex-col min-h-0">
+                <EmailList
+                  threads={threads}
+                  selectedId={selectedThread?.thread_id ?? null}
+                  onSelect={handleThreadSelect}
+                  authEmail={authStatus?.email}
+                />
+                {totalThreads > PER_PAGE && (
+                  <ThreadPagination
+                    currentPage={currentPage}
+                    totalPages={Math.ceil(totalThreads / PER_PAGE)}
+                    onPageChange={setCurrentPage}
+                  />
+                )}
+              </div>
               <EmailDetail
-                email={selectedEmail}
+                thread={selectedThread}
                 categories={categories}
-                onReadToggle={handleEmailRead}
-                onRecategorize={handleRecategorize}
+                onRecategorizeThread={handleRecategorizeThread}
                 onReply={handleReply}
                 autoReplyCategoryIds={autoReplyCategoryIds}
                 token={token ?? undefined}
                 suggestionTimeoutMs={suggestionTimeoutMs}
+                authEmail={authStatus?.email}
+                onThreadRead={handleThreadRead}
               />
             </div>
           </>
@@ -588,7 +636,7 @@ export default function GmailClassifierPage() {
             categories={categories}
             token={token ?? ''}
             onClose={() => setShowCategoryManager(false)}
-            onSaved={() => { fetchCategories(); fetchEmails(); }}
+            onSaved={() => { fetchCategories(); fetchThreads(); }}
           />
         )}
         {showSettings && (
@@ -609,10 +657,7 @@ export default function GmailClassifierPage() {
             onCreated={async () => {
               await fetchCategories();
               setShowSuggestions(false);
-              // Auto-start classification if there's a date configured
-              if (sinceDate) {
-                await handleProcess();
-              }
+              if (sinceDate) await handleProcess();
             }}
           />
         )}

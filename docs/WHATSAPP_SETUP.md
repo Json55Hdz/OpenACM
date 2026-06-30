@@ -67,7 +67,7 @@ plantillas (anuncios fuera de la ventana de 24 h).
 
 1. Entra a **https://developers.facebook.com/** e inicia sesión con tu Facebook.
 2. Acepta registrarte como desarrollador si te lo pide.
-3. **My Apps → Create App**.
+3. Haz clic en **"Create App"** (o "Crear app") en el dashboard principal.
 4. Caso de uso: elige **"Other"** → tipo **"Business"**.
 5. Ponle un nombre (ej. `OpenACM Conjunto`) y créala.
 

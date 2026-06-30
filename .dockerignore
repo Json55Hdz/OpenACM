@@ -1,0 +1,29 @@
+.venv/
+.git/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets — nunca van dentro de la imagen
+config/.env
+config/google_token.json
+config/google_credentials.json
+
+# Base de datos local
+data/
+*.db
+*.sqlite
+
+# Frontend build local
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+
+# Docs y archivos no necesarios en producción
+docs/
+tests/
+*.md

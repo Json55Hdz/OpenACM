@@ -282,6 +282,16 @@ class AgentChannelManager:
         """Return the AgentWhatsAppChannel for this phone_number_id, or None."""
         return self._whatsapp_by_phone.get(phone_number_id)
 
+    def get_whatsapp_channel_by_verify_token(self, token: str):
+        """Return any active WhatsApp agent channel whose verify_token matches."""
+        if not token:
+            return None
+        for ch in self._whatsapp_by_phone.values():
+            cfg = getattr(ch, "config", None)
+            if cfg and getattr(cfg, "verify_token", "") == token:
+                return ch
+        return None
+
     def get_status(self) -> list[dict]:
         """Return live connection status for all managed channels."""
         result = []

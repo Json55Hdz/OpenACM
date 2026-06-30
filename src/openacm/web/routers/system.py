@@ -75,8 +75,11 @@ def register_routes(app: FastAPI) -> None:
 
             return await call_next(request)
 
-    if _dashboard_token:
-        app.add_middleware(TokenAuthMiddleware)
+    # Always register auth middleware. If no token is configured the middleware
+    # still runs and rejects every request, so the API is never silently open.
+    app.add_middleware(TokenAuthMiddleware)
+    if not _dashboard_token:
+        log.warning("DASHBOARD_TOKEN not set — all API requests will be rejected until the app restarts with a valid token")
 
     # ─── Auth API ─────────────────────────────────────────────
 
@@ -85,14 +88,14 @@ def register_routes(app: FastAPI) -> None:
         """Verify a dashboard token is valid."""
         data = await request.json()
         token = data.get("token", "")
-        if token == _dashboard_token:
+        if _dashboard_token and token == _dashboard_token:
             return {"valid": True}
         return JSONResponse(status_code=401, content={"valid": False})
 
     @app.get("/api/auth/check")
     async def check_auth_get(token: str = ""):
         """Verify a dashboard token via GET."""
-        if token == _dashboard_token:
+        if _dashboard_token and token == _dashboard_token:
             return {"valid": True}
         return JSONResponse(status_code=401, content={"valid": False})
 

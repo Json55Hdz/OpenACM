@@ -99,7 +99,8 @@ def register_routes(app: FastAPI) -> None:
         try:
             questions = await _state.swarm_manager.clarify_swarm(swarm_id)
         except Exception as exc:
-            raise HTTPException(500, detail=str(exc)) from exc
+            log.error("clarify_swarm failed", swarm_id=swarm_id, error=str(exc))
+            raise HTTPException(500, detail="Failed to generate clarification questions") from exc
         return {"questions": questions, "swarm_id": swarm_id}
 
     @app.post("/api/swarms/{swarm_id}/clarify/answer")
@@ -175,7 +176,8 @@ def register_routes(app: FastAPI) -> None:
         try:
             result = await _state.swarm_manager.plan_swarm(swarm_id)
         except Exception as exc:
-            raise HTTPException(500, detail=str(exc)) from exc
+            log.error("plan_swarm (after clarify) failed", swarm_id=swarm_id, error=str(exc))
+            raise HTTPException(500, detail="Failed to plan swarm") from exc
         workers = await _state.database.get_swarm_workers(swarm_id)
         tasks = await _state.database.get_swarm_tasks(swarm_id)
         return {**result, "workers": workers, "tasks": tasks}
@@ -190,7 +192,8 @@ def register_routes(app: FastAPI) -> None:
         try:
             result = await _state.swarm_manager.plan_swarm(swarm_id)
         except Exception as exc:
-            raise HTTPException(500, detail=str(exc)) from exc
+            log.error("plan_swarm failed", swarm_id=swarm_id, error=str(exc))
+            raise HTTPException(500, detail="Failed to plan swarm") from exc
         workers = await _state.database.get_swarm_workers(swarm_id)
         tasks = await _state.database.get_swarm_tasks(swarm_id)
         return {**result, "workers": workers, "tasks": tasks}

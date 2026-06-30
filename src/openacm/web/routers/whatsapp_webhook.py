@@ -37,8 +37,16 @@ def register_routes(app: FastAPI) -> None:
         mode = params.get("hub.mode")
         token = params.get("hub.verify_token")
         challenge = params.get("hub.challenge", "")
-        if wa and mode == "subscribe" and token and token == wa.verify_token:
-            return PlainTextResponse(challenge)
+
+        if mode == "subscribe" and token:
+            # Check global config first
+            if wa and wa.verify_token and token == wa.verify_token:
+                return PlainTextResponse(challenge)
+            # Fall back to any active agent WhatsApp channel
+            mgr = getattr(_state, "agent_channel_manager", None)
+            if mgr and mgr.get_whatsapp_channel_by_verify_token(token):
+                return PlainTextResponse(challenge)
+
         log.warning("WhatsApp webhook verification rejected", mode=mode)
         return PlainTextResponse("forbidden", status_code=403)
 
