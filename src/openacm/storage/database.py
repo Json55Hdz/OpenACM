@@ -154,6 +154,10 @@ class Database:
                 is_active INTEGER DEFAULT 1,
                 webhook_secret TEXT NOT NULL,
                 telegram_token TEXT DEFAULT '',
+                woo_enabled INTEGER DEFAULT 0,
+                woo_url TEXT DEFAULT '',
+                woo_ck TEXT DEFAULT '',
+                woo_cs TEXT DEFAULT '',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
@@ -168,7 +172,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 30
+    _SCHEMA_VERSION = 31
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -921,6 +925,20 @@ class Database:
             await self._db.commit()
             log.info("Migration 30: add expression index on gmail_emails eff_thread")
 
+        if current < 31:
+            for _col, _sql in [
+                ("woo_enabled", "ALTER TABLE agents ADD COLUMN woo_enabled INTEGER DEFAULT 0"),
+                ("woo_url", "ALTER TABLE agents ADD COLUMN woo_url TEXT DEFAULT ''"),
+                ("woo_ck", "ALTER TABLE agents ADD COLUMN woo_ck TEXT DEFAULT ''"),
+                ("woo_cs", "ALTER TABLE agents ADD COLUMN woo_cs TEXT DEFAULT ''"),
+            ]:
+                try:
+                    await self._db.execute(_sql)
+                except Exception:
+                    pass
+            await self._db.commit()
+            log.info("Migration 31: added woocommerce config columns to agents table")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1434,13 +1452,17 @@ class Database:
         allowed_tools: str = "all",
         webhook_secret: str = "",
         telegram_token: str = "",
+        woo_enabled: int = 0,
+        woo_url: str = "",
+        woo_ck: str = "",
+        woo_cs: str = "",
     ) -> int:
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token),
+            "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token, woo_enabled, woo_url, woo_ck, woo_cs) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token, woo_enabled, woo_url, woo_ck, woo_cs),
         )
         await self._db.commit()
         return cursor.lastrowid or 0
@@ -1462,7 +1484,7 @@ class Database:
     async def update_agent(self, agent_id: int, **kwargs: Any) -> bool:
         if not self._db:
             return False
-        allowed = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
+        allowed = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token", "woo_enabled", "woo_url", "woo_ck", "woo_cs"}
         updates, params = [], []
         for key, val in kwargs.items():
             if key in allowed:

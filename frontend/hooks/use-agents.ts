@@ -16,6 +16,10 @@ export interface Agent {
   updated_at: string;
   // only returned on create
   webhook_secret?: string;
+  woo_enabled: number;
+  woo_url: string;
+  woo_ck: string;
+  woo_cs: string;
 }
 
 export interface AgentFormData {
@@ -24,6 +28,10 @@ export interface AgentFormData {
   system_prompt: string;
   allowed_tools: string;
   telegram_token: string;
+  woo_enabled: number;
+  woo_url: string;
+  woo_ck: string;
+  woo_cs: string;
 }
 
 export interface KnowledgeItem {

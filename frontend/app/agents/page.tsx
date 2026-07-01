@@ -51,6 +51,10 @@ const DEFAULT_FORM: AgentFormData = {
   system_prompt: '',
   allowed_tools: 'all',
   telegram_token: '',
+  woo_enabled: 0,
+  woo_url: '',
+  woo_ck: '',
+  woo_cs: '',
 };
 
 // ── Knowledge Tab ─────────────────────────────────────────────────────────────
@@ -645,6 +649,10 @@ function AgentFormModal({
           system_prompt: initial.system_prompt,
           allowed_tools: initial.allowed_tools,
           telegram_token: initial.telegram_token ?? '',
+          woo_enabled: initial.woo_enabled ?? 0,
+          woo_url: initial.woo_url ?? '',
+          woo_ck: initial.woo_ck ?? '',
+          woo_cs: initial.woo_cs ?? '',
         }
       : DEFAULT_FORM
   );
@@ -655,7 +663,7 @@ function AgentFormModal({
   const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels'>('config');
   const isEditing = !!initial;
 
-  const set = (field: keyof AgentFormData, val: string) =>
+  const set = (field: keyof AgentFormData, val: string | number) =>
     setForm((f) => ({ ...f, [field]: val }));
 
   const handleGenerate = async () => {
@@ -939,17 +947,77 @@ function AgentFormModal({
           </button>
 
           {showAdvanced && (
-            <div>
-              <label className="label block mb-2">Telegram Bot Token (optional)</label>
-              <input
-                value={form.telegram_token}
-                onChange={(e) => set('telegram_token', e.target.value)}
-                placeholder="1234567890:ABCdef..."
-                className="acm-input mono w-full"
-              />
-              <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
-                Connect this agent to its own Telegram bot (coming soon).
-              </p>
+            <div className="flex flex-col gap-5 mt-4 pt-4 border-t border-[var(--acm-border)]">
+              <div>
+                <label className="label block mb-2">Telegram Bot Token (optional)</label>
+                <input
+                  value={form.telegram_token}
+                  onChange={(e) => set('telegram_token', e.target.value)}
+                  placeholder="1234567890:ABCdef..."
+                  className="acm-input mono w-full"
+                />
+                <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
+                  Connect this agent to its own Telegram bot (coming soon).
+                </p>
+              </div>
+
+              <div className="p-4 rounded border border-[var(--acm-border)]" style={{ background: 'var(--acm-bg)' }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="label block">WooCommerce Integration</label>
+                    <p className="text-[11px] mt-1" style={{ color: 'var(--acm-fg-4)' }}>Allow agent to search products natively</p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <span className="text-[11px] uppercase tracking-wider font-bold" style={{ color: 'var(--acm-fg-3)' }}>
+                      {form.woo_enabled ? 'ON' : 'OFF'}
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={!!form.woo_enabled}
+                      onChange={(e) => setForm(f => ({ ...f, woo_enabled: e.target.checked ? 1 : 0 }))}
+                    />
+                    <div className={`w-9 h-5 rounded-full transition-colors relative ${form.woo_enabled ? 'bg-[#5b7cfa]' : 'bg-[#444]'}`}>
+                      <div className={`absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-white transition-transform ${form.woo_enabled ? 'translate-x-4' : ''}`} />
+                    </div>
+                  </label>
+                </div>
+                
+                {!!form.woo_enabled && (
+                  <div className="flex flex-col gap-3 mt-4 pt-4 border-t border-[var(--acm-border)]">
+                    <div>
+                      <label className="text-[11px] block mb-1 font-semibold uppercase tracking-wider" style={{ color: 'var(--acm-fg-3)' }}>Store URL</label>
+                      <input
+                        value={form.woo_url}
+                        onChange={(e) => set('woo_url', e.target.value)}
+                        placeholder="https://mystore.com"
+                        className="acm-input mono w-full text-[12px]"
+                      />
+                    </div>
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <label className="text-[11px] block mb-1 font-semibold uppercase tracking-wider" style={{ color: 'var(--acm-fg-3)' }}>Consumer Key</label>
+                        <input
+                          value={form.woo_ck}
+                          onChange={(e) => set('woo_ck', e.target.value)}
+                          placeholder="ck_..."
+                          className="acm-input mono w-full text-[12px]"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[11px] block mb-1 font-semibold uppercase tracking-wider" style={{ color: 'var(--acm-fg-3)' }}>Consumer Secret</label>
+                        <input
+                          type="password"
+                          value={form.woo_cs}
+                          onChange={(e) => set('woo_cs', e.target.value)}
+                          placeholder="cs_..."
+                          className="acm-input mono w-full text-[12px]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
           </>

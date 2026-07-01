@@ -290,6 +290,9 @@ class OpenACM:
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(add_resurrection_path)
         self.tool_registry.register_module(onboarding_tools)
+        
+        from openacm.tools import woocommerce
+        self.tool_registry.register_module(woocommerce)
 
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)

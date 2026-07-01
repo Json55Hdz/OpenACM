@@ -51,9 +51,13 @@ class AgentRunner:
             return self.tool_registry.get_tools_schema()
 
     def _build_system_prompt(self, base_prompt: str, knowledge_items: list[dict]) -> str:
-        """Prepend knowledge block to base system prompt, truncating if needed."""
+        """Prepend knowledge block and current date to base system prompt, truncating if needed."""
+        import datetime
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        date_block = f"[System Context: The current date and time is {now_str}. You must take this into account when answering time-sensitive questions or searching the web.]\n\n"
+
         if not knowledge_items:
-            return base_prompt
+            return date_block + base_prompt
 
         sections = "\n\n".join(
             f"### {item['title']}\n{item['content']}" for item in knowledge_items
@@ -63,7 +67,7 @@ class AgentRunner:
         if len(block) > _KNOWLEDGE_CHAR_LIMIT:
             block = block[:_KNOWLEDGE_CHAR_LIMIT] + "\n\n[Conocimiento truncado por límite de contexto]"
 
-        return f"{block}\n\n{base_prompt}"
+        return f"{date_block}{block}\n\n{base_prompt}"
 
     async def run(
         self,
@@ -95,6 +99,14 @@ class AgentRunner:
 
         system_prompt = self._build_system_prompt(agent["system_prompt"], knowledge_items)
 
+        # Inject channel-specific formatting instructions
+        if channel_type and "whatsapp" in channel_type.lower():
+            system_prompt += (
+                "\n\n[FORMATTING INSTRUCTIONS: You are replying on WhatsApp. "
+                "CRITICAL: DO NOT use Markdown tables, they are unreadable on WhatsApp! Use short bulleted lists instead. "
+                "Keep paragraphs very short. Use WhatsApp bold formatting (*text*) instead of standard markdown (**text**).]"
+            )
+
         config = AssistantConfig(
             name=agent["name"],
             system_prompt=system_prompt,
@@ -113,6 +125,7 @@ class AgentRunner:
             event_bus=self.event_bus,
             tool_registry=self.tool_registry if agent.get("allowed_tools", "all") != "none" else None,
         )
+        brain.agent_id = agent["id"]
 
         allowed = agent.get("allowed_tools", "all")
         if allowed not in ("all", "none"):

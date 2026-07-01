@@ -52,7 +52,7 @@ class ToolRegistry:
         self._tool_names_order: list[str] = []  # parallel to _tool_embeddings rows
         self._semantic_model: Any = None  # reference to sentence-transformer model
         # Plugin-registered keyword categories — always checked alongside semantic
-        self._plugin_categories: set[str] = set()
+        self._plugin_categories: set[str] = {"ecommerce"}
         # Callback injected by the web server to request user confirmation before
         # executing sensitive tools.  Signature: (tool, command, channel_id) -> bool
         self.confirm_callback = None

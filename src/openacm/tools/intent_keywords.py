@@ -106,4 +106,12 @@ INTENT_KEYWORDS: dict[str, list[str]] = {
         "volume", "volumen", "channel", "canal", "mute", "silencio",
         "scan devices", "escanear dispositivos",
     ],
+    "ecommerce": [
+        "precio", "precios", "disponible", "tienes", "tienen", "celular", 
+        "iphone", "samsung", "poco", "xiaomi", "comprar", "stock", 
+        "inventario", "tienda", "modelo", "cuanto", "cuesta", "vale",
+        "buscas", "buscar", "hay", "recomendar", "recomendacion",
+        "asesorar", "asesoria", "sugerir", "sugerencia", "opcion",
+        "opciones", "mejores", "mejor",
+    ],
 }
