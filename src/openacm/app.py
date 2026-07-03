@@ -75,6 +75,16 @@ class OpenACM:
         """Start OpenACM."""
         self._print_banner()
 
+        # Docker/systemd send SIGTERM (not KeyboardInterrupt) to stop the
+        # container — without a handler the process just hangs until the
+        # engine's kill timeout. Not supported on Windows, hence the guard.
+        try:
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, self._shutdown_event.set)
+        except (NotImplementedError, AttributeError):
+            pass
+
         steps = [
             "Loading configuration",
             "Initializing database",
@@ -569,6 +579,16 @@ class OpenACM:
 
     async def _console_loop(self):
         """Interactive console for direct chatting."""
+        if not sys.stdin.isatty():
+            # No TTY attached (Docker without -it, systemd service, etc.) —
+            # reading stdin would raise EOFError immediately and tear down
+            # the whole app. Just keep the process alive for the web/channel
+            # subsystems instead of trying to run the REPL.
+            log.info("No TTY detected — skipping interactive console, staying alive for web/channels")
+            await self._shutdown_event.wait()
+            await self._shutdown()
+            return
+
         console.print(
             "\n[dim]Type your message below (or 'quit' to exit, '/help' for commands):[/dim]\n"
         )
