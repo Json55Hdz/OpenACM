@@ -211,6 +211,7 @@ class PluginManager:
 
     def __init__(self):
         self._plugins: list[Plugin] = []
+        self._enabled: dict[str, bool] = {}
 
     def register(self, plugin: Plugin) -> None:
         """Register a plugin instance."""
@@ -219,6 +220,16 @@ class PluginManager:
             return
         self._plugins.append(plugin)
         log.info("Plugin registered", name=plugin.name, version=plugin.version)
+
+    async def load_enabled_state(self, database: Any) -> None:
+        """Load each discovered plugin's enabled flag from the DB. Call this
+        after load_builtin_plugins() and before start_all()."""
+        for plugin in self._plugins:
+            self._enabled[plugin.name] = await database.is_plugin_enabled(plugin.name)
+
+    def is_enabled(self, name: str) -> bool:
+        """Defaults to True if load_enabled_state() hasn't run for this plugin yet."""
+        return self._enabled.get(name, True)
 
     def load_builtin_plugins(self) -> None:
         """
@@ -269,6 +280,9 @@ class PluginManager:
         database = app_context.get("database")
 
         for plugin in self._plugins:
+            if not self.is_enabled(plugin.name):
+                log.info("Plugin disabled, skipping start", name=plugin.name)
+                continue
             try:
                 # Register tools
                 if tool_registry:
@@ -320,20 +334,26 @@ class PluginManager:
                 log.warning("Plugin stop error", name=plugin.name, error=str(exc))
 
     def get_context_extensions(self) -> list[str]:
-        """Collect context snippets from all plugins (for brain.py)."""
-        return [ext for p in self._plugins if (ext := p.get_context_extension())]
+        """Collect context snippets from all ENABLED plugins (for brain.py)."""
+        return [
+            ext for p in self._plugins
+            if self.is_enabled(p.name) and (ext := p.get_context_extension())
+        ]
 
     def get_nav_items(self) -> list[dict]:
-        """Collect all frontend nav items from all plugins (for /api/plugins/nav)."""
+        """Collect frontend nav items from all ENABLED plugins (for /api/plugins/nav)."""
         items = []
         for p in self._plugins:
-            items.extend(p.get_nav_items())
+            if self.is_enabled(p.name):
+                items.extend(p.get_nav_items())
         return items
 
     def get_api_routers(self) -> list[Any]:
-        """Collect FastAPI APIRouter instances from all plugins (mounted by server.py)."""
+        """Collect FastAPI APIRouter instances from all ENABLED plugins (mounted by server.py)."""
         routers = []
         for p in self._plugins:
+            if not self.is_enabled(p.name):
+                continue
             try:
                 router = p.get_api_router()
                 if router is not None:
