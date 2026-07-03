@@ -558,6 +558,9 @@ class OpenACM:
         # Auto-discover plugins in openacm.plugins.*
         plugin_manager.load_builtin_plugins()
 
+        # Load each plugin's enabled/disabled flag from the DB
+        await plugin_manager.load_enabled_state(self.database)
+
         # Start each plugin with the full app context
         await plugin_manager.start_all(
             config=self.config,
@@ -573,7 +576,7 @@ class OpenACM:
             workspace_root=_Path(self.config.storage.workspace_path),
         )
 
-        loaded = [p.name for p in plugin_manager.plugins]
+        loaded = [p.name for p in plugin_manager.plugins if plugin_manager.is_enabled(p.name)]
         if loaded:
             console.print(f"  [green]✓[/green] Plugins: {', '.join(loaded)}")
 
