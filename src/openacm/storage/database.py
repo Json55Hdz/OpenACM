@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 30
+    _SCHEMA_VERSION = 31
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -921,6 +921,18 @@ class Database:
             await self._db.commit()
             log.info("Migration 30: add expression index on gmail_emails eff_thread")
 
+        # ── Migration 31: add plugin_state table (Phase 1 plugin dashboard) ──
+        if current < 31:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS plugin_state (
+                    plugin_name  TEXT PRIMARY KEY,
+                    enabled      BOOLEAN NOT NULL DEFAULT 1,
+                    config_json  TEXT NOT NULL DEFAULT '{}'
+                );
+            """)
+            await self._db.commit()
+            log.info("Migration 31: add plugin_state table")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1423,6 +1435,67 @@ class Database:
         cursor = await self._db.execute("SELECT key, value FROM settings")
         rows = await cursor.fetchall()
         return {row["key"]: row["value"] for row in rows}
+
+    # ─── Plugin state (Phase 1 plugin dashboard) ───────────────
+
+    async def is_plugin_enabled(self, name: str) -> bool:
+        """A plugin with no row is enabled by default."""
+        if not self._db:
+            return True
+        cursor = await self._db.execute(
+            "SELECT enabled FROM plugin_state WHERE plugin_name = ?", (name,)
+        )
+        row = await cursor.fetchone()
+        return bool(row["enabled"]) if row else True
+
+    async def set_plugin_enabled(self, name: str, enabled: bool) -> None:
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT INTO plugin_state (plugin_name, enabled) VALUES (?, ?) "
+            "ON CONFLICT(plugin_name) DO UPDATE SET enabled = excluded.enabled",
+            (name, int(enabled)),
+        )
+        await self._db.commit()
+
+    async def get_plugin_config(self, name: str) -> dict:
+        if not self._db:
+            return {}
+        cursor = await self._db.execute(
+            "SELECT config_json FROM plugin_state WHERE plugin_name = ?", (name,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return {}
+        import json
+        return json.loads(row["config_json"])
+
+    async def set_plugin_config(self, name: str, config: dict) -> None:
+        if not self._db:
+            return
+        import json
+        await self._db.execute(
+            "INSERT INTO plugin_state (plugin_name, config_json) VALUES (?, ?) "
+            "ON CONFLICT(plugin_name) DO UPDATE SET config_json = excluded.config_json",
+            (name, json.dumps(config)),
+        )
+        await self._db.commit()
+
+    async def get_all_plugin_states(self) -> dict[str, dict]:
+        if not self._db:
+            return {}
+        import json
+        cursor = await self._db.execute(
+            "SELECT plugin_name, enabled, config_json FROM plugin_state"
+        )
+        rows = await cursor.fetchall()
+        return {
+            row["plugin_name"]: {
+                "enabled": bool(row["enabled"]),
+                "config": json.loads(row["config_json"]),
+            }
+            for row in rows
+        }
 
     # ─── Agents ───────────────────────────────────────────────
 
