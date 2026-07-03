@@ -60,6 +60,7 @@ class Plugin:
     version: str = "0.1.0"
     description: str = ""
     author: str = ""
+    _database: Any = None
 
     # ── Provide tools ──────────────────────────────────────────
 
@@ -144,17 +145,56 @@ class Plugin:
         """
         return []
 
+    # ── Provide a settings schema (Phase 1 dashboard config form) ──
+
+    def get_config_schema(self) -> list[dict]:
+        """
+        Return field definitions for the dashboard's generic plugin
+        settings form. Each field:
+            {
+                "key":      "url",              # dict key used to store the value
+                "label":    "Home Assistant URL",
+                "type":     "text" | "password" | "number" | "boolean",
+                "required": True,
+                "help":     "e.g. http://homeassistant.local:8123",
+            }
+        """
+        return []
+
+    # ── Declare a custom UI (Phase 1 iframe escape hatch) ───────
+
+    def has_custom_ui(self) -> bool:
+        """
+        If True, this plugin's get_api_router() is expected to serve a
+        GET /ui route (self-contained HTML) that the dashboard opens in
+        an iframe — used for plugins needing a richer view than the
+        generic config form without ever touching the Next.js frontend.
+        """
+        return False
+
+    # ── Read this plugin's saved settings ───────────────────────
+
+    async def get_setting(self, key: str, default: Any = None) -> Any:
+        """Read a value this plugin saved via the dashboard config form."""
+        if not self._database:
+            return default
+        config = await self._database.get_plugin_config(self.name)
+        return config.get(key, default)
+
     # ── Lifecycle hooks ────────────────────────────────────────
 
     async def on_start(self, **app_context: Any) -> None:
         """
-        Called after all core systems are up.
+        Called after all core systems are up. Subclasses that override
+        this MUST call `await super().on_start(**app_context)` first —
+        it's what makes get_setting() work.
 
         Available kwargs:
             config, database, event_bus, llm_router, brain, tool_registry,
             skill_manager, activity_watcher, cron_scheduler, swarm_manager,
             workspace_root (Path)
         """
+        self._database = app_context.get("database")
 
     async def on_stop(self) -> None:
         """Called when OpenACM is shutting down."""
