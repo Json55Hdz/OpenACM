@@ -27,7 +27,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const { login } = useAuth();
   const checkAuth = useAuthStore((state) => state.checkAuth);
 
-  const isOnboardingPage = pathname === '/onboarding';
+  const isOnboardingPage = pathname === '/onboarding' || pathname === '/onboarding/';
   const { data: configStatus, isLoading: configLoading } = useConfigStatus();
 
   useEffect(() => {
