@@ -312,6 +312,8 @@ async def create_web_server(
         "message.reasoning",
         # Streaming reasoning chunks — emitted per-delta during _custom_chat streaming
         "message.reasoning_stream",
+        # Home Assistant real-time device state (see plugins/home_assistant/client.py)
+        "ha:state_changed",
     ]:
         event_bus.on(evt, on_event)
 
