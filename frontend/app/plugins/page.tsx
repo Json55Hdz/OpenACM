@@ -84,6 +84,7 @@ export default function PluginsPage() {
                     href={`/api/plugins/${p.name}/ui?token=${encodeURIComponent(token ?? '')}`}
                     target="_blank"
                     rel="noopener noreferrer"
+                    referrerPolicy="no-referrer"
                   >
                     <ExternalLink size={16} style={{ color: 'var(--acm-fg-4)' }} />
                   </a>
