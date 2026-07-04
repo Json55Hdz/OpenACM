@@ -56,7 +56,11 @@ def _make_app_config(**overrides) -> AppConfig:
         response_timeout=5,
     )
     llm = LLMConfig(default_provider="mock", providers={})
-    web = WebConfig(host="127.0.0.1", port=47821, auth_enabled=False)
+    # port=0 — the OS assigns a free ephemeral port. The `client` fixture's
+    # ASGITransport talks to the FastAPI app in-process either way; binding
+    # the real default port here would collide with an actual running
+    # OpenACM instance on the same machine.
+    web = WebConfig(host="127.0.0.1", port=0, auth_enabled=False)
     security = SecurityConfig()
     channels = ChannelsConfig()
 
