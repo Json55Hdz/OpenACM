@@ -74,6 +74,15 @@ class HomeAssistantClient:
             result = resp.json()
         except ValueError as exc:
             return {"success": False, "error": f"Home Assistant returned non-JSON 2xx response: {exc}"}
+
+        # HA returns the states that changed as a direct result of this call —
+        # apply them immediately instead of waiting for the WebSocket event,
+        # so a status check right after a control call sees the true state.
+        if isinstance(result, list):
+            for s in result:
+                if isinstance(s, dict) and "entity_id" in s:
+                    self._states[s["entity_id"]] = s
+
         return {"success": True, "result": result}
 
     async def fetch_states(self) -> list[dict[str, Any]]:

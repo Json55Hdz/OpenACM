@@ -195,6 +195,53 @@ class TestHaControlGenericActions:
         client.call_service.assert_awaited_once_with("homeassistant", "turn_off", area_id="sala")
         assert "✓" in result
 
+    async def test_turn_on_with_color_applies_in_the_same_call(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(
+            entity_id="light.sala", action="turn_on", red=0, green=255, blue=0
+        )
+
+        client.call_service.assert_awaited_once_with(
+            "homeassistant", "turn_on", entity_id=["light.sala"], rgb_color=[0, 255, 0]
+        )
+        assert "✓" in result
+
+    async def test_turn_on_with_brightness_and_kelvin_applies_in_the_same_call(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(
+            entity_id="light.sala", action="turn_on", brightness=80, kelvin=4000
+        )
+
+        client.call_service.assert_awaited_once_with(
+            "homeassistant", "turn_on", entity_id=["light.sala"],
+            brightness_pct=80, color_temp_kelvin=4000,
+        )
+        assert "✓" in result
+
+    async def test_turn_on_area_with_color_applies_in_the_same_call(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(area="oficina", action="turn_on", red=0, green=255, blue=0)
+
+        client.call_service.assert_awaited_once_with(
+            "homeassistant", "turn_on", area_id="oficina", rgb_color=[0, 255, 0]
+        )
+        assert "✓" in result
+
+    async def test_turn_off_without_extra_params_unchanged(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala", action="turn_off")
+
+        client.call_service.assert_awaited_once_with("homeassistant", "turn_off", entity_id=["light.sala"])
+        assert "✓" in result
+
     async def test_generic_action_failure_reports_error(self, monkeypatch):
         client = _make_control_client(CONTROL_STATES, service_result={"success": False, "error": "no responde"})
         monkeypatch.setattr(ha_tools, "_client", client)
@@ -505,6 +552,15 @@ class TestHaCallService:
         client.call_service.assert_awaited_once_with(
             "vacuum", "send_command", entity_id="vacuum.roborock", command="clean_zone"
         )
+        assert "✓" in result
+
+    async def test_strips_redundant_domain_prefix_from_service_name(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_call_service(entity_id="vacuum.roborock", service="vacuum.start")
+
+        client.call_service.assert_awaited_once_with("vacuum", "start", entity_id="vacuum.roborock")
         assert "✓" in result
 
     async def test_service_failure_reports_error(self, monkeypatch):

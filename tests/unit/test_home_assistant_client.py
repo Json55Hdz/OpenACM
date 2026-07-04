@@ -28,6 +28,20 @@ class TestCallService:
             json={"entity_id": "light.sala", "brightness_pct": 80},
         )
 
+    async def test_call_service_success_updates_state_cache_immediately(self):
+        client = _make_client()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [
+            {"entity_id": "light.sala", "state": "on", "attributes": {"rgb_color": [0, 255, 0]}}
+        ]
+        client._http.post = AsyncMock(return_value=resp)
+
+        await client.call_service("light", "turn_on", entity_id="light.sala", rgb_color=[0, 255, 0])
+
+        cached = client.get_state("light.sala")
+        assert cached["state"] == "on"
+        assert cached["attributes"]["rgb_color"] == [0, 255, 0]
+
     async def test_call_service_with_area_id(self):
         client = _make_client()
         resp = MagicMock(status_code=200)

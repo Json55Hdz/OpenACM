@@ -11,40 +11,88 @@ log = structlog.get_logger()
 
 
 _HOME_ASSISTANT_SKILL = """\
-# Controlar Home Assistant
+# Controlling Home Assistant
 
-Usa `ha_devices()` para ver los `entity_id` reales antes de adivinar uno.
+Golden rule: figure out the exact end state you want (which devices, which
+attributes) and make **one** `ha_control` call that achieves all of it. Never
+call once per device, and never call once per attribute (turn on, then set
+color, then set brightness) — all of that belongs in the **same** call.
 
-## `ha_control` — nombres de acción EXACTOS
+Use `ha_devices()` (or `ha_devices(area="Living Room")`) to look up real
+`entity_id`s before guessing one — but only when you genuinely don't know the
+name. If the user already told you which devices, or you just listed them,
+don't list them again for the same task.
 
-- **Cualquier dispositivo:** `turn_on`, `turn_off`, `toggle` (también acepta `on`/`off` como sinónimos).
-- **Luces (`light.*`):** `set_brightness` (param `brightness` 0-100), `set_color_temp` (param `kelvin` 2000-6500), `set_color` (params `red`/`green`/`blue` 0-255 cada uno).
-- **Clima (`climate.*`):** `set_temperature` (param `temperature`).
-- **Cortinas (`cover.*`):** `open`, `close`, `stop`.
-- **Reproductores (`media_player.*`):** `set_volume` (param `volume` 0.0-1.0).
+## `ha_control` — exact action names
 
-No existen acciones como `dim`, `set`, `activate` — usa exactamente los nombres de arriba.
+| Domain | Actions | Params |
+|---|---|---|
+| Any domain | `turn_on`, `turn_off`, `toggle` (also accepts `on`/`off` as synonyms) | — |
+| `light.*` | `set_brightness` | `brightness` 0-100 |
+| `light.*` | `set_color_temp` | `kelvin` 2000-6500 |
+| `light.*` | `set_color` | `red`/`green`/`blue`, 0-255 each |
+| `climate.*` | `set_temperature` | `temperature` |
+| `cover.*` | `open`, `close`, `stop` | — |
+| `media_player.*` | `set_volume` | `volume` 0.0-1.0 |
 
-## Áreas/habitaciones y dispositivos no cubiertos por `ha_control`
+There is no `dim`, `set`, or `activate` action — use exactly the names above.
 
-- `ha_areas()` lista las habitaciones configuradas; `ha_devices(area="Sala")` filtra por una de ellas.
-- Para dominios que `ha_control` no cubre (aspiradoras `vacuum.*`, cerraduras `lock.*`, ventiladores `fan.*`, alarmas, etc.), usa primero `ha_list_services(domain)` para ver qué funciones existen realmente, y luego `ha_call_service(entity_id, service, data={...})` para ejecutarla — no adivines nombres de servicio.
+## Combine turn-on + color + brightness in ONE call
 
-## Varias cosas a la vez, en una sola llamada
+`ha_control` accepts `red`/`green`/`blue`/`brightness`/`kelvin` **together
+with** `action="turn_on"` (or `"toggle"`) — you don't need a separate
+`action="set_color"` call. Correct example for "turn the office panels on in
+green":
 
-- Una lista de `entity_id` (aunque sean de tipos distintos) funciona con `turn_on`/`turn_off`/`toggle`:
-  `ha_control(entity_id=["light.sala", "switch.tv"], action="turn_off")`
-- Un área completa funciona igual, solo con esas tres acciones genéricas:
-  `ha_control(area="sala", action="turn_off")`
-- Acciones específicas de dominio (`set_brightness`, etc.) necesitan `entity_id` del mismo tipo — `area` no aplica ahí.
+```
+ha_control(entity_id="light.office_panel_1, light.office_panel_2, light.office_panel_3",
+           action="turn_on", red=0, green=255, blue=0)
+```
 
-## El parámetro `area` es sensible
+That's **one** call for 3 lights plus color, not six. Add `brightness=80` to
+that same call if a specific brightness is also wanted.
 
-`area` debe coincidir EXACTO con el ID/slug del área en Home Assistant (Configuración → Áreas), no con cómo lo diría una persona. Si no estás seguro del slug exacto, mejor controla los `entity_id` directamente en vez de adivinar un `area`.
+## Multiple targets in one call
 
-## Escenas
+- `entity_id` accepts a single id, a list, or a comma-separated string — all
+  three control everything in one real Home Assistant call:
+  `ha_control(entity_id="light.living_room, switch.tv", action="turn_off")`
+- A whole area works the same way, with `turn_on`/`turn_off`/`toggle` (plus
+  color/brightness params if relevant):
+  `ha_control(area="living_room", action="turn_off")`
+- Domain-specific actions not combined with on/off (`set_temperature`,
+  `open`/`close`/`stop`) need `entity_id` of the same type — `area` doesn't
+  apply there.
 
-`ha_scenes()` para listar, `ha_activate_scene(name)` para activar por nombre — no uses `ha_control` para escenas.
+## Do NOT re-check state immediately after controlling
+
+`ha_control` tells you whether the call succeeded via a leading "✓" — TRUST
+that. Do NOT call `ha_status`/`ha_devices` right after to "confirm" it
+applied: the local state cache updates over WebSocket with a small delay, so
+it can look like "nothing changed" even though it did, and you end up
+repeating the same action unnecessarily. Checking is fine when the user
+explicitly asks for current status — just don't make it part of the
+turn-on/off/color-change flow itself.
+
+## The `area` parameter is strict
+
+`area` must match the exact area ID/slug in Home Assistant (Settings →
+Areas), not how a person would casually say it. If you're not sure of the
+exact slug, control `entity_id`s directly instead of guessing an `area`.
+
+## Devices not covered by `ha_control` (vacuums, locks, etc.)
+
+For domains `ha_control` doesn't cover (vacuums `vacuum.*`, locks `lock.*`,
+fans `fan.*`, alarms, etc.):
+1. `ha_list_services(domain)` to see what's actually available (e.g. `domain="vacuum"`).
+2. `ha_call_service(entity_id, service, data={...})` to run it — `service` is
+   **only** the service name (e.g. `"start"`, `"return_to_base"`), **never**
+   with the domain prefixed (wrong: `"vacuum.start"`; right: `"start"`).
+
+## Scenes
+
+`ha_scenes()` to list, `ha_activate_scene(name)` to activate by name — don't
+use `ha_control` for scenes.
 """
 
 

@@ -238,11 +238,23 @@ async def ha_control(
             ids.append(state["entity_id"])
 
     if action in _GENERIC_ACTIONS:
+        extra: dict[str, Any] = {}
+        if brightness is not None:
+            extra["brightness_pct"] = brightness
+        if kelvin is not None:
+            extra["color_temp_kelvin"] = kelvin
+        if red is not None and green is not None and blue is not None:
+            extra["rgb_color"] = [red, green, blue]
+        if temperature is not None:
+            extra["temperature"] = temperature
+        if volume is not None:
+            extra["volume_level"] = volume
+
         if ids:
-            result = await _client.call_service("homeassistant", action, entity_id=ids)
+            result = await _client.call_service("homeassistant", action, entity_id=ids, **extra)
             target_desc = ", ".join(ids)
         else:
-            result = await _client.call_service("homeassistant", action, area_id=area)
+            result = await _client.call_service("homeassistant", action, area_id=area, **extra)
             target_desc = f"área '{area}'"
         return f"✓ {action} aplicado a {target_desc}." if result["success"] else f"✗ {result['error']}"
 
@@ -402,6 +414,8 @@ async def ha_call_service(entity_id: str, service: str, data: dict | None = None
         return f"No encontré '{entity_id}'. Usa ha_devices() para ver los dispositivos disponibles."
 
     domain = state["entity_id"].split(".")[0]
+    if service.startswith(f"{domain}."):
+        service = service[len(domain) + 1:]
     result = await _client.call_service(domain, service, entity_id=state["entity_id"], **(data or {}))
     if result["success"]:
         return f"✓ {service} aplicado a {state['entity_id']}."
