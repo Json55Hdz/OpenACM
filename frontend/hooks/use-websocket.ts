@@ -4,6 +4,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore, authStore } from '@/stores/auth-store';
 import { useTamagotchiStore } from '@/stores/tamagotchi-store';
+import { useHAStore } from '@/stores/ha-store';
 import { toast } from 'sonner';
 
 interface WebSocketMessage {
@@ -39,7 +40,8 @@ interface WebSocketMessage {
   command?: string;
   // voice daemon fields
   browser_tts_needed?: boolean;
-  state?: string;
+  // string for voice daemon state; Record<string, any> for ha:state_changed's full HA entity state
+  state?: string | Record<string, any>;
   count?: number;
   // context:stats fields
   pct_used?: number;
@@ -47,6 +49,8 @@ interface WebSocketMessage {
   context_window?: number;
   // message.reasoning_stream fields
   chunk?: string;
+  // ha:state_changed fields
+  entity_id?: string;
 }
 
 export function useWebSocket() {
@@ -89,6 +93,14 @@ export function useWebSocket() {
   useEffect(() => {
     return useTamagotchiStore.subscribe((state) => {
       tamaRef.current = state;
+    });
+  }, []);
+
+  // Live ref to Home Assistant store — same pattern, no stale closures
+  const haRef = useRef(useHAStore.getState());
+  useEffect(() => {
+    return useHAStore.subscribe((state) => {
+      haRef.current = state;
     });
   }, []);
 
@@ -303,6 +315,10 @@ export function useWebSocket() {
         const names: string[] = data.skills || [];
         storeRef.current.setActiveSkillNames(names);
         setTimeout(() => storeRef.current.setActiveSkillNames([]), 5000);
+      } else if (data.type === 'ha:state_changed') {
+        if (data.entity_id && data.state) {
+          haRef.current.setEntityState(data.entity_id, data.state as any);
+        }
       } else if (data.type === 'message.thinking') {
         const status = data.status;
         if (status === 'start') {
