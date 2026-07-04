@@ -85,7 +85,16 @@ export default function PluginsPage() {
     if (route) {
       router.push(route);
     } else if (hasCustomUi) {
-      window.open(`/api/plugins/${pluginName}/ui?token=${encodeURIComponent(token ?? '')}`, '_blank', 'noopener,noreferrer');
+      // window.open's windowFeatures 'noreferrer' token isn't reliably honored
+      // across browsers — a real <a referrerPolicy="no-referrer"> click is the
+      // only cross-browser way to suppress the Referer header for a
+      // token-bearing URL, matching the visible link below.
+      const a = document.createElement('a');
+      a.href = `/api/plugins/${pluginName}/ui?token=${encodeURIComponent(token ?? '')}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.referrerPolicy = 'no-referrer';
+      a.click();
     }
   };
 
