@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 interface FetchOptions extends RequestInit {
   requiresAuth?: boolean;
+  raw?: boolean; // if true, return response.text() instead of response.json()
 }
 
 export function useAPI() {
@@ -30,7 +31,7 @@ export function useAPI() {
         ...fetchOptions,
         headers,
       });
-      
+
       if (!response.ok) {
         if (response.status === 401) {
           // Don't clear auth here to avoid loops - let the component handle it
@@ -38,8 +39,8 @@ export function useAPI() {
         }
         throw new Error(`HTTP ${response.status}`);
       }
-      
-      return await response.json();
+
+      return options.raw ? await response.text() : await response.json();
     } catch (error) {
       console.error(`API error (${url}):`, error);
       throw error;
