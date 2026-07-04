@@ -84,26 +84,4 @@ INTENT_KEYWORDS: dict[str, list[str]] = {
         "stitch", "google stitch", "mockup", "prototipo", "prototype",
         "layout", "card", "tabla", "table", "botón", "button",
     ],
-    "iot": [
-        # Lighting
-        "light", "lights", "luz", "luces", "lamp", "lampara", "bulb",
-        # Covers
-        "curtain", "curtains", "blind", "blinds", "persiana", "persianas",
-        "cortina", "cortinas", "cover", "shutter",
-        # Entertainment
-        "tv", "television", "tele", "lg", "webos",
-        "netflix", "youtube", "hdmi",
-        # Appliances
-        "vacuum", "aspiradora", "robot", "xiaomi", "roborock",
-        "switch", "enchufe", "plug", "outlet",
-        # Platforms
-        "iot", "smart home", "domótica", "domotica",
-        "tuya", "smartlife", "miio",
-        # Controls
-        "turn on", "turn off", "enciende", "apaga", "encender", "apagar",
-        "dim", "brightness", "brillo", "color", "temperatura de color",
-        "open", "close", "abre", "cierra", "abrir", "cerrar",
-        "volume", "volumen", "channel", "canal", "mute", "silencio",
-        "scan devices", "escanear dispositivos",
-    ],
 }

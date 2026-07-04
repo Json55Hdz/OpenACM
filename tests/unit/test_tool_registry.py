@@ -39,7 +39,7 @@ class TestToolRegistryInit:
 # ---------------------------------------------------------------------------
 
 class TestIntentKeywords:
-    EXPECTED_CATEGORIES = {"system", "file", "web", "ai", "media", "google", "meta", "mcp", "ui", "iot"}
+    EXPECTED_CATEGORIES = {"system", "file", "web", "ai", "media", "google", "meta", "mcp", "ui"}
 
     def test_all_expected_categories_present(self):
         for cat in self.EXPECTED_CATEGORIES:
