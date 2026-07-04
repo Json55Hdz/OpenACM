@@ -67,7 +67,11 @@ class HomeAssistantClient:
         if resp.status_code >= 400:
             return {"success": False, "error": f"Home Assistant respondió {resp.status_code}: {resp.text}"}
 
-        return {"success": True, "result": resp.json()}
+        try:
+            result = resp.json()
+        except ValueError as exc:
+            return {"success": False, "error": f"Home Assistant returned non-JSON 2xx response: {exc}"}
+        return {"success": True, "result": result}
 
     async def fetch_states(self) -> list[dict[str, Any]]:
         """Seed/refresh the in-memory state cache from GET /api/states."""

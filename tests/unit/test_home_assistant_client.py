@@ -67,6 +67,17 @@ class TestCallService:
         assert result["success"] is False
         assert "500" in result["error"]
 
+    async def test_call_service_non_json_2xx_response_returns_friendly_error(self):
+        client = _make_client()
+        resp = MagicMock(status_code=200)
+        resp.json.side_effect = ValueError("bad json")
+        client._http.post = AsyncMock(return_value=resp)
+
+        result = await client.call_service("light", "turn_on", entity_id="light.sala")
+
+        assert result["success"] is False
+        assert "non-JSON" in result["error"]
+
 
 class TestFetchStates:
     async def test_fetch_states_populates_cache(self):
