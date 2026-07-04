@@ -111,6 +111,7 @@ export default function HomeAssistantPage() {
             <iframe
               src={haUrl}
               title="Home Assistant"
+              name="ha-main-window"
               referrerPolicy="no-referrer"
               style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
             />
