@@ -204,3 +204,58 @@ async def ha_control(
     result = await _client.call_service(domain, service, entity_id=ids, **data)
     target_desc = ", ".join(ids)
     return f"✓ {action} aplicado a {target_desc}." if result["success"] else f"✗ {result['error']}"
+
+
+@tool(
+    name="ha_scenes",
+    description="List Home Assistant scenes available to activate.",
+    parameters={"type": "object", "properties": {}, "required": []},
+    risk_level="low",
+    category="iot",
+)
+async def ha_scenes(**kwargs) -> str:
+    if _client is None:
+        return _NOT_CONFIGURED_MSG
+
+    scenes = _client.list_states(domain="scene")
+    if not scenes:
+        return "No hay escenas configuradas en Home Assistant."
+
+    lines = ["Escenas disponibles:\n"]
+    for s in scenes:
+        name = s.get("attributes", {}).get("friendly_name", s["entity_id"])
+        lines.append(f"  {name}")
+    return "\n".join(lines)
+
+
+@tool(
+    name="ha_activate_scene",
+    description="Activate a Home Assistant scene by name, e.g. 'Modo Noche'.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Scene name or entity_id."},
+        },
+        "required": ["name"],
+    },
+    risk_level="low",
+    category="iot",
+)
+async def ha_activate_scene(name: str, **kwargs) -> str:
+    if _client is None:
+        return _NOT_CONFIGURED_MSG
+
+    state = _client.find_entity(name)
+    if state is None or not state["entity_id"].startswith("scene."):
+        scenes = [
+            s.get("attributes", {}).get("friendly_name", s["entity_id"])
+            for s in _client.list_states(domain="scene")
+        ]
+        suggestion = f" Escenas disponibles: {', '.join(scenes)}" if scenes else ""
+        return f"No encontré la escena '{name}'.{suggestion}"
+
+    result = await _client.call_service("scene", "turn_on", entity_id=state["entity_id"])
+    if result["success"]:
+        friendly = state.get("attributes", {}).get("friendly_name", state["entity_id"])
+        return f"✓ Escena '{friendly}' activada."
+    return f"✗ {result['error']}"

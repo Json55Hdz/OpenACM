@@ -220,3 +220,83 @@ class TestHaControlDomainActions:
             "climate", "set_temperature", entity_id=["climate.termostato"], temperature=22
         )
         assert "✓" in result
+
+
+SCENE_STATES = [
+    {"entity_id": "scene.modo_noche", "state": "scening", "attributes": {"friendly_name": "Modo Noche"}},
+    {"entity_id": "light.sala", "state": "on", "attributes": {"friendly_name": "Luz Sala"}},
+]
+
+
+def _make_scene_client(states, service_result=None):
+    client = MagicMock()
+
+    def _list(domain=""):
+        if domain:
+            return [s for s in states if s["entity_id"].startswith(f"{domain}.")]
+        return list(states)
+
+    def _find(name_or_id):
+        for s in states:
+            if s["entity_id"] == name_or_id:
+                return s
+            if s.get("attributes", {}).get("friendly_name", "").lower() == name_or_id.lower():
+                return s
+        return None
+
+    client.list_states.side_effect = _list
+    client.find_entity.side_effect = _find
+    client.call_service = AsyncMock(return_value=service_result or {"success": True, "result": []})
+    return client
+
+
+class TestHaScenes:
+    async def test_not_configured(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", None)
+        result = await ha_tools.ha_scenes()
+        assert "no está configurado" in result
+
+    async def test_lists_scenes_only(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", _make_scene_client(SCENE_STATES))
+        result = await ha_tools.ha_scenes()
+        assert "Modo Noche" in result
+
+    async def test_no_scenes_configured(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", _make_scene_client([SCENE_STATES[1]]))
+        result = await ha_tools.ha_scenes()
+        assert "No hay escenas" in result
+
+
+class TestHaActivateScene:
+    async def test_not_configured(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", None)
+        result = await ha_tools.ha_activate_scene("Modo Noche")
+        assert "no está configurado" in result
+
+    async def test_activates_by_friendly_name(self, monkeypatch):
+        client = _make_scene_client(SCENE_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_activate_scene("Modo Noche")
+
+        client.call_service.assert_awaited_once_with("scene", "turn_on", entity_id="scene.modo_noche")
+        assert "✓" in result and "Modo Noche" in result
+
+    async def test_unknown_scene_lists_alternatives(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", _make_scene_client(SCENE_STATES))
+        result = await ha_tools.ha_activate_scene("Nonexistent")
+        assert "No encontré" in result
+        assert "Modo Noche" in result
+
+    async def test_rejects_non_scene_entity(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", _make_scene_client(SCENE_STATES))
+        result = await ha_tools.ha_activate_scene("Luz Sala")
+        assert "No encontré la escena" in result
+
+    async def test_activation_failure_reports_error(self, monkeypatch):
+        client = _make_scene_client(SCENE_STATES, service_result={"success": False, "error": "timeout"})
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_activate_scene("Modo Noche")
+
+        assert "✗" in result and "timeout" in result
