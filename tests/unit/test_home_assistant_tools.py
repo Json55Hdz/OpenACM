@@ -175,6 +175,17 @@ class TestHaControlGenericActions:
         )
         assert "✓" in result
 
+    async def test_accepts_comma_separated_string_as_multiple_entities(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala, switch.tv", action="turn_off")
+
+        client.call_service.assert_awaited_once_with(
+            "homeassistant", "turn_off", entity_id=["light.sala", "switch.tv"]
+        )
+        assert "✓" in result
+
     async def test_turn_off_whole_area(self, monkeypatch):
         client = _make_control_client(CONTROL_STATES)
         monkeypatch.setattr(ha_tools, "_client", client)

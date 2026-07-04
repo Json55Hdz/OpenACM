@@ -169,7 +169,7 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
         "type": "object",
         "properties": {
             "entity_id": {
-                "description": "Entity ID or list of entity IDs, e.g. 'light.sala' or ['light.sala', 'light.cocina']. Omit if using 'area'.",
+                "description": "Entity ID, a list of entity IDs, or a comma-separated string of entity IDs, e.g. 'light.sala', ['light.sala', 'light.cocina'], or 'light.sala, light.cocina'. All entities are controlled in one call. Omit if using 'area'.",
             },
             "action": {
                 "type": "string",
@@ -225,7 +225,12 @@ async def ha_control(
 
     ids: list[str] = []
     if entity_id:
-        raw_ids = entity_id if isinstance(entity_id, list) else [entity_id]
+        if isinstance(entity_id, list):
+            raw_ids = entity_id
+        elif "," in entity_id:
+            raw_ids = [e.strip() for e in entity_id.split(",") if e.strip()]
+        else:
+            raw_ids = [entity_id]
         for raw in raw_ids:
             state = _client.find_entity(raw)
             if state is None:
