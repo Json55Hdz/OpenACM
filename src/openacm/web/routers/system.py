@@ -15,7 +15,7 @@ from fastapi import (
     FastAPI, WebSocket, WebSocketDisconnect,
     Request, UploadFile, File, Form, HTTPException,
 )
-from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -240,15 +240,96 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/plugins")
     async def list_plugins():
-        """Return metadata for all loaded plugins."""
+        """Return metadata for all loaded plugins, enabled or not."""
         try:
             from openacm.plugins import plugin_manager
             return [
-                {"name": p.name, "version": p.version, "description": p.description, "author": p.author}
+                {
+                    "name": p.name,
+                    "version": p.version,
+                    "description": p.description,
+                    "author": p.author,
+                    "enabled": plugin_manager.is_enabled(p.name),
+                    "has_config_schema": bool(p.get_config_schema()),
+                    "has_custom_ui": p.has_custom_ui(),
+                }
                 for p in plugin_manager.plugins
             ]
         except Exception:
             return []
+
+    def _get_plugin_or_404(name: str):
+        from openacm.plugins import plugin_manager
+        for p in plugin_manager.plugins:
+            if p.name == name:
+                return p
+        raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+    @app.post("/api/plugins/{name}/toggle")
+    async def toggle_plugin(name: str, request: Request):
+        """Enable or disable a plugin. Takes effect on next restart."""
+        from openacm.plugins import plugin_manager
+        _get_plugin_or_404(name)
+        data = await request.json()
+        enabled = bool(data.get("enabled", True))
+        await _state.database.set_plugin_enabled(name, enabled)
+        return {"name": name, "enabled": enabled}
+
+    @app.get("/api/plugins/{name}/config")
+    async def get_plugin_config(name: str):
+        """Return this plugin's config schema plus current values (passwords masked)."""
+        plugin = _get_plugin_or_404(name)
+        schema = plugin.get_config_schema()
+        saved = await _state.database.get_plugin_config(name)
+        values = {}
+        for field in schema:
+            key = field["key"]
+            if field.get("type") == "password":
+                values[key] = "***" if saved.get(key) else ""
+            else:
+                values[key] = saved.get(key, "")
+        return {"schema": schema, "values": values}
+
+    @app.post("/api/plugins/{name}/config")
+    async def save_plugin_config(name: str, request: Request):
+        """Save this plugin's config. A password field sent as '***' keeps its existing value."""
+        plugin = _get_plugin_or_404(name)
+        schema = plugin.get_config_schema()
+        incoming = await request.json()
+        existing = await _state.database.get_plugin_config(name)
+
+        merged = dict(existing)
+        for field in schema:
+            key = field["key"]
+            if key not in incoming:
+                continue
+            value = incoming[key]
+            if field.get("type") == "password" and value == "***":
+                continue  # unchanged marker — keep existing value
+            merged[key] = value
+
+        missing = [
+            f["label"] for f in schema
+            if f.get("required") and not merged.get(f["key"])
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required field(s): {', '.join(missing)}",
+            )
+
+        await _state.database.set_plugin_config(name, merged)
+        return {"status": "ok"}
+
+    @app.get("/api/plugins/docs")
+    async def get_plugin_docs():
+        """Return the plugin-authoring guide as raw markdown for the dashboard's docs viewer."""
+        from openacm.core.config import _find_project_root
+        root = _find_project_root()
+        doc_path = root / "docs" / "24-plugins.md"
+        if not doc_path.exists():
+            raise HTTPException(status_code=404, detail="Plugin docs not found")
+        return PlainTextResponse(doc_path.read_text(encoding="utf-8"))
 
     @app.get("/api/tools")
     async def get_tools():

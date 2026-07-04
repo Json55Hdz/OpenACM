@@ -159,17 +159,20 @@ async def client(app_config, brain, db, tool_registry, event_bus):
     """
     FastAPI TestClient with all server globals injected.
     Use httpx.AsyncClient for async endpoint tests.
+
+    create_web_server() is async and returns a uvicorn.Server (it's meant to be
+    .serve()'d by app.py at real startup) — the FastAPI app it built is stashed
+    on server.config.app, which is what we hand to the ASGI transport here.
     """
     from httpx import AsyncClient, ASGITransport
     import openacm.web.server as server_module
 
-    app = server_module.create_web_server(
+    server = await server_module.create_web_server(
         brain=brain,
         database=db,
         event_bus=event_bus,
         tool_registry=tool_registry,
         config=app_config,
-        command_processor=None,
         channels=[],
         agent_channel_manager=None,
         mcp_manager=None,
@@ -178,6 +181,7 @@ async def client(app_config, brain, db, tool_registry, event_bus):
         swarm_manager=None,
         content_watcher=None,
     )
+    app = server.config.app
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac
