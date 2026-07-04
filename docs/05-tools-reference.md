@@ -17,7 +17,7 @@ OpenACM ships with 42+ built-in tools across 10 categories. Tools are Python asy
 | `blender` | 6 | 3D modeling via Blender |
 | `meta` | 5 | Create tools, skills, agents |
 | `mcp` | dynamic | MCP server tools |
-| `iot` | 9 | Smart home device control |
+| `iot` | 7 | Smart home device control via Home Assistant |
 | `general` | 2 | Always-available (system info, file to chat) |
 
 ---
@@ -517,63 +517,67 @@ delete_skill(
 
 ## IoT / Smart Home Tools
 
-Control smart home devices via local LAN. Supports Tuya, Xiaomi Mi Home (miio), and LG WebOS.
+Control smart home devices through a [Home Assistant](https://www.home-assistant.io/) instance — configure the URL and a Long-Lived Access Token from `/plugins`. No per-vendor setup in OpenACM: Home Assistant's own integrations (Tuya, Xiaomi, LG WebOS, and hundreds more) already normalize every device behind one API.
 
-### `iot_scan`
-Discover devices on the local network.
+### `ha_devices`
+List entities, optionally filtered by domain.
 
 ```python
-iot_scan(
-    protocols: list = ["tuya", "miio", "webos"] # Protocols to scan
+ha_devices(
+    domain: str = ""     # e.g. "light", "switch", "climate", "cover", "media_player", "vacuum"
 )
 ```
 
-### `iot_devices`
-List registered devices.
+### `ha_status`
+Get the current state and attributes of one entity — by exact `entity_id` or friendly name.
 
 ```python
-iot_devices(
-    type: str = "all"    # "all", "light", "cover", "tv", "vacuum", "switch", "sensor"
+ha_status(
+    entity_id: str       # e.g. "light.sala" or "Luz Sala"
 )
 ```
 
-### `iot_control`
-Send a command to a device.
+### `ha_control`
+Control one or more entities, or a whole Home Assistant area, in one call.
 
 ```python
-iot_control(
-    device_id: str,      # Device identifier
-    command: str,        # Command: "on", "off", "toggle", "set"
-    value: any = None    # Command value (brightness 0-100, color "red", etc.)
+ha_control(
+    entity_id: str | list = None,  # single id, list of ids, or omit if using `area`
+    action: str,                    # turn_on, turn_off, toggle, set_brightness, set_color_temp,
+                                     # set_temperature, open, close, stop, set_volume
+    area: str = "",                  # area name — only with turn_on/turn_off/toggle
+    brightness: int = None,          # 0-100, for set_brightness
+    kelvin: int = None,              # 2000-6500, for set_color_temp
+    temperature: float = None,       # for set_temperature
+    volume: float = None,            # 0.0-1.0, for set_volume
 )
 ```
 
-### `iot_status`
-Query the current state of a device.
+### `ha_scenes`
+List scenes available to activate.
 
 ```python
-iot_status(
-    device_id: str       # Device identifier
-)
+ha_scenes()
 ```
 
-### `iot_rename`
-Give a device a friendly name.
+### `ha_activate_scene`
+Activate a scene by name.
 
 ```python
-iot_rename(
-    device_id: str,      # Current device ID
-    name: str            # New friendly name
+ha_activate_scene(
+    name: str             # e.g. "Modo Noche"
 )
 ```
 
 **Example:**
 ```
-"Turn off all the lights in the living room"
-→ iot_devices(type="light") → finds devices tagged "living_room"
-→ iot_control("light_001", "off")
-→ iot_control("light_002", "off")
-→ iot_control("light_003", "off")
+"Apaga todas las luces de la sala"
+→ ha_control(area="sala", action="turn_off")   # one call, whole area
+
+"Apaga las luces, cierra las cortinas, y activa modo noche"
+→ ha_control(entity_id=["light.sala", "light.cocina"], action="turn_off")
+→ ha_control(entity_id="cover.sala", action="close")
+→ ha_activate_scene("Modo Noche")
 ```
 
 ---
