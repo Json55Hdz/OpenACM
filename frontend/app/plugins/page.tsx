@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { usePlugins, useTogglePlugin, usePluginDocs, useRestartSystem } from '@/hooks/use-plugins';
 import { PluginConfigForm } from '@/components/plugins/plugin-config-form';
+import { useAuthStore } from '@/stores/auth-store';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Loader2, Puzzle, ExternalLink } from 'lucide-react';
@@ -11,6 +12,7 @@ export default function PluginsPage() {
   const { data: plugins, isLoading } = usePlugins();
   const togglePlugin = useTogglePlugin();
   const restartSystem = useRestartSystem();
+  const token = useAuthStore((s) => s.token);
   const [configOpen, setConfigOpen] = useState<string | null>(null);
   const [showDocs, setShowDocs] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
@@ -78,7 +80,11 @@ export default function PluginsPage() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 {p.has_custom_ui && (
-                  <a href={`/api/plugins/${p.name}/ui`} target="_blank" rel="noopener noreferrer">
+                  <a
+                    href={`/api/plugins/${p.name}/ui?token=${encodeURIComponent(token ?? '')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     <ExternalLink size={16} style={{ color: 'var(--acm-fg-4)' }} />
                   </a>
                 )}

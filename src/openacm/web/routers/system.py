@@ -240,23 +240,43 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/api/plugins")
     async def list_plugins():
-        """Return metadata for all loaded plugins, enabled or not."""
+        """Return metadata for all loaded plugins, enabled or not.
+
+        Each plugin's entry is built independently — a single plugin whose
+        get_config_schema()/has_custom_ui() hooks raise only drops that
+        plugin's entry, it does not blank the whole list.
+        """
         try:
             from openacm.plugins import plugin_manager
-            return [
-                {
+        except Exception:
+            return []
+
+        result = []
+        for p in plugin_manager.plugins:
+            try:
+                has_config_schema = bool(p.get_config_schema())
+            except Exception:
+                log.warning("plugin.get_config_schema failed", plugin=p.name, exc_info=True)
+                has_config_schema = False
+            try:
+                has_custom_ui = p.has_custom_ui()
+            except Exception:
+                log.warning("plugin.has_custom_ui failed", plugin=p.name, exc_info=True)
+                has_custom_ui = False
+            try:
+                result.append({
                     "name": p.name,
                     "version": p.version,
                     "description": p.description,
                     "author": p.author,
                     "enabled": plugin_manager.is_enabled(p.name),
-                    "has_config_schema": bool(p.get_config_schema()),
-                    "has_custom_ui": p.has_custom_ui(),
-                }
-                for p in plugin_manager.plugins
-            ]
-        except Exception:
-            return []
+                    "has_config_schema": has_config_schema,
+                    "has_custom_ui": has_custom_ui,
+                })
+            except Exception:
+                log.warning("plugin metadata failed", plugin=getattr(p, "name", "?"), exc_info=True)
+                continue
+        return result
 
     def _get_plugin_or_404(name: str):
         from openacm.plugins import plugin_manager
@@ -270,7 +290,10 @@ def register_routes(app: FastAPI) -> None:
         """Enable or disable a plugin. Takes effect on next restart."""
         from openacm.plugins import plugin_manager
         _get_plugin_or_404(name)
-        data = await request.json()
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
         enabled = bool(data.get("enabled", True))
         await _state.database.set_plugin_enabled(name, enabled)
         return {"name": name, "enabled": enabled}
@@ -295,7 +318,10 @@ def register_routes(app: FastAPI) -> None:
         """Save this plugin's config. A password field sent as '***' keeps its existing value."""
         plugin = _get_plugin_or_404(name)
         schema = plugin.get_config_schema()
-        incoming = await request.json()
+        try:
+            incoming = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
         existing = await _state.database.get_plugin_config(name)
 
         merged = dict(existing)

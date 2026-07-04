@@ -322,6 +322,8 @@ url = await self.get_setting("url", default=None)
 
 `get_setting()` reads straight from the `plugin_state` table via `self._database`. It works even without a `get_config_schema()` — any plugin can persist and read arbitrary settings this way.
 
+> **Note on `number`/`boolean` fields:** the dashboard form serializes every field value as a string when it POSTs (e.g. `"true"`/`"false"` for a `boolean` field, `"42"` for a `number` field), and `get_setting()` returns whatever was stored — a string. If your plugin needs an actual `int`/`bool`, cast it yourself: `int(await self.get_setting("port", default="0"))` or `(await self.get_setting("enabled", default="false")) == "true"`.
+
 ### `has_custom_ui()`
 
 Some plugins need a richer view than the generic config form allows, but without paying the cost of a `frontend/app/` page + rebuild (see [Frontend Pages](#frontend-pages)). Return `True` to tell the dashboard your plugin has one:

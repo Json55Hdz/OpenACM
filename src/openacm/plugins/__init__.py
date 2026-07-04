@@ -161,14 +161,14 @@ class Plugin:
         """
         return []
 
-    # ── Declare a custom UI (Phase 1 iframe escape hatch) ───────
+    # ── Declare a custom UI (Phase 1 new-tab escape hatch) ──────
 
     def has_custom_ui(self) -> bool:
         """
         If True, this plugin's get_api_router() is expected to serve a
         GET /ui route (self-contained HTML) that the dashboard opens in
-        an iframe — used for plugins needing a richer view than the
-        generic config form without ever touching the Next.js frontend.
+        a new browser tab — used for plugins needing a richer view than
+        the generic config form without ever touching the Next.js frontend.
         """
         return False
 
