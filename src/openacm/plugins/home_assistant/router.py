@@ -18,9 +18,15 @@ def _require_client():
 
 
 @router.get("/devices")
-async def list_devices(domain: str = ""):
+async def list_devices(domain: str = "", area: str = ""):
     client = _require_client()
-    return {"devices": client.list_states(domain=domain)}
+    return {"devices": client.list_states(domain=domain, area=area)}
+
+
+@router.get("/areas")
+async def list_areas():
+    client = _require_client()
+    return {"areas": client.list_areas()}
 
 
 @router.post("/devices/{entity_id}/control")

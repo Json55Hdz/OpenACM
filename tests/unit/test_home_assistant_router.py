@@ -16,9 +16,11 @@ def app_client():
 @pytest.fixture(autouse=True)
 def _mock_ha_client(monkeypatch):
     client = MagicMock()
-    client.list_states.side_effect = lambda domain="": (
-        [{"entity_id": "light.sala", "state": "on", "attributes": {}}] if domain in ("", "light") else []
+    client.list_states.side_effect = lambda domain="", area="": (
+        [{"entity_id": "light.sala", "state": "on", "attributes": {}, "area": "Sala"}]
+        if domain in ("", "light") else []
     )
+    client.list_areas.return_value = []
     client.call_service = AsyncMock(return_value={"success": True, "result": []})
     monkeypatch.setattr(ha_router, "_client", client)
     yield client
@@ -36,6 +38,21 @@ class TestListDevicesEndpoint:
         monkeypatch.setattr(ha_router, "_client", None)
         async with app_client as ac:
             resp = await ac.get("/api/home-assistant/devices")
+        assert resp.status_code == 503
+
+
+class TestListAreasEndpoint:
+    async def test_list_areas(self, app_client, _mock_ha_client):
+        _mock_ha_client.list_areas.return_value = [{"area_id": "sala", "name": "Sala"}]
+        async with app_client as ac:
+            resp = await ac.get("/api/home-assistant/areas")
+        assert resp.status_code == 200
+        assert resp.json()["areas"][0]["name"] == "Sala"
+
+    async def test_not_configured_503s(self, app_client, monkeypatch):
+        monkeypatch.setattr(ha_router, "_client", None)
+        async with app_client as ac:
+            resp = await ac.get("/api/home-assistant/areas")
         assert resp.status_code == 503
 
 

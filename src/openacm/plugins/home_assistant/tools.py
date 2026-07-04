@@ -19,7 +19,8 @@ _NOT_CONFIGURED_MSG = "Home Assistant no está configurado. Configúralo desde e
     description=(
         "List Home Assistant entities (lights, switches, climate, covers, "
         "media players, etc.), optionally filtered by domain "
-        "(e.g. 'light', 'switch', 'climate', 'cover', 'media_player', 'vacuum')."
+        "(e.g. 'light', 'switch', 'climate', 'cover', 'media_player', 'vacuum') "
+        "and/or by area/room name (use ha_areas() to see valid area names)."
     ),
     parameters={
         "type": "object",
@@ -29,25 +30,52 @@ _NOT_CONFIGURED_MSG = "Home Assistant no está configurado. Configúralo desde e
                 "description": "Filter by Home Assistant domain, e.g. 'light'. Empty = all.",
                 "default": "",
             },
+            "area": {
+                "type": "string",
+                "description": "Filter by area/room name, e.g. 'Sala'. Empty = all. See ha_areas().",
+                "default": "",
+            },
         },
         "required": [],
     },
     risk_level="low",
     category="iot",
 )
-async def ha_devices(domain: str = "", **kwargs) -> str:
+async def ha_devices(domain: str = "", area: str = "", **kwargs) -> str:
     if _client is None:
         return _NOT_CONFIGURED_MSG
 
-    states = _client.list_states(domain=domain)
+    states = _client.list_states(domain=domain, area=area)
     if not states:
         scope = f" del tipo '{domain}'" if domain else ""
+        scope += f" en el área '{area}'" if area else ""
         return f"No hay dispositivos{scope} registrados en Home Assistant."
 
     lines = [f"{len(states)} dispositivos:\n"]
     for s in states:
         name = s.get("attributes", {}).get("friendly_name", s["entity_id"])
         lines.append(f"  {s['entity_id']:30s}  {s['state']:12s}  {name}")
+    return "\n".join(lines)
+
+
+@tool(
+    name="ha_areas",
+    description="List Home Assistant areas/rooms (e.g. 'Sala', 'Cocina') for organizing/filtering devices by location.",
+    parameters={"type": "object", "properties": {}, "required": []},
+    risk_level="low",
+    category="iot",
+)
+async def ha_areas(**kwargs) -> str:
+    if _client is None:
+        return _NOT_CONFIGURED_MSG
+
+    areas = _client.list_areas()
+    if not areas:
+        return "No hay áreas configuradas en Home Assistant."
+
+    lines = ["Áreas disponibles:\n"]
+    for a in areas:
+        lines.append(f"  {a['name']}")
     return "\n".join(lines)
 
 
@@ -100,6 +128,10 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
     "light": {
         "set_brightness": ("turn_on", "brightness", "brightness_pct"),
         "set_color_temp": ("turn_on", "kelvin", "color_temp_kelvin"),
+        # set_color needs 3 values (red/green/blue) composed into rgb_color —
+        # handled as a special case in ha_control, this entry only makes it
+        # show up correctly in validation/availability messages.
+        "set_color": ("turn_on", None, None),
     },
     "climate": {
         "set_temperature": ("set_temperature", "temperature", "temperature"),
@@ -123,7 +155,8 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
         "set_brightness (light, param 'brightness' 0-100); "
         "set_color_temp (light, param 'kelvin' 2000-6500); "
         "set_temperature (climate, param 'temperature'); "
-        "open, close, stop (cover); set_volume (media_player, param 'volume' 0.0-1.0). "
+        "open, close, stop (cover); set_volume (media_player, param 'volume' 0.0-1.0); "
+        "set_color (light, params 'red'/'green'/'blue' 0-255 each). "
         "entity_id can be a single id, a list of ids, or use `area` to target every "
         "entity in a Home Assistant area at once (e.g. area='sala' turns off every "
         "device in the living room in one call) — area only works with turn_on/off/toggle. "
@@ -157,6 +190,9 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
             "kelvin": {"type": "integer", "description": "2000-6500, for set_color_temp"},
             "temperature": {"type": "number", "description": "Target temperature, for set_temperature"},
             "volume": {"type": "number", "description": "0.0-1.0, for set_volume"},
+            "red": {"type": "integer", "description": "0-255, for set_color"},
+            "green": {"type": "integer", "description": "0-255, for set_color"},
+            "blue": {"type": "integer", "description": "0-255, for set_color"},
         },
         "required": ["action"],
     },
@@ -171,6 +207,9 @@ async def ha_control(
     kelvin: int | None = None,
     temperature: float | None = None,
     volume: float | None = None,
+    red: int | None = None,
+    green: int | None = None,
+    blue: int | None = None,
     **kwargs,
 ) -> str:
     if _client is None:
@@ -214,6 +253,13 @@ async def ha_control(
     if action not in domain_actions:
         available = ", ".join(sorted(_GENERIC_ACTIONS | set(domain_actions)))
         return f"'{action}' no es válido para '{domain}'. Acciones disponibles: {available}."
+
+    if action == "set_color":
+        if red is None or green is None or blue is None:
+            return "La acción 'set_color' necesita los parámetros 'red', 'green' y 'blue' (0-255)."
+        result = await _client.call_service("light", "turn_on", entity_id=ids, rgb_color=[red, green, blue])
+        target_desc = ", ".join(ids)
+        return f"✓ {action} aplicado a {target_desc}." if result["success"] else f"✗ {result['error']}"
 
     service, caller_key, ha_key = domain_actions[action]
     data: dict[str, Any] = {}
@@ -280,4 +326,78 @@ async def ha_activate_scene(name: str, **kwargs) -> str:
     if result["success"]:
         friendly = state.get("attributes", {}).get("friendly_name", state["entity_id"])
         return f"✓ Escena '{friendly}' activada."
+    return f"✗ {result['error']}"
+
+
+@tool(
+    name="ha_list_services",
+    description=(
+        "List the Home Assistant services/functions available for a domain "
+        "(e.g. 'vacuum', 'fan', 'lock', 'alarm_control_panel') — use this to "
+        "discover what a device type can do before calling ha_call_service, "
+        "for anything not already covered by ha_control."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "domain": {"type": "string", "description": "HA domain, e.g. 'vacuum', 'fan', 'lock'."},
+        },
+        "required": ["domain"],
+    },
+    risk_level="low",
+    category="iot",
+)
+async def ha_list_services(domain: str, **kwargs) -> str:
+    if _client is None:
+        return _NOT_CONFIGURED_MSG
+
+    services = await _client.list_services(domain=domain)
+    if not services:
+        return f"No encontré servicios para el dominio '{domain}'."
+
+    lines = [f"Servicios de '{domain}':\n"]
+    for key, meta in services.items():
+        service_name = key.split(".", 1)[1]
+        fields = ", ".join(meta["fields"]) if meta["fields"] else "sin parámetros"
+        desc = meta.get("description") or meta.get("name") or ""
+        lines.append(f"  {service_name}: {desc} ({fields})")
+    return "\n".join(lines)
+
+
+@tool(
+    name="ha_call_service",
+    description=(
+        "Call ANY Home Assistant service directly by its exact name — use this "
+        "for device types not already covered by ha_control (vacuum, fan, lock, "
+        "alarm_control_panel, humidifier, etc.). Use ha_list_services(domain) "
+        "first if you're not sure which service/fields to use."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Entity ID or friendly name."},
+            "service": {"type": "string", "description": "Exact service name, e.g. 'start', 'return_to_base', 'lock'."},
+            "data": {
+                "type": "object",
+                "description": "Extra fields the service needs, as a flat object, e.g. {'command': 'clean_zone'}.",
+                "default": {},
+            },
+        },
+        "required": ["entity_id", "service"],
+    },
+    risk_level="medium",
+    category="iot",
+)
+async def ha_call_service(entity_id: str, service: str, data: dict | None = None, **kwargs) -> str:
+    if _client is None:
+        return _NOT_CONFIGURED_MSG
+
+    state = _client.find_entity(entity_id)
+    if state is None:
+        return f"No encontré '{entity_id}'. Usa ha_devices() para ver los dispositivos disponibles."
+
+    domain = state["entity_id"].split(".")[0]
+    result = await _client.call_service(domain, service, entity_id=state["entity_id"], **(data or {}))
+    if result["success"]:
+        return f"✓ {service} aplicado a {state['entity_id']}."
     return f"✗ {result['error']}"

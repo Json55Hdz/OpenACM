@@ -3,8 +3,9 @@
 import { useMemo } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useHADevices, useHAScenes, useHAControl, useHAActivateScene, type HAEntity } from '@/hooks/use-home-assistant';
+import { usePluginConfig } from '@/hooks/use-plugins';
 import { useHAStore } from '@/stores/ha-store';
-import { Loader2, Home, Power } from 'lucide-react';
+import { Loader2, Home, Power, ExternalLink } from 'lucide-react';
 
 const DOMAIN_LABELS: Record<string, string> = {
   light: 'Luces',
@@ -16,27 +17,39 @@ const DOMAIN_LABELS: Record<string, string> = {
 };
 
 const TOGGLEABLE_DOMAINS = new Set(['light', 'switch', 'climate', 'media_player']);
+const SIN_AREA = 'Sin área';
 
 export default function HomeAssistantPage() {
   const { data, isLoading, error } = useHADevices();
   const { data: scenesData } = useHAScenes();
+  const { data: pluginConfig } = usePluginConfig('home_assistant');
   const liveEntities = useHAStore((s) => s.entities);
   const control = useHAControl();
   const activateScene = useHAActivateScene();
 
+  const haUrl = pluginConfig?.values?.ha_url;
+
   const entities = useMemo<HAEntity[]>(() => {
     const base = data?.devices ?? [];
-    return base.map((e) => liveEntities[e.entity_id] ?? e);
+    return base.map((e) => ({ ...e, ...liveEntities[e.entity_id] }));
   }, [data, liveEntities]);
 
-  const byDomain = useMemo(() => {
+  const byArea = useMemo(() => {
     const groups: Record<string, HAEntity[]> = {};
     for (const e of entities) {
       const domain = e.entity_id.split('.')[0];
       if (!DOMAIN_LABELS[domain]) continue;
-      (groups[domain] ??= []).push(e);
+      const area = e.area || SIN_AREA;
+      (groups[area] ??= []).push(e);
     }
-    return groups;
+    // "Sin área" last, everything else alphabetical
+    return Object.fromEntries(
+      Object.entries(groups).sort(([a], [b]) => {
+        if (a === SIN_AREA) return 1;
+        if (b === SIN_AREA) return -1;
+        return a.localeCompare(b);
+      })
+    );
   }, [entities]);
 
   if (error) {
@@ -60,21 +73,40 @@ export default function HomeAssistantPage() {
   return (
     <AppLayout>
       <div style={{ padding: 32, maxWidth: 1100, margin: '0 auto' }}>
-        <h1 className="font-bold" style={{ fontSize: 24, color: 'var(--acm-fg)', marginBottom: 28 }}>
-          Home Assistant
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 12 }}>
+          <h1 className="font-bold" style={{ fontSize: 24, color: 'var(--acm-fg)' }}>
+            Home Assistant
+          </h1>
+          {haUrl && (
+            <a
+              href={haUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              referrerPolicy="no-referrer"
+              className="btn-secondary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <ExternalLink size={14} />
+              Abrir Home Assistant completo
+            </a>
+          )}
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--acm-fg-4)', marginTop: -18, marginBottom: 24 }}>
+          Vistazo rápido y control básico acá — para color, mapas de aspiradora y controles avanzados, usa el dashboard completo de Home Assistant.
+        </p>
 
         {isLoading ? (
           <Loader2 size={24} className="animate-spin" />
         ) : (
           <>
-            {Object.entries(byDomain).map(([domain, devs]) => (
-              <div key={domain} style={{ marginBottom: 28 }}>
+            {Object.entries(byArea).map(([area, devs]) => (
+              <div key={area} style={{ marginBottom: 28 }}>
                 <h2 className="label" style={{ marginBottom: 12, color: 'var(--acm-fg-3)' }}>
-                  {DOMAIN_LABELS[domain]}
+                  {area}
                 </h2>
                 <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
                   {devs.map((e) => {
+                    const domain = e.entity_id.split('.')[0];
                     const name = e.attributes?.friendly_name || e.entity_id;
                     const isOn = e.state === 'on';
                     return (
@@ -92,7 +124,9 @@ export default function HomeAssistantPage() {
                           >
                             {name}
                           </div>
-                          <div style={{ fontSize: 12, color: 'var(--acm-fg-4)' }}>{e.state}</div>
+                          <div style={{ fontSize: 12, color: 'var(--acm-fg-4)' }}>
+                            {DOMAIN_LABELS[domain]} · {e.state}
+                          </div>
                         </div>
                         {TOGGLEABLE_DOMAINS.has(domain) && (
                           <button

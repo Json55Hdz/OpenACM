@@ -31,6 +31,8 @@ class HomeAssistantClient:
             timeout=10.0,
         )
         self._states: dict[str, dict[str, Any]] = {}
+        self._areas: list[dict[str, str]] = []
+        self._entity_areas: dict[str, str] = {}
         self._ws_task: asyncio.Task | None = None
         self._stop = False
 
@@ -89,16 +91,62 @@ class HomeAssistantClient:
             self._states[s["entity_id"]] = s
         return states
 
+    async def list_services(self, domain: str = "") -> dict[str, dict[str, Any]]:
+        """Discover available services (optionally for one domain) straight
+        from Home Assistant's own service registry — lets callers work with
+        any domain (vacuum, fan, lock, ...) without us hardcoding it.
+        Never raises — returns {} on any failure. Keyed by "domain.service".
+        """
+        try:
+            resp = await self._http.get("/api/services")
+        except httpx.HTTPError as exc:
+            log.warning("HA list_services failed", error=str(exc))
+            return {}
+        if resp.status_code != 200:
+            log.warning("HA list_services non-200", status=resp.status_code)
+            return {}
+        try:
+            raw = resp.json()
+        except ValueError as exc:
+            log.warning("HA list_services non-JSON response", error=str(exc))
+            return {}
+
+        result: dict[str, dict[str, Any]] = {}
+        for entry in raw:
+            entry_domain = entry.get("domain", "")
+            if domain and entry_domain != domain:
+                continue
+            for service_name, meta in entry.get("services", {}).items():
+                result[f"{entry_domain}.{service_name}"] = {
+                    "name": meta.get("name", service_name),
+                    "description": meta.get("description", ""),
+                    "fields": list(meta.get("fields", {}).keys()),
+                }
+        return result
+
     # ── Cache reads ──────────────────────────────────────────────
 
     def get_state(self, entity_id: str) -> dict[str, Any] | None:
         return self._states.get(entity_id)
 
-    def list_states(self, domain: str = "") -> list[dict[str, Any]]:
+    def list_states(self, domain: str = "", area: str = "") -> list[dict[str, Any]]:
         states = list(self._states.values())
         if domain:
             states = [s for s in states if s["entity_id"].startswith(f"{domain}.")]
-        return states
+
+        result = []
+        for s in states:
+            entity_area = self._entity_areas.get(s["entity_id"])
+            if area and (entity_area or "").lower() != area.lower():
+                continue
+            result.append({**s, "area": entity_area})
+        return result
+
+    def list_areas(self) -> list[dict[str, str]]:
+        return list(self._areas)
+
+    def get_area(self, entity_id: str) -> str | None:
+        return self._entity_areas.get(entity_id)
 
     def find_entity(self, name_or_id: str) -> dict[str, Any] | None:
         """Exact entity_id match first, then case-insensitive friendly_name/partial-id match."""
@@ -131,6 +179,26 @@ class HomeAssistantClient:
         if inspect.isawaitable(result):
             await result
 
+    def _build_area_map(
+        self, areas: list[dict[str, Any]], devices: list[dict[str, Any]], entities: list[dict[str, Any]]
+    ) -> None:
+        """Build entity_id -> area name from HA's area/device/entity registries.
+        An entity's own area_id (if set) wins over its device's area_id."""
+        area_names = {a["area_id"]: a["name"] for a in areas if a.get("area_id")}
+        device_areas = {d["id"]: d.get("area_id") for d in devices if d.get("id")}
+
+        self._areas = [{"area_id": a["area_id"], "name": a["name"]} for a in areas if a.get("area_id")]
+
+        entity_areas: dict[str, str] = {}
+        for e in entities:
+            entity_id = e.get("entity_id")
+            if not entity_id:
+                continue
+            area_id = e.get("area_id") or device_areas.get(e.get("device_id"))
+            if area_id and area_id in area_names:
+                entity_areas[entity_id] = area_names[area_id]
+        self._entity_areas = entity_areas
+
     async def _ws_loop(self) -> None:
         import websockets
 
@@ -152,6 +220,20 @@ class HomeAssistantClient:
 
                     await self.fetch_states()
                     backoff = 5
+
+                    await ws.send(json.dumps({"id": 2, "type": "config/area_registry/list"}))
+                    area_result = json.loads(await ws.recv())
+                    areas = area_result.get("result", []) if area_result.get("success") else []
+
+                    await ws.send(json.dumps({"id": 3, "type": "config/device_registry/list"}))
+                    device_result = json.loads(await ws.recv())
+                    devices = device_result.get("result", []) if device_result.get("success") else []
+
+                    await ws.send(json.dumps({"id": 4, "type": "config/entity_registry/list"}))
+                    entity_result = json.loads(await ws.recv())
+                    entities = entity_result.get("result", []) if entity_result.get("success") else []
+
+                    self._build_area_map(areas, devices, entities)
 
                     await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
                     await ws.recv()  # subscription ack

@@ -18,12 +18,17 @@ Usa `ha_devices()` para ver los `entity_id` reales antes de adivinar uno.
 ## `ha_control` — nombres de acción EXACTOS
 
 - **Cualquier dispositivo:** `turn_on`, `turn_off`, `toggle` (también acepta `on`/`off` como sinónimos).
-- **Luces (`light.*`):** `set_brightness` (param `brightness` 0-100), `set_color_temp` (param `kelvin` 2000-6500).
+- **Luces (`light.*`):** `set_brightness` (param `brightness` 0-100), `set_color_temp` (param `kelvin` 2000-6500), `set_color` (params `red`/`green`/`blue` 0-255 cada uno).
 - **Clima (`climate.*`):** `set_temperature` (param `temperature`).
 - **Cortinas (`cover.*`):** `open`, `close`, `stop`.
 - **Reproductores (`media_player.*`):** `set_volume` (param `volume` 0.0-1.0).
 
 No existen acciones como `dim`, `set`, `activate` — usa exactamente los nombres de arriba.
+
+## Áreas/habitaciones y dispositivos no cubiertos por `ha_control`
+
+- `ha_areas()` lista las habitaciones configuradas; `ha_devices(area="Sala")` filtra por una de ellas.
+- Para dominios que `ha_control` no cubre (aspiradoras `vacuum.*`, cerraduras `lock.*`, ventiladores `fan.*`, alarmas, etc.), usa primero `ha_list_services(domain)` para ver qué funciones existen realmente, y luego `ha_call_service(entity_id, service, data={...})` para ejecutarla — no adivines nombres de servicio.
 
 ## Varias cosas a la vez, en una sola llamada
 

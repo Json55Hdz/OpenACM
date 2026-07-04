@@ -218,12 +218,24 @@ def _make_ws_client(event_bus=None):
     return client
 
 
+def _empty_registry_msgs():
+    """The 3 registry-list responses _ws_loop fetches after auth, before
+    subscribing to events — empty by default so tests that don't care about
+    areas don't need to think about them."""
+    return [
+        json.dumps({"id": 2, "type": "result", "success": True, "result": []}),  # area_registry
+        json.dumps({"id": 3, "type": "result", "success": True, "result": []}),  # device_registry
+        json.dumps({"id": 4, "type": "result", "success": True, "result": []}),  # entity_registry
+    ]
+
+
 class TestWebSocketLifecycle:
     async def test_connect_sends_auth_and_subscribes(self):
         client = _make_ws_client()
         fake_ws = _FakeWebSocket([
             json.dumps({"type": "auth_required"}),
             json.dumps({"type": "auth_ok"}),
+            *_empty_registry_msgs(),
             json.dumps({"id": 1, "type": "result", "success": True}),
         ])
         with patch("websockets.connect", return_value=fake_ws):
@@ -251,6 +263,7 @@ class TestWebSocketLifecycle:
         fake_ws = _FakeWebSocket([
             json.dumps({"type": "auth_required"}),
             json.dumps({"type": "auth_ok"}),
+            *_empty_registry_msgs(),
             json.dumps({"id": 1, "type": "result", "success": True}),
             json.dumps(state_event),
         ])
@@ -289,6 +302,7 @@ class TestWebSocketLifecycle:
         fake_ws = _FakeWebSocket([
             json.dumps({"type": "auth_required"}),
             json.dumps({"type": "auth_ok"}),
+            *_empty_registry_msgs(),
             json.dumps({"id": 1, "type": "result", "success": True}),
         ])
         with patch("websockets.connect", return_value=fake_ws):
@@ -312,6 +326,7 @@ class TestWebSocketLifecycle:
         fake_ws = _FakeWebSocket([
             json.dumps({"type": "auth_required"}),
             json.dumps({"type": "auth_ok"}),
+            *_empty_registry_msgs(),
             json.dumps({"id": 1, "type": "result", "success": True}),
             json.dumps(state_event),
         ])
@@ -321,3 +336,128 @@ class TestWebSocketLifecycle:
             await client.stop()
 
         assert client.get_state("switch.tv")["state"] == "off"
+
+    async def test_fetches_area_mapping_after_auth(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 2, "type": "result", "success": True, "result": [
+                {"area_id": "sala", "name": "Sala"},
+            ]}),
+            json.dumps({"id": 3, "type": "result", "success": True, "result": [
+                {"id": "device1", "area_id": "sala"},
+            ]}),
+            json.dumps({"id": 4, "type": "result", "success": True, "result": [
+                {"entity_id": "light.sala", "device_id": "device1", "area_id": None},
+            ]}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client.get_area("light.sala") == "Sala"
+        assert client.list_areas() == [{"area_id": "sala", "name": "Sala"}]
+
+    async def test_entity_with_its_own_area_id_overrides_device_area(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 2, "type": "result", "success": True, "result": [
+                {"area_id": "sala", "name": "Sala"},
+                {"area_id": "cocina", "name": "Cocina"},
+            ]}),
+            json.dumps({"id": 3, "type": "result", "success": True, "result": [
+                {"id": "device1", "area_id": "sala"},
+            ]}),
+            json.dumps({"id": 4, "type": "result", "success": True, "result": [
+                {"entity_id": "light.sala", "device_id": "device1", "area_id": "cocina"},
+            ]}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client.get_area("light.sala") == "Cocina"
+
+    async def test_registry_fetch_failure_leaves_areas_empty_without_raising(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 2, "type": "result", "success": False, "error": {"message": "nope"}}),
+            json.dumps({"id": 3, "type": "result", "success": True, "result": []}),
+            json.dumps({"id": 4, "type": "result", "success": True, "result": []}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client.list_areas() == []
+        assert client.get_area("light.sala") is None
+
+
+class TestListServices:
+    async def test_list_services_all_domains(self):
+        client = _make_client()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [
+            {
+                "domain": "vacuum",
+                "services": {
+                    "start": {"name": "Start", "description": "Start cleaning", "fields": {}},
+                    "return_to_base": {"name": "Return to base", "description": "Dock", "fields": {}},
+                },
+            },
+            {
+                "domain": "light",
+                "services": {
+                    "turn_on": {"name": "Turn on", "description": "", "fields": {"brightness": {}}},
+                },
+            },
+        ]
+        client._http.get = AsyncMock(return_value=resp)
+
+        services = await client.list_services()
+
+        assert "vacuum.start" in services
+        assert "vacuum.return_to_base" in services
+        assert "light.turn_on" in services
+        assert services["light.turn_on"]["fields"] == ["brightness"]
+
+    async def test_list_services_filters_by_domain(self):
+        client = _make_client()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = [
+            {"domain": "vacuum", "services": {"start": {"name": "Start", "description": "", "fields": {}}}},
+            {"domain": "light", "services": {"turn_on": {"name": "Turn on", "description": "", "fields": {}}}},
+        ]
+        client._http.get = AsyncMock(return_value=resp)
+
+        services = await client.list_services(domain="vacuum")
+
+        assert list(services.keys()) == ["vacuum.start"]
+
+    async def test_list_services_non_200_returns_empty(self):
+        client = _make_client()
+        resp = MagicMock(status_code=500)
+        client._http.get = AsyncMock(return_value=resp)
+
+        services = await client.list_services()
+
+        assert services == {}
+
+    async def test_list_services_connection_error_returns_empty(self):
+        client = _make_client()
+        client._http.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        services = await client.list_services()
+
+        assert services == {}

@@ -9,13 +9,16 @@ STATES = [
 ]
 
 
-def _make_client_with_states(states):
+def _make_client_with_states(states, areas=None):
     client = MagicMock()
 
-    def _list(domain=""):
+    def _list(domain="", area=""):
+        result = states
         if domain:
-            return [s for s in states if s["entity_id"].startswith(f"{domain}.")]
-        return list(states)
+            result = [s for s in result if s["entity_id"].startswith(f"{domain}.")]
+        if area:
+            result = [s for s in result if (s.get("area") or "").lower() == area.lower()]
+        return list(result)
 
     def _find(name_or_id):
         for s in states:
@@ -27,6 +30,7 @@ def _make_client_with_states(states):
 
     client.list_states.side_effect = _list
     client.find_entity.side_effect = _find
+    client.list_areas.return_value = areas or []
     return client
 
 
@@ -52,6 +56,35 @@ class TestHaDevices:
         monkeypatch.setattr(ha_tools, "_client", _make_client_with_states(STATES))
         result = await ha_tools.ha_devices(domain="climate")
         assert "No hay dispositivos" in result
+
+    async def test_filters_by_area(self, monkeypatch):
+        states_with_areas = [
+            {**STATES[0], "area": "Sala"},
+            {**STATES[1], "area": "Cocina"},
+        ]
+        monkeypatch.setattr(ha_tools, "_client", _make_client_with_states(states_with_areas))
+        result = await ha_tools.ha_devices(area="Sala")
+        assert "light.sala" in result
+        assert "switch.tv" not in result
+
+
+class TestHaAreas:
+    async def test_not_configured_returns_friendly_message(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", None)
+        result = await ha_tools.ha_areas()
+        assert "no está configurado" in result
+
+    async def test_lists_areas(self, monkeypatch):
+        client = _make_client_with_states(STATES, areas=[{"area_id": "sala", "name": "Sala"}])
+        monkeypatch.setattr(ha_tools, "_client", client)
+        result = await ha_tools.ha_areas()
+        assert "Sala" in result
+
+    async def test_no_areas_configured(self, monkeypatch):
+        client = _make_client_with_states(STATES, areas=[])
+        monkeypatch.setattr(ha_tools, "_client", client)
+        result = await ha_tools.ha_areas()
+        assert "No hay áreas" in result
 
 
 class TestHaStatus:
@@ -221,6 +254,38 @@ class TestHaControlDomainActions:
         )
         assert "✓" in result
 
+    async def test_set_color(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(
+            entity_id="light.sala", action="set_color", red=255, green=0, blue=0
+        )
+
+        client.call_service.assert_awaited_once_with(
+            "light", "turn_on", entity_id=["light.sala"], rgb_color=[255, 0, 0]
+        )
+        assert "✓" in result
+
+    async def test_set_color_missing_params(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala", action="set_color", red=255)
+
+        assert "necesita los parámetros 'red', 'green' y 'blue'" in result
+        client.call_service.assert_not_awaited()
+
+    async def test_set_color_not_valid_for_non_light(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(
+            entity_id="switch.tv", action="set_color", red=255, green=0, blue=0
+        )
+
+        assert "no es válido para 'switch'" in result
+
 
 class TestHaControlActionAliases:
     """LLMs sometimes guess a shorter/common synonym before reading the exact
@@ -342,3 +407,99 @@ class TestHaActivateScene:
         result = await ha_tools.ha_activate_scene("Modo Noche")
 
         assert "✗" in result and "timeout" in result
+
+
+VACUUM_STATES = [
+    {"entity_id": "vacuum.roborock", "state": "docked", "attributes": {"friendly_name": "Roborock"}},
+]
+
+
+def _make_service_client(states, services=None, service_result=None):
+    client = MagicMock()
+
+    def _find(name_or_id):
+        for s in states:
+            if s["entity_id"] == name_or_id:
+                return s
+            if s.get("attributes", {}).get("friendly_name", "").lower() == name_or_id.lower():
+                return s
+        return None
+
+    client.find_entity.side_effect = _find
+    client.list_services = AsyncMock(return_value=services or {})
+    client.call_service = AsyncMock(return_value=service_result or {"success": True, "result": []})
+    return client
+
+
+class TestHaListServices:
+    async def test_not_configured_returns_friendly_message(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", None)
+        result = await ha_tools.ha_list_services(domain="vacuum")
+        assert "no está configurado" in result
+
+    async def test_lists_services_for_domain(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES, services={
+            "vacuum.start": {"name": "Start", "description": "Start cleaning", "fields": []},
+            "vacuum.return_to_base": {"name": "Return to base", "description": "Dock", "fields": []},
+        })
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_list_services(domain="vacuum")
+
+        client.list_services.assert_awaited_once_with(domain="vacuum")
+        assert "start" in result
+        assert "return_to_base" in result
+
+    async def test_no_services_found(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES, services={})
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_list_services(domain="nonexistent_domain")
+
+        assert "No encontré servicios" in result
+
+
+class TestHaCallService:
+    async def test_not_configured_returns_friendly_message(self, monkeypatch):
+        monkeypatch.setattr(ha_tools, "_client", None)
+        result = await ha_tools.ha_call_service(entity_id="vacuum.roborock", service="start")
+        assert "no está configurado" in result
+
+    async def test_unknown_entity_returns_error(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_call_service(entity_id="vacuum.nonexistent", service="start")
+
+        assert "No encontré" in result
+        client.call_service.assert_not_awaited()
+
+    async def test_calls_service_with_resolved_domain(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_call_service(entity_id="vacuum.roborock", service="start")
+
+        client.call_service.assert_awaited_once_with("vacuum", "start", entity_id="vacuum.roborock")
+        assert "✓" in result
+
+    async def test_passes_extra_data_fields(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_call_service(
+            entity_id="vacuum.roborock", service="send_command", data={"command": "clean_zone"}
+        )
+
+        client.call_service.assert_awaited_once_with(
+            "vacuum", "send_command", entity_id="vacuum.roborock", command="clean_zone"
+        )
+        assert "✓" in result
+
+    async def test_service_failure_reports_error(self, monkeypatch):
+        client = _make_service_client(VACUUM_STATES, service_result={"success": False, "error": "offline"})
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_call_service(entity_id="vacuum.roborock", service="start")
+
+        assert "✗" in result and "offline" in result

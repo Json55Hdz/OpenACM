@@ -8,6 +8,12 @@ export interface HAEntity {
   entity_id: string;
   state: string;
   attributes: Record<string, any>;
+  area?: string | null;
+}
+
+export interface HAArea {
+  area_id: string;
+  name: string;
 }
 
 export function useHADevices() {
@@ -17,6 +23,18 @@ export function useHADevices() {
   return useQuery<{ devices: HAEntity[] }>({
     queryKey: ['ha-devices'],
     queryFn: () => fetchAPI('/api/home-assistant/devices'),
+    enabled: isAuthenticated,
+    staleTime: 30_000,
+  });
+}
+
+export function useHAAreas() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<{ areas: HAArea[] }>({
+    queryKey: ['ha-areas'],
+    queryFn: () => fetchAPI('/api/home-assistant/areas'),
     enabled: isAuthenticated,
     staleTime: 30_000,
   });
