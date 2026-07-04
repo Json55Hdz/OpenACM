@@ -28,6 +28,15 @@ class TestConfigAndMetadata:
         assert "iot" in kws
         assert "domótica" in kws["iot"]
 
+    def test_get_skills_teaches_exact_action_names(self):
+        plugin = _make_plugin()
+        [skill] = plugin.get_skills()
+        assert skill["name"] == "home-assistant-control"
+        assert skill["category"] == "iot"
+        assert "turn_on" in skill["content"]
+        assert "set_brightness" in skill["content"]
+        assert "area" in skill["content"]
+
     def test_get_tool_modules_returns_tools_module(self):
         plugin = _make_plugin()
         from openacm.plugins.home_assistant import tools as expected_module

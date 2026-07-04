@@ -222,6 +222,48 @@ class TestHaControlDomainActions:
         assert "✓" in result
 
 
+class TestHaControlActionAliases:
+    """LLMs sometimes guess a shorter/common synonym before reading the exact
+    accepted action names — normalize the obvious ones so the first call
+    succeeds instead of retrying after an error."""
+
+    async def test_on_is_an_alias_for_turn_on(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala", action="on")
+
+        client.call_service.assert_awaited_once_with("homeassistant", "turn_on", entity_id=["light.sala"])
+        assert "✓" in result
+
+    async def test_off_is_an_alias_for_turn_off(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala", action="off")
+
+        client.call_service.assert_awaited_once_with("homeassistant", "turn_off", entity_id=["light.sala"])
+        assert "✓" in result
+
+    async def test_action_is_case_and_whitespace_insensitive(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(entity_id="light.sala", action="  On ")
+
+        client.call_service.assert_awaited_once_with("homeassistant", "turn_on", entity_id=["light.sala"])
+        assert "✓" in result
+
+    async def test_alias_also_works_with_area(self, monkeypatch):
+        client = _make_control_client(CONTROL_STATES)
+        monkeypatch.setattr(ha_tools, "_client", client)
+
+        result = await ha_tools.ha_control(area="sala", action="off")
+
+        client.call_service.assert_awaited_once_with("homeassistant", "turn_off", area_id="sala")
+        assert "✓" in result
+
+
 SCENE_STATES = [
     {"entity_id": "scene.modo_noche", "state": "scening", "attributes": {"friendly_name": "Modo Noche"}},
     {"entity_id": "light.sala", "state": "on", "attributes": {"friendly_name": "Luz Sala"}},

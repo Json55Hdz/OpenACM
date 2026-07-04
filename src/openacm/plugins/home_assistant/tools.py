@@ -84,6 +84,15 @@ async def ha_status(entity_id: str, **kwargs) -> str:
 
 _GENERIC_ACTIONS = {"turn_on", "turn_off", "toggle"}
 
+# Common shorthand an LLM reaches for before it's seen the exact accepted
+# action names — normalize these instead of erroring and waiting for a retry.
+_ACTION_ALIASES = {
+    "on": "turn_on",
+    "off": "turn_off",
+    "switch_on": "turn_on",
+    "switch_off": "turn_off",
+}
+
 # domain -> { verb: (ha_service, caller_param_name | None, ha_field_name | None) }
 # Actions not in _GENERIC_ACTIONS need a single, consistent domain across all
 # targeted entities so we know which service to call.
@@ -169,6 +178,9 @@ async def ha_control(
 
     if not entity_id and not area:
         return "Debes indicar 'entity_id' o 'area'."
+
+    normalized_action = action.strip().lower()
+    action = _ACTION_ALIASES.get(normalized_action, normalized_action)
 
     caller_params = {"brightness": brightness, "kelvin": kelvin, "temperature": temperature, "volume": volume}
 

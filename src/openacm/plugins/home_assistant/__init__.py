@@ -10,6 +10,39 @@ from openacm.plugins import Plugin
 log = structlog.get_logger()
 
 
+_HOME_ASSISTANT_SKILL = """\
+# Controlar Home Assistant
+
+Usa `ha_devices()` para ver los `entity_id` reales antes de adivinar uno.
+
+## `ha_control` — nombres de acción EXACTOS
+
+- **Cualquier dispositivo:** `turn_on`, `turn_off`, `toggle` (también acepta `on`/`off` como sinónimos).
+- **Luces (`light.*`):** `set_brightness` (param `brightness` 0-100), `set_color_temp` (param `kelvin` 2000-6500).
+- **Clima (`climate.*`):** `set_temperature` (param `temperature`).
+- **Cortinas (`cover.*`):** `open`, `close`, `stop`.
+- **Reproductores (`media_player.*`):** `set_volume` (param `volume` 0.0-1.0).
+
+No existen acciones como `dim`, `set`, `activate` — usa exactamente los nombres de arriba.
+
+## Varias cosas a la vez, en una sola llamada
+
+- Una lista de `entity_id` (aunque sean de tipos distintos) funciona con `turn_on`/`turn_off`/`toggle`:
+  `ha_control(entity_id=["light.sala", "switch.tv"], action="turn_off")`
+- Un área completa funciona igual, solo con esas tres acciones genéricas:
+  `ha_control(area="sala", action="turn_off")`
+- Acciones específicas de dominio (`set_brightness`, etc.) necesitan `entity_id` del mismo tipo — `area` no aplica ahí.
+
+## El parámetro `area` es sensible
+
+`area` debe coincidir EXACTO con el ID/slug del área en Home Assistant (Configuración → Áreas), no con cómo lo diría una persona. Si no estás seguro del slug exacto, mejor controla los `entity_id` directamente en vez de adivinar un `area`.
+
+## Escenas
+
+`ha_scenes()` para listar, `ha_activate_scene(name)` para activar por nombre — no uses `ha_control` para escenas.
+"""
+
+
 class HomeAssistantPlugin(Plugin):
     name = "home_assistant"
     version = "1.0.0"
@@ -52,6 +85,16 @@ class HomeAssistantPlugin(Plugin):
     def get_nav_items(self) -> list[dict]:
         return [
             {"path": "/home-assistant", "label": "Home Assistant", "icon": "Home", "section": "main"}
+        ]
+
+    def get_skills(self) -> list[dict]:
+        return [
+            {
+                "name": "home-assistant-control",
+                "description": "How to control Home Assistant devices correctly on the first try (exact action names, area targeting, multi-entity calls).",
+                "category": "iot",
+                "content": _HOME_ASSISTANT_SKILL,
+            }
         ]
 
     def get_intent_keywords(self) -> dict[str, list[str]]:
