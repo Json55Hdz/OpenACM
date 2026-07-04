@@ -55,6 +55,7 @@ const coreNavItems = [
   { href: '/mcp', label: t.mcp, icon: Plug },
   { href: '/debug', label: t.debug, icon: Bug },
   { href: '/config', label: t.config, icon: Settings },
+  { href: '/plugins', label: t.plugins, icon: Puzzle },
 ];
 
 interface PluginNavItem {
@@ -219,8 +220,8 @@ export function Sidebar() {
   const isAllowed = (href: string) =>
     !clientProfile.active || clientProfile.allowed_pages.includes(href);
 
-  const workspaceItems = coreNavItems.filter(i => !['/debug', '/config'].includes(i.href) && isAllowed(i.href));
-  const systemItems = coreNavItems.filter(i => ['/debug', '/config'].includes(i.href) && isAllowed(i.href));
+  const workspaceItems = coreNavItems.filter(i => !['/debug', '/config', '/plugins'].includes(i.href) && isAllowed(i.href));
+  const systemItems = coreNavItems.filter(i => ['/debug', '/config', '/plugins'].includes(i.href) && isAllowed(i.href));
   const mainPluginItems = pluginItems.filter((p) => (!p.section || p.section === 'main') && isAllowed(p.path));
   const bottomPluginItems = pluginItems.filter((p) => p.section === 'bottom' && isAllowed(p.path));
 
