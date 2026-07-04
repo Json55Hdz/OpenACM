@@ -86,3 +86,20 @@ class TestOnStop:
     async def test_on_stop_is_a_noop_when_never_started(self):
         plugin = _make_plugin()
         await plugin.on_stop()  # must not raise
+
+    async def test_on_stop_resets_module_level_client_globals(self):
+        plugin = _make_plugin()
+        fake_client = MagicMock()
+        fake_client.stop = AsyncMock()
+        plugin._client = fake_client
+
+        from openacm.plugins.home_assistant import tools as _tools_mod
+        from openacm.plugins.home_assistant import router as _router_mod
+        _tools_mod._client = fake_client
+        _router_mod._client = fake_client
+
+        await plugin.on_stop()
+
+        assert plugin._client is None
+        assert _tools_mod._client is None
+        assert _router_mod._client is None

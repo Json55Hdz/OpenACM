@@ -55,7 +55,7 @@ These three extension mechanisms serve distinct purposes:
 ### Tools
 Executable Python functions that **do things**. They have inputs, run code, and return output. Tools are how OpenACM interacts with the world.
 
-- Examples: `run_command`, `web_search`, `gmail_send`, `iot_control`
+- Examples: `run_command`, `web_search`, `gmail_send`, `ha_control`
 - Created with: `create_tool` tool or by adding `.py` files to `src/openacm/tools/`
 - Invoked by: the LLM when it decides they're needed
 - Registered in: `ToolRegistry`

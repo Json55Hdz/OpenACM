@@ -117,7 +117,11 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
         "open, close, stop (cover); set_volume (media_player, param 'volume' 0.0-1.0). "
         "entity_id can be a single id, a list of ids, or use `area` to target every "
         "entity in a Home Assistant area at once (e.g. area='sala' turns off every "
-        "device in the living room in one call) — area only works with turn_on/off/toggle."
+        "device in the living room in one call) — area only works with turn_on/off/toggle. "
+        "IMPORTANT: `area` must match the exact Home Assistant area ID/slug (see Settings → "
+        "Areas in Home Assistant), not just its display name or how you'd say it out loud — "
+        "a name that doesn't match an area silently matches zero entities and this tool will "
+        "still report success even though nothing happened."
     ),
     parameters={
         "type": "object",
@@ -131,7 +135,13 @@ _DOMAIN_ACTIONS: dict[str, dict[str, tuple[str, str | None, str | None]]] = {
             },
             "area": {
                 "type": "string",
-                "description": "Home Assistant area name to target every entity in it (only with turn_on/turn_off/toggle). Use instead of entity_id.",
+                "description": (
+                    "Home Assistant area ID/slug to target every entity in it (only with "
+                    "turn_on/turn_off/toggle). Use instead of entity_id. Must match the exact "
+                    "area ID/slug as shown in Home Assistant's Settings → Areas — not just the "
+                    "area's human-readable display name — otherwise the call silently matches "
+                    "zero entities while still reporting success."
+                ),
                 "default": "",
             },
             "brightness": {"type": "integer", "description": "0-100, for set_brightness"},

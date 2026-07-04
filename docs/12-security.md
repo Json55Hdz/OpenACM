@@ -74,8 +74,8 @@ Every tool is annotated with a risk level:
 
 | Level | Examples | Confirmation Required |
 |-------|----------|----------------------|
-| `low` | `web_search`, `read_file`, `system_info`, `search_memory` | Never |
-| `medium` | `write_file`, `take_screenshot`, `gmail_send`, `iot_control` | In confirmation mode |
+| `low` | `web_search`, `read_file`, `system_info`, `search_memory`, `ha_control` | Never |
+| `medium` | `write_file`, `take_screenshot`, `gmail_send` | In confirmation mode |
 | `high` | `run_command`, `run_python`, `browser_agent`, `create_tool` | In confirmation mode |
 
 ---

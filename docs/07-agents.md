@@ -92,7 +92,7 @@ Prompt: "Research topics thoroughly. Store key findings in memory. Synthesize, d
 ### IoT Controller
 ```
 Agent: "HomeBot"
-Tools: iot_devices, iot_control, iot_status
+Tools: ha_devices, ha_control, ha_status
 Prompt: "Control smart home devices. Always confirm before turning off devices that might be in use."
 ```
 

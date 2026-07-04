@@ -104,5 +104,12 @@ class HomeAssistantPlugin(Plugin):
         if self._client:
             await self._client.stop()
 
+        from openacm.plugins.home_assistant import tools as _tools_mod
+        from openacm.plugins.home_assistant import router as _router_mod
+
+        _tools_mod._client = None
+        _router_mod._client = None
+        self._client = None
+
 
 PLUGIN = HomeAssistantPlugin()
