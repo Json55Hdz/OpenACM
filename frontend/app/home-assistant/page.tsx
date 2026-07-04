@@ -1,11 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useHADevices, useHAScenes, useHAControl, useHAActivateScene, type HAEntity } from '@/hooks/use-home-assistant';
 import { usePluginConfig } from '@/hooks/use-plugins';
 import { useHAStore } from '@/stores/ha-store';
-import { Loader2, Home, Power, ExternalLink } from 'lucide-react';
+import { Loader2, Home, Power, ExternalLink, LayoutPanelTop } from 'lucide-react';
 
 const DOMAIN_LABELS: Record<string, string> = {
   light: 'Luces',
@@ -26,6 +26,7 @@ export default function HomeAssistantPage() {
   const liveEntities = useHAStore((s) => s.entities);
   const control = useHAControl();
   const activateScene = useHAActivateScene();
+  const [showEmbed, setShowEmbed] = useState(false);
 
   const haUrl = pluginConfig?.values?.ha_url;
 
@@ -78,22 +79,43 @@ export default function HomeAssistantPage() {
             Home Assistant
           </h1>
           {haUrl && (
-            <a
-              href={haUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              referrerPolicy="no-referrer"
-              className="btn-secondary"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <ExternalLink size={14} />
-              Abrir Home Assistant completo
-            </a>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="btn-secondary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                onClick={() => setShowEmbed((v) => !v)}
+              >
+                <LayoutPanelTop size={14} />
+                {showEmbed ? 'Ocultar Home Assistant completo' : 'Mostrar Home Assistant completo'}
+              </button>
+              <a
+                href={haUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                referrerPolicy="no-referrer"
+                className="btn-secondary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <ExternalLink size={14} />
+                Abrir en pestaña nueva
+              </a>
+            </div>
           )}
         </div>
         <p style={{ fontSize: 13, color: 'var(--acm-fg-4)', marginTop: -18, marginBottom: 24 }}>
           Vistazo rápido y control básico acá — para color, mapas de aspiradora y controles avanzados, usa el dashboard completo de Home Assistant.
         </p>
+
+        {showEmbed && haUrl && (
+          <div className="acm-card" style={{ padding: 0, overflow: 'hidden', marginBottom: 28, height: '75vh' }}>
+            <iframe
+              src={haUrl}
+              title="Home Assistant"
+              referrerPolicy="no-referrer"
+              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            />
+          </div>
+        )}
 
         {isLoading ? (
           <Loader2 size={24} className="animate-spin" />
