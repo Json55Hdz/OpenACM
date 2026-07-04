@@ -76,3 +76,13 @@ class TestPluginManagerEnabledState:
         pm = PluginManager()
         pm.register(_NavPlugin())
         assert pm.is_enabled("nav_plugin") is True
+
+    async def test_nav_items_are_tagged_with_owning_plugin_name(self):
+        pm = PluginManager()
+        pm.register(_NavPlugin())
+        mock_db = AsyncMock()
+        mock_db.is_plugin_enabled.return_value = True
+        await pm.load_enabled_state(mock_db)
+        [item] = pm.get_nav_items()
+        assert item["plugin"] == "nav_plugin"
+        assert item["path"] == "/nav-plugin"

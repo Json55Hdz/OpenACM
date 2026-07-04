@@ -341,11 +341,16 @@ class PluginManager:
         ]
 
     def get_nav_items(self) -> list[dict]:
-        """Collect frontend nav items from all ENABLED plugins (for /api/plugins/nav)."""
+        """Collect frontend nav items from all ENABLED plugins (for /api/plugins/nav).
+
+        Each item is tagged with the owning plugin's `name`, so the
+        dashboard's /plugins page can link a plugin card straight to its
+        own page when one exists.
+        """
         items = []
         for p in self._plugins:
             if self.is_enabled(p.name):
-                items.extend(p.get_nav_items())
+                items.extend({**item, "plugin": p.name} for item in p.get_nav_items())
         return items
 
     def get_api_routers(self) -> list[Any]:

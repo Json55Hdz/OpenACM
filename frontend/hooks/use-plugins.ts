@@ -14,6 +14,14 @@ export interface PluginInfo {
   has_custom_ui: boolean;
 }
 
+export interface PluginNavItem {
+  path: string;
+  label: string;
+  icon: string;
+  section?: string;
+  plugin: string;
+}
+
 export interface PluginConfigField {
   key: string;
   label: string;
@@ -50,8 +58,14 @@ export function useTogglePlugin() {
         method: 'POST',
         body: JSON.stringify({ enabled }),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['plugins'] });
+    // Patch the cached list directly instead of invalidating: toggling only
+    // writes plugin_state in the DB, the running process's in-memory enabled
+    // state doesn't change until restart, so a refetch of GET /api/plugins
+    // would report the OLD value and silently revert the checkbox.
+    onSuccess: (_data, { name, enabled }) => {
+      queryClient.setQueryData<PluginInfo[]>(['plugins'], (old) =>
+        old?.map((p) => (p.name === name ? { ...p, enabled } : p))
+      );
     },
     onError: () => toast.error('Failed to toggle plugin'),
   });
@@ -94,6 +108,18 @@ export function useSavePluginConfig(name: string) {
       toast.success('Configuración guardada');
     },
     onError: (err: Error) => toast.error(err.message || 'Failed to save config'),
+  });
+}
+
+export function usePluginNav() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<PluginNavItem[]>({
+    queryKey: ['plugin-nav'],
+    queryFn: () => fetchAPI('/api/plugins/nav'),
+    enabled: isAuthenticated,
+    staleTime: 60_000,
   });
 }
 
