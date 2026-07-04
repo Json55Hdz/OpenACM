@@ -1,5 +1,7 @@
 """Unit tests for HomeAssistantClient — REST layer."""
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
@@ -173,3 +175,149 @@ class TestCacheReads:
     async def test_find_entity_no_match_returns_none(self):
         client = _make_client()
         assert client.find_entity("nonexistent") is None
+
+
+class _FakeWebSocket:
+    """Minimal async context manager + async iterator standing in for a
+    websockets connection. Blocks forever on __anext__ once the queue is
+    empty, so the listener loop doesn't reconnect mid-test — the test ends
+    the loop itself via client.stop()."""
+
+    def __init__(self, recv_queue):
+        self._recv_queue = list(recv_queue)
+        self.sent: list[str] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def recv(self):
+        return self._recv_queue.pop(0)
+
+    async def send(self, data):
+        self.sent.append(data)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._recv_queue:
+            await asyncio.sleep(3600)
+        return self._recv_queue.pop(0)
+
+
+def _make_ws_client(event_bus=None):
+    from openacm.plugins.home_assistant.client import HomeAssistantClient
+    client = HomeAssistantClient(base_url="http://ha.local:8123", token="tok123", event_bus=event_bus)
+    client._http = MagicMock()
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = []
+    client._http.get = AsyncMock(return_value=resp)
+    return client
+
+
+class TestWebSocketLifecycle:
+    async def test_connect_sends_auth_and_subscribes(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        sent_types = [json.loads(s)["type"] for s in fake_ws.sent]
+        assert "auth" in sent_types
+        assert "subscribe_events" in sent_types
+
+    async def test_state_changed_event_updates_cache_and_emits(self):
+        event_bus = MagicMock()
+        event_bus.emit = AsyncMock()
+        client = _make_ws_client(event_bus=event_bus)
+        state_event = {
+            "type": "event",
+            "event": {
+                "data": {
+                    "entity_id": "light.sala",
+                    "new_state": {"entity_id": "light.sala", "state": "on", "attributes": {}},
+                }
+            },
+        }
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+            json.dumps(state_event),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client.get_state("light.sala")["state"] == "on"
+        event_bus.emit.assert_awaited_with(
+            "ha:state_changed",
+            {"entity_id": "light.sala", "state": {"entity_id": "light.sala", "state": "on", "attributes": {}}},
+        )
+
+    async def test_auth_failure_does_not_retry(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_invalid"}),
+        ])
+        connect_calls = []
+
+        def _connect(url):
+            connect_calls.append(url)
+            return fake_ws
+
+        with patch("websockets.connect", side_effect=_connect):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert len(connect_calls) == 1
+
+    async def test_stop_cancels_the_listener_task_cleanly(self):
+        client = _make_ws_client()
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client._ws_task.cancelled() or client._ws_task.done()
+
+    async def test_no_event_bus_does_not_raise_on_state_change(self):
+        client = _make_ws_client(event_bus=None)
+        state_event = {
+            "type": "event",
+            "event": {
+                "data": {
+                    "entity_id": "switch.tv",
+                    "new_state": {"entity_id": "switch.tv", "state": "off", "attributes": {}},
+                }
+            },
+        }
+        fake_ws = _FakeWebSocket([
+            json.dumps({"type": "auth_required"}),
+            json.dumps({"type": "auth_ok"}),
+            json.dumps({"id": 1, "type": "result", "success": True}),
+            json.dumps(state_event),
+        ])
+        with patch("websockets.connect", return_value=fake_ws):
+            client.start()
+            await asyncio.sleep(0.05)
+            await client.stop()
+
+        assert client.get_state("switch.tv")["state"] == "off"

@@ -7,6 +7,7 @@ client exposes as-is.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import Any
 
@@ -109,3 +110,70 @@ class HomeAssistantClient:
             if q == friendly.lower() or q in state["entity_id"].lower():
                 return state
         return None
+
+    # ── WebSocket (real-time) ────────────────────────────────────
+
+    def start(self) -> None:
+        """Start the background WebSocket listener (fetches initial state
+        itself once connected)."""
+        self._stop = False
+        self._ws_task = asyncio.create_task(self._ws_loop())
+
+    async def stop(self) -> None:
+        self._stop = True
+        if self._ws_task and not self._ws_task.done():
+            self._ws_task.cancel()
+            try:
+                await self._ws_task
+            except asyncio.CancelledError:
+                pass
+        result = self._http.aclose()
+        if inspect.isawaitable(result):
+            await result
+
+    async def _ws_loop(self) -> None:
+        import websockets
+
+        ws_url = (
+            self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+            + "/api/websocket"
+        )
+        backoff = 5
+
+        while not self._stop:
+            try:
+                async with websockets.connect(ws_url) as ws:
+                    await ws.recv()  # auth_required
+                    await ws.send(json.dumps({"type": "auth", "access_token": self.token}))
+                    auth_result = json.loads(await ws.recv())
+                    if auth_result.get("type") != "auth_ok":
+                        log.warning("HA WebSocket auth failed — not retrying", result=auth_result)
+                        return
+
+                    await self.fetch_states()
+                    backoff = 5
+
+                    await ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
+                    await ws.recv()  # subscription ack
+
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        if msg.get("type") != "event":
+                            continue
+                        event_data = msg.get("event", {}).get("data", {})
+                        new_state = event_data.get("new_state")
+                        entity_id = event_data.get("entity_id")
+                        if not entity_id or new_state is None:
+                            continue
+                        self._states[entity_id] = new_state
+                        if self.event_bus:
+                            await self.event_bus.emit("ha:state_changed", {
+                                "entity_id": entity_id,
+                                "state": new_state,
+                            })
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("HA WebSocket error, reconnecting", error=str(exc), wait=backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
