@@ -284,6 +284,74 @@ The frontend page itself (`frontend/app/my-page/page.tsx`) still needs to be cre
 
 ---
 
+## Dashboard Settings & Custom UI
+
+The `/plugins` dashboard page can render a generic settings form and/or link out to a plugin's own page — no Next.js code required for either.
+
+### `get_config_schema()`
+
+Return a list of field definitions and the dashboard's "Configurar" button + form does the rest:
+
+```python
+def get_config_schema(self) -> list[dict]:
+    return [
+        {
+            "key":      "url",
+            "label":    "Home Assistant URL",
+            "type":     "text",        # "text" | "password" | "number" | "boolean"
+            "required": True,
+            "help":     "e.g. http://homeassistant.local:8123",
+        },
+        {
+            "key":      "token",
+            "label":    "Long-Lived Access Token",
+            "type":     "password",
+            "required": True,
+            "help":     "",
+        },
+    ]
+```
+
+- `GET /api/plugins/{name}/config` returns this schema plus the plugin's currently saved values (password-type values come back masked as `"***"`).
+- `POST /api/plugins/{name}/config` validates required fields and saves the rest — resubmitting `"***"` for a password field keeps its existing value instead of overwriting it.
+- Inside your plugin, read a saved value back with:
+
+```python
+url = await self.get_setting("url", default=None)
+```
+
+`get_setting()` reads straight from the `plugin_state` table via `self._database`. It works even without a `get_config_schema()` — any plugin can persist and read arbitrary settings this way.
+
+### `has_custom_ui()`
+
+Some plugins need a richer view than the generic config form allows, but without paying the cost of a `frontend/app/` page + rebuild (see [Frontend Pages](#frontend-pages)). Return `True` to tell the dashboard your plugin has one:
+
+```python
+def has_custom_ui(self) -> bool:
+    return True
+```
+
+This only sets a flag the dashboard reads (via `GET /api/plugins` → `has_custom_ui`) — you're still responsible for serving the page. Your `get_api_router()` must expose a `GET /ui` route returning self-contained HTML (inline CSS/JS, no external assets), and the router's prefix must be `/plugins/{name}` so the route resolves at `/api/plugins/{name}/ui` — that's the exact URL the `/plugins` page links to (the small external-link icon next to your plugin), opened in a new tab:
+
+```python
+def get_api_router(self):
+    from fastapi import APIRouter
+    from fastapi.responses import HTMLResponse
+    router = APIRouter(prefix=f"/plugins/{self.name}")
+
+    @router.get("/ui")
+    async def ui():
+        return HTMLResponse("<html>...</html>")
+
+    return router
+```
+
+### Toggling a Plugin On/Off
+
+Every plugin card on `/plugins` has an enabled/disabled checkbox, backed by `POST /api/plugins/{name}/toggle`. Flipping it only writes the flag to the `plugin_state` table — it does **not** hot-reload anything. Tools, keywords, nav items, and API routers are all wired once at startup (`PluginManager.start_all()`), so the change takes effect on the **next restart**, not immediately. The dashboard shows a "restart to apply plugin changes" banner after a toggle to make this explicit.
+
+---
+
 ## Lifecycle Hooks
 
 ### `on_start(**app_context)`
@@ -292,6 +360,8 @@ Called once, after all core systems are initialized. Use it to:
 - Start background watchers or schedulers
 - Inject `database`, `event_bus`, `llm_router`, etc. into your tool modules
 - Subscribe to EventBus events
+
+**If you override `on_start()`, call `await super().on_start(**app_context)` first.** The base implementation is what stores `self._database` — skip it and `get_setting()` will silently keep returning your `default=` value forever, even after the user saves settings from the dashboard.
 
 Available kwargs:
 
@@ -365,5 +435,8 @@ This keeps the backend fully plug-and-play while the frontend requires a project
 | Intent routing | `get_intent_keywords()` | ✅ Plug-and-play |
 | Frontend nav | `get_nav_items()` → `/api/plugins/nav` | ✅ Plug-and-play |
 | Frontend pages | `frontend/app/my-page/page.tsx` | ⚠️ Manual (requires rebuild) |
+| Dashboard settings form | `get_config_schema()` → `/plugins` config modal | ✅ Plug-and-play |
+| Custom plugin UI | `has_custom_ui()` + `GET /ui` → opened from `/plugins` | ✅ Plug-and-play |
+| Enable/disable | `/plugins` toggle → `plugin_state` table | ⚠️ Requires restart |
 | PyPI install | `entry-points."openacm.plugins"` | ✅ Supported |
 | Startup/shutdown | `on_start()` / `on_stop()` | ✅ Plug-and-play |
