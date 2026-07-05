@@ -98,8 +98,9 @@ interface ChatState {
   upsertValidationStep: (tool: string, step: ValidationStep, done?: boolean, passed?: boolean) => void;
   clearMessages: () => void;
   setTarget: (target: ChatTarget) => void;
-  setWaitingResponse: (waiting: boolean) => void;
-  setThinkingLabel: (label: string | null) => void;
+  // forKey routes the update to a background conversation instead of the live one
+  setWaitingResponse: (waiting: boolean, forKey?: string) => void;
+  setThinkingLabel: (label: string | null, forKey?: string) => void;
   // Reset waiting state — forKey resets a background conversation instead of current
   resetWaiting: (forKey?: string) => void;
   addAttachment: (attachment: Attachment) => void;
@@ -298,8 +299,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  setWaitingResponse: (waiting) => set({ isWaitingResponse: waiting }),
-  setThinkingLabel: (label) => set({ thinkingLabel: label }),
+  setWaitingResponse: (waiting, forKey) => {
+    const state = get();
+    const currentKey = `${state.currentTarget.channel}:${state.currentTarget.user}`;
+    if (!forKey || forKey === currentKey) {
+      set({ isWaitingResponse: waiting });
+    } else {
+      set((s) => ({ savedWaiting: { ...s.savedWaiting, [forKey]: waiting } }));
+    }
+  },
+  setThinkingLabel: (label, forKey) => {
+    const state = get();
+    const currentKey = `${state.currentTarget.channel}:${state.currentTarget.user}`;
+    if (!forKey || forKey === currentKey) {
+      set({ thinkingLabel: label });
+    } else {
+      set((s) => ({ savedThinkingLabel: { ...s.savedThinkingLabel, [forKey]: label } }));
+    }
+  },
 
   resetWaiting: (forKey) => {
     const state = get();

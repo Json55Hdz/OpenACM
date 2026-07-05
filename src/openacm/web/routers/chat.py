@@ -29,6 +29,109 @@ log = structlog.get_logger()
 
 
 
+async def _handle_chat_turn(
+    websocket: WebSocket,
+    content: str,
+    attachments: list,
+    target_user: str,
+    target_channel: str,
+    target_type: str,
+) -> None:
+    """Run one chat turn through the brain and deliver the response.
+
+    Scheduled as its own task (not awaited inline) so the ws_chat receive
+    loop returns to `receive_json()` immediately — otherwise a "cancel"
+    frame sent while this turn is still running sits unread in the socket
+    buffer until the turn finishes, arriving too late to cancel anything.
+    """
+    if _state.brain:
+        try:
+            # Snapshot usage counters before the call to compute per-turn delta
+            _router = _state.brain.llm_router if _state.brain else None
+            usage_before = _router.get_usage_snapshot() if _router else {}
+
+            response = await _state.brain.process_message(
+                content=content,
+                user_id=target_user,
+                channel_id=target_channel,
+                channel_type=target_type,
+                attachments=attachments,
+            )
+
+            # Compute usage delta for this turn
+            turn_usage: dict = {}
+            if _router:
+                usage_after = _router.get_usage_snapshot()
+                turn_usage = {
+                    "prompt_tokens": usage_after["prompt_tokens"] - usage_before.get("prompt_tokens", 0),
+                    "completion_tokens": usage_after["completion_tokens"] - usage_before.get("completion_tokens", 0),
+                    "total_tokens": usage_after["total_tokens"] - usage_before.get("total_tokens", 0),
+                    "cost": round(usage_after["cost"] - usage_before.get("cost", 0.0), 6),
+                    "requests": usage_after["requests"] - usage_before.get("requests", 0),
+                    "model": _router.current_model or "",
+                }
+
+            # Strip ATTACHMENT: lines from visible content and send as structured array
+            resp_lines = response.split("\n")
+            attachment_names: list[str] = []
+            clean_lines: list[str] = []
+            for line in resp_lines:
+                if line.startswith("ATTACHMENT:"):
+                    fname = line[len("ATTACHMENT:"):].strip()
+                    if fname:
+                        attachment_names.append(fname)
+                else:
+                    clean_lines.append(line)
+            clean_response = "\n".join(clean_lines).strip()
+
+            payload = {
+                "type": "response",
+                "content": clean_response,
+                "attachments": attachment_names,
+                "usage": turn_usage,
+                "user_id": target_user,
+                "channel_id": target_channel,
+            }
+            delivered = False
+            # Try original connection first, then any other active client
+            for target in [websocket] + [c for c in _state.chat_ws_clients if c is not websocket]:
+                try:
+                    await _safe_ws_send(target, payload)
+                    delivered = True
+                    break
+                except Exception:
+                    continue
+            if not delivered:
+                # No live client at all — buffer for the next connect
+                _state.pending_chat_response = payload
+            if target is not websocket:
+                # Original WS is dead — nothing more to do for it
+                return
+        except WebSocketDisconnect:
+            return
+        except Exception as e:
+            try:
+                await _safe_ws_send(websocket, {
+                    "type": "error",
+                    "content": str(e),
+                    "user_id": target_user,
+                    "channel_id": target_channel,
+                })
+            except (WebSocketDisconnect, Exception):
+                # Client already gone — nothing to do
+                return
+    else:
+        try:
+            await _safe_ws_send(websocket, {
+                "type": "error",
+                "content": "Brain not available",
+                "user_id": target_user,
+                "channel_id": target_channel,
+            })
+        except (WebSocketDisconnect, Exception):
+            return
+
+
 def register_routes(app: FastAPI) -> None:
     # ─── API: Media & Uploads ─────────────────────────────────
 
@@ -383,91 +486,12 @@ def register_routes(app: FastAPI) -> None:
                             return
                         continue
 
-                if _state.brain:
-                    try:
-                        # Snapshot usage counters before the call to compute per-turn delta
-                        _router = _state.brain.llm_router if _state.brain else None
-                        usage_before = _router.get_usage_snapshot() if _router else {}
-
-                        response = await _state.brain.process_message(
-                            content=content,
-                            user_id=target_user,
-                            channel_id=target_channel,
-                            channel_type=target_type,
-                            attachments=attachments,
-                        )
-
-                        # Compute usage delta for this turn
-                        turn_usage: dict = {}
-                        if _router:
-                            usage_after = _router.get_usage_snapshot()
-                            turn_usage = {
-                                "prompt_tokens": usage_after["prompt_tokens"] - usage_before.get("prompt_tokens", 0),
-                                "completion_tokens": usage_after["completion_tokens"] - usage_before.get("completion_tokens", 0),
-                                "total_tokens": usage_after["total_tokens"] - usage_before.get("total_tokens", 0),
-                                "cost": round(usage_after["cost"] - usage_before.get("cost", 0.0), 6),
-                                "requests": usage_after["requests"] - usage_before.get("requests", 0),
-                                "model": _router.current_model or "",
-                            }
-
-                        # Strip ATTACHMENT: lines from visible content and send as structured array
-                        resp_lines = response.split("\n")
-                        attachment_names: list[str] = []
-                        clean_lines: list[str] = []
-                        for line in resp_lines:
-                            if line.startswith("ATTACHMENT:"):
-                                fname = line[len("ATTACHMENT:"):].strip()
-                                if fname:
-                                    attachment_names.append(fname)
-                            else:
-                                clean_lines.append(line)
-                        clean_response = "\n".join(clean_lines).strip()
-
-                        payload = {
-                            "type": "response",
-                            "content": clean_response,
-                            "attachments": attachment_names,
-                            "usage": turn_usage,
-                            "user_id": target_user,
-                            "channel_id": target_channel,
-                        }
-                        delivered = False
-                        # Try original connection first, then any other active client
-                        for target in [websocket] + [c for c in _state.chat_ws_clients if c is not websocket]:
-                            try:
-                                await _safe_ws_send(target, payload)
-                                delivered = True
-                                break
-                            except Exception:
-                                continue
-                        if not delivered:
-                            # No live client at all — buffer for the next connect
-                            _state.pending_chat_response = payload
-                        if target is not websocket:
-                            # Original WS is dead — exit its handler
-                            return
-                    except WebSocketDisconnect:
-                        return
-                    except Exception as e:
-                        try:
-                            await _safe_ws_send(websocket, {
-                                "type": "error",
-                                "content": str(e),
-                                "user_id": target_user,
-                                "channel_id": target_channel,
-                            })
-                        except (WebSocketDisconnect, Exception):
-                            # Client already gone — nothing to do
-                            return
-                else:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "content": "Brain not available",
-                            "user_id": target_user,
-                            "channel_id": target_channel,
-                        }
-                    )
+                # Run this turn in its own task instead of awaiting it inline —
+                # keeps this loop free to read a "cancel" frame the instant it
+                # arrives, rather than only after the turn already finished.
+                asyncio.create_task(
+                    _handle_chat_turn(websocket, content, attachments, target_user, target_channel, target_type)
+                )
         except WebSocketDisconnect:
             pass
         finally:

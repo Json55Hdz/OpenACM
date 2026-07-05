@@ -321,19 +321,25 @@ export function useWebSocket() {
         }
       } else if (data.type === 'message.thinking') {
         const status = data.status;
+        const forKey = data.channel_id && data.user_id ? `${data.channel_id}:${data.user_id}` : undefined;
+        const isCurrentChat = !forKey || forKey === `${currentTarget.channel}:${currentTarget.user}`;
         if (status === 'start') {
-          storeRef.current.setWaitingResponse(true);
-          storeRef.current.setThinkingLabel(null);
-          tamaRef.current.setAgentState('thinking');
+          storeRef.current.setWaitingResponse(true, forKey);
+          storeRef.current.setThinkingLabel(null, forKey);
+          if (isCurrentChat) tamaRef.current.setAgentState('thinking');
         } else if (status === 'tool_running' && data.message) {
-          storeRef.current.setThinkingLabel(data.message);
-          tamaRef.current.setAgentState('working');
+          storeRef.current.setThinkingLabel(data.message, forKey);
+          if (isCurrentChat) tamaRef.current.setAgentState('working');
         } else if (status === 'queued' && data.message) {
-          storeRef.current.setThinkingLabel(data.message);
-          tamaRef.current.setAgentState('thinking');
+          storeRef.current.setThinkingLabel(data.message, forKey);
+          if (isCurrentChat) tamaRef.current.setAgentState('thinking');
         } else if (status === 'done' || status === 'error') {
-          resetSpinner();
-          tamaRef.current.setAgentState(status === 'done' ? 'success' : 'error');
+          if (isCurrentChat) {
+            resetSpinner();
+            tamaRef.current.setAgentState(status === 'done' ? 'success' : 'error');
+          } else {
+            storeRef.current.resetWaiting(forKey);
+          }
         }
       } else if (data.type === 'tool.called') {
         if (data.channel_id !== currentTarget.channel) return;
