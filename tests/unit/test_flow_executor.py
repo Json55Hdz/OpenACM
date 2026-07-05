@@ -172,3 +172,69 @@ class TestHttpNode:
 
         call_kwargs = mock_client.request.call_args
         assert "zapatos" in call_kwargs.args[1] or "zapatos" in str(call_kwargs)
+
+
+def _conditional_graph(operator, value, field="{{start_value}}"):
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "config": {"parameters": [{"name": "start_value", "type": "string", "required": True}]}},
+            {"id": "cond1", "type": "conditional", "config": {"field": field, "operator": operator, "value": value}},
+            {"id": "end_true", "type": "end", "config": {"template": "YES: {{cond1}}"}},
+            {"id": "end_false", "type": "end", "config": {"template": "NO: {{cond1}}"}},
+        ],
+        "edges": [
+            {"from": "start", "to": "cond1", "fromHandle": "default"},
+            {"from": "cond1", "to": "end_true", "fromHandle": "true"},
+            {"from": "cond1", "to": "end_false", "fromHandle": "false"},
+        ],
+    }
+
+
+class TestConditionalNode:
+    async def test_contains_operator_true_branch(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
+        assert result == "YES: zapatos"
+
+    async def test_contains_operator_false_branch(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("contains", "camisa"), params={"start_value": "zapatos"})
+        assert result == "NO: zapatos"
+
+    async def test_equals_operator(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("equals", "zapatos"), params={"start_value": "zapatos"})
+        assert result == "YES: zapatos"
+
+    async def test_is_empty_operator_true(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": ""})
+        assert result == "YES: "
+
+    async def test_is_empty_operator_false(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": "zapatos"})
+        assert result == "NO: zapatos"
+
+    async def test_is_error_operator(self):
+        graph = _conditional_graph("is_error", "", field="{{prev}}")
+        graph["nodes"][0]["config"]["parameters"] = []
+        graph["nodes"][1]["config"]["field"] = "{{missing_node}}"
+        executor = FlowExecutor()
+        result = await executor.run(graph, params={})
+        # "{{missing_node}}" resolves to "[missing: missing_node]" which starts with neither
+        # "error" — this exercises is_error's false path using the missing-marker text itself.
+        assert result == "NO: [missing: missing_node]"
+
+    async def test_unknown_operator_is_an_error(self):
+        graph = _conditional_graph("bogus_operator", "x")
+        executor = FlowExecutor()
+        result = await executor.run(graph, params={"start_value": "zapatos"})
+        assert result.startswith("Error in node 'cond1'")
+
+    async def test_passthrough_output_is_the_evaluated_value_not_the_boolean(self):
+        executor = FlowExecutor()
+        result = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
+        # end_true's template is "YES: {{cond1}}" — if the stored output were the
+        # boolean True/False instead of the passthrough string, this would read "YES: True".
+        assert result == "YES: zapatos"

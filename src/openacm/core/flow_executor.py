@@ -48,9 +48,14 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
 class FlowExecutor:
     """Interprets and runs one flow's graph_json against a set of params."""
 
+    _CONDITIONAL_OPERATORS = {"contains", "equals", "is_empty", "is_error"}
+
     def __init__(self, get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None):
         self.get_connection = get_connection
-        self._HANDLERS: dict[str, Callable] = {"http": FlowExecutor._run_http_node}
+        self._HANDLERS: dict[str, Callable] = {
+            "http": FlowExecutor._run_http_node,
+            "conditional": FlowExecutor._run_conditional_node,
+        }
 
     async def _run_http_node(self, node: dict, params: dict, outputs: dict) -> Any:
         cfg = node["config"]
@@ -68,6 +73,26 @@ class FlowExecutor:
                 return response.json()
             except Exception:
                 return response.text
+
+    async def _run_conditional_node(self, node: dict, params: dict, outputs: dict) -> dict:
+        cfg = node["config"]
+        operator = cfg["operator"]
+        if operator not in self._CONDITIONAL_OPERATORS:
+            raise ValueError(f"Unknown conditional operator: {operator}")
+
+        resolved = substitute_templates(cfg["field"], params, outputs)
+        compare_value = cfg.get("value", "")
+
+        if operator == "contains":
+            branch = compare_value in resolved
+        elif operator == "equals":
+            branch = resolved == compare_value
+        elif operator == "is_empty":
+            branch = resolved == ""
+        else:  # is_error
+            branch = resolved.lower().startswith("error")
+
+        return {"branch": branch, "passthrough": resolved}
 
     async def run(self, graph: dict, params: dict) -> str:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
