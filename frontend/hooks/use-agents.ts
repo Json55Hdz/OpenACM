@@ -218,3 +218,68 @@ export function useAgentMutations() {
 
   return { create, update, remove, test, getSecret, generate };
 }
+
+export interface AgentSkill {
+  id: number;
+  name: string;
+  description: string;
+  content: string;
+  category: string;
+  is_active: number;
+  is_builtin: number;
+  agent_id: number | null;
+  enabled?: boolean; // present only on global_skills entries
+}
+
+export function useAgentSkills(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+
+  return useQuery<{ global_skills: AgentSkill[]; private_skills: AgentSkill[] }>({
+    queryKey: ['agent-skills', agentId],
+    queryFn: () => fetchAPI(`/api/agents/${agentId}/skills`),
+    enabled: isAuthenticated,
+  });
+}
+
+export function useToggleAgentGlobalSkill(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ skillId, enable }: { skillId: number; enable: boolean }) =>
+      fetchAPI(`/api/agents/${agentId}/skills/${skillId}`, { method: enable ? 'POST' : 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-skills', agentId] }),
+  });
+}
+
+export function useGenerateAgentSkill(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: { name: string; description: string; use_cases: string }) =>
+      fetchAPI(`/api/agents/${agentId}/skills/generate`, { method: 'POST', body: JSON.stringify(data) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-skills', agentId] }),
+  });
+}
+
+export function useToggleAgentPrivateSkill(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (skillId: number) => fetchAPI(`/api/skills/${skillId}/toggle`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-skills', agentId] }),
+  });
+}
+
+export function useDeleteAgentPrivateSkill(agentId: number) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (skillId: number) => fetchAPI(`/api/skills/${skillId}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-skills', agentId] }),
+  });
+}

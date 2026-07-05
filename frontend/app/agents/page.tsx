@@ -5,7 +5,8 @@ import { AppLayout } from '@/components/layout/app-layout';
 import {
   useAgents, useAgentMutations, useAgentKnowledge, useAgentKnowledgeMutations,
   useAgentChannels, useAgentChannelMutations,
-  type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem,
+  useAgentSkills, useToggleAgentGlobalSkill, useGenerateAgentSkill, useToggleAgentPrivateSkill, useDeleteAgentPrivateSkill,
+  type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem, type AgentSkill,
 } from '@/hooks/use-agents';
 import { useTools, type ToolInfo } from '@/hooks/use-api';
 import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
@@ -1688,5 +1689,74 @@ function AgentToolsTab({ agent }: { agent: Agent }) {
 }
 
 function AgentSkillsTab({ agentId }: { agentId: number }) {
-  return <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Coming in Task 8.</div>;
+  const { data, isLoading } = useAgentSkills(agentId);
+  const toggleGlobal = useToggleAgentGlobalSkill(agentId);
+  const togglePrivate = useToggleAgentPrivateSkill(agentId);
+  const deletePrivate = useDeleteAgentPrivateSkill(agentId);
+  const generate = useGenerateAgentSkill(agentId);
+  const [showGenerateForm, setShowGenerateForm] = useState(false);
+  const [genName, setGenName] = useState('');
+  const [genDescription, setGenDescription] = useState('');
+  const [genUseCases, setGenUseCases] = useState('');
+
+  if (isLoading || !data) return <Loader2 size={16} className="animate-spin" />;
+
+  const submitGenerate = () => {
+    generate.mutate(
+      { name: genName, description: genDescription, use_cases: genUseCases },
+      { onSuccess: () => { setShowGenerateForm(false); setGenName(''); setGenDescription(''); setGenUseCases(''); } },
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div className="label text-[var(--acm-fg-4)] mb-1">Skills del sistema</div>
+        {data.global_skills.map(s => (
+          <label key={s.id} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!s.enabled}
+              onChange={() => toggleGlobal.mutate({ skillId: s.id, enable: !s.enabled })}
+            />
+            <span>{s.name}</span>
+          </label>
+        ))}
+      </div>
+
+      <div className="border-t border-[var(--acm-border)] pt-2">
+        <div className="label text-[var(--acm-fg-4)] mb-1">Skills de este agente</div>
+        {data.private_skills.map(s => (
+          <div key={s.id} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)]">
+            <input type="checkbox" checked={!!s.is_active} onChange={() => togglePrivate.mutate(s.id)} />
+            <span className="flex-1">{s.name}</span>
+            <button onClick={() => deletePrivate.mutate(s.id)} className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]">
+              <Trash2 size={11} />
+            </button>
+          </div>
+        ))}
+
+        {showGenerateForm ? (
+          <div className="flex flex-col gap-1 mt-2">
+            <input value={genName} onChange={e => setGenName(e.target.value)} placeholder="Nombre"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <input value={genDescription} onChange={e => setGenDescription(e.target.value)} placeholder="Descripción"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <input value={genUseCases} onChange={e => setGenUseCases(e.target.value)} placeholder="Casos de uso"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <div className="flex gap-1 justify-end">
+              <button onClick={() => setShowGenerateForm(false)} className="btn-secondary text-[11px] px-2 py-1">Cancelar</button>
+              <button onClick={submitGenerate} disabled={generate.isPending || !genName} className="btn-secondary text-[11px] px-2 py-1">
+                {generate.isPending ? 'Generando...' : 'Generar'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowGenerateForm(true)} className="btn-secondary text-[11px] px-2 py-1 mt-2">
+            + Nueva skill personalizada
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
