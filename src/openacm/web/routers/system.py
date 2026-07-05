@@ -57,7 +57,7 @@ def register_routes(app: FastAPI) -> None:
                 return await call_next(request)
 
             # API routes below here require auth (except public ones)
-            if path in ("/api/auth/check", "/api/ping", "/api/system/info", "/api/config/google/callback"):
+            if path in ("/api/auth/check", "/api/ping", "/api/system/info", "/api/config/google/callback", "/api/tools"):
                 return await call_next(request)
 
             # Check token for other API routes
@@ -368,6 +368,7 @@ def register_routes(app: FastAPI) -> None:
                 "description": t.description,
                 "risk_level": t.risk_level,
                 "parameters": t.parameters,
+                "category": t.category,
             }
             for t in _state.tool_registry.tools.values()
         ]
