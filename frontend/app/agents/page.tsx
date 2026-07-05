@@ -6,7 +6,7 @@ import {
   useAgents, useAgentMutations, useAgentKnowledge, useAgentKnowledgeMutations,
   useAgentChannels, useAgentChannelMutations,
   useAgentSkills, useToggleAgentGlobalSkill, useGenerateAgentSkill, useToggleAgentPrivateSkill, useDeleteAgentPrivateSkill,
-  type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem, type AgentSkill,
+  type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem,
 } from '@/hooks/use-agents';
 import { useTools, type ToolInfo } from '@/hooks/use-api';
 import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
@@ -1621,7 +1621,7 @@ export default function AgentsPage() {
   );
 }
 
-// ── Tools / Skills Tabs (placeholders — real implementations land in Tasks 7 & 8) ──
+// ── Tools / Skills Tabs ──
 
 function AgentToolsTab({ agent }: { agent: Agent }) {
   const { data: tools, isLoading } = useTools();
