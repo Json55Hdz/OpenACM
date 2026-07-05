@@ -80,7 +80,7 @@ class TestCreateUpdateDeleteFlow:
         async with app_client as ac:
             resp = await ac.delete("/api/agents/42/flows/7")
         assert resp.status_code == 200
-        _mock_state.delete_flow.assert_awaited_once_with(7)
+        _mock_state.delete_flow.assert_awaited_once_with(7, agent_id=42)
 
 
 class TestTestFlowEndpoint:

@@ -192,7 +192,7 @@ def register_routes(app: FastAPI) -> None:
         data = await request.json()
         allowed_fields = {"name", "description", "graph_json", "is_active"}
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
-        ok = await _state.database.update_flow(flow_id, **kwargs)
+        ok = await _state.database.update_flow(flow_id, agent_id=agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Flow not found")
         return await _state.database.get_flow(flow_id)
@@ -201,7 +201,7 @@ def register_routes(app: FastAPI) -> None:
     async def delete_agent_flow(agent_id: int, flow_id: int):
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        ok = await _state.database.delete_flow(flow_id)
+        ok = await _state.database.delete_flow(flow_id, agent_id=agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Flow not found")
         return {"status": "ok", "deleted": True}
@@ -268,7 +268,7 @@ def register_routes(app: FastAPI) -> None:
                 "consumer_key": data.get("consumer_key", ""),
                 "consumer_secret": data.get("consumer_secret", ""),
             })
-        ok = await _state.database.update_connection(connection_id, **kwargs)
+        ok = await _state.database.update_connection(connection_id, agent_id=agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Connection not found")
         return {"status": "ok"}
@@ -277,7 +277,7 @@ def register_routes(app: FastAPI) -> None:
     async def delete_agent_connection(agent_id: int, connection_id: int):
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
-        ok = await _state.database.delete_connection(connection_id)
+        ok = await _state.database.delete_connection(connection_id, agent_id=agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Connection not found")
         return {"status": "ok", "deleted": True}

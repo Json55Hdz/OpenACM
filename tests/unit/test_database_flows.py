@@ -137,6 +137,43 @@ class TestFlowCRUD:
         assert await db.get_flow(flow_id) is None
         await db.close()
 
+    async def test_update_flow_scoped_to_wrong_agent_id_fails(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        other = await _make_agent(db, "other")
+        flow_id = await db.create_flow(agent_id=owner, name="f1")
+
+        ok = await db.update_flow(flow_id, agent_id=other, name="hijacked")
+
+        assert not ok
+        flow = await db.get_flow(flow_id)
+        assert flow["name"] == "f1"
+        await db.close()
+
+    async def test_delete_flow_scoped_to_wrong_agent_id_fails(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        other = await _make_agent(db, "other")
+        flow_id = await db.create_flow(agent_id=owner, name="f1")
+
+        ok = await db.delete_flow(flow_id, agent_id=other)
+
+        assert not ok
+        assert await db.get_flow(flow_id) is not None
+        await db.close()
+
+    async def test_update_flow_scoped_to_correct_agent_id_succeeds(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        flow_id = await db.create_flow(agent_id=owner, name="f1")
+
+        ok = await db.update_flow(flow_id, agent_id=owner, name="renamed")
+
+        assert ok
+        flow = await db.get_flow(flow_id)
+        assert flow["name"] == "renamed"
+        await db.close()
+
 
 class TestConnectionCRUD:
     async def test_create_and_get_connection_includes_config(self):
@@ -185,4 +222,41 @@ class TestConnectionCRUD:
 
         assert ok
         assert await db.get_connection(conn_id) is None
+        await db.close()
+
+    async def test_update_connection_scoped_to_wrong_agent_id_fails(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        other = await _make_agent(db, "other")
+        conn_id = await db.create_connection(agent_id=owner, name="Mi Tienda", type="woocommerce", config='{"consumer_key":"old"}')
+
+        ok = await db.update_connection(conn_id, agent_id=other, config='{"consumer_key":"hijacked"}')
+
+        assert not ok
+        conn = await db.get_connection(conn_id)
+        assert "old" in conn["config"]
+        await db.close()
+
+    async def test_delete_connection_scoped_to_wrong_agent_id_fails(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        other = await _make_agent(db, "other")
+        conn_id = await db.create_connection(agent_id=owner, name="Mi Tienda", type="woocommerce", config="{}")
+
+        ok = await db.delete_connection(conn_id, agent_id=other)
+
+        assert not ok
+        assert await db.get_connection(conn_id) is not None
+        await db.close()
+
+    async def test_update_connection_scoped_to_correct_agent_id_succeeds(self):
+        db = await _make_db()
+        owner = await _make_agent(db, "owner")
+        conn_id = await db.create_connection(agent_id=owner, name="Mi Tienda", type="woocommerce", config='{"consumer_key":"old"}')
+
+        ok = await db.update_connection(conn_id, agent_id=owner, config='{"consumer_key":"new"}')
+
+        assert ok
+        conn = await db.get_connection(conn_id)
+        assert "new" in conn["config"]
         await db.close()

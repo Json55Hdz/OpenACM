@@ -66,4 +66,4 @@ class TestCreateUpdateDeleteConnection:
         async with app_client as ac:
             resp = await ac.delete("/api/agents/42/connections/1")
         assert resp.status_code == 200
-        _mock_state.delete_connection.assert_awaited_once_with(1)
+        _mock_state.delete_connection.assert_awaited_once_with(1, agent_id=42)

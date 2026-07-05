@@ -1635,7 +1635,9 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def update_flow(self, flow_id: int, **kwargs: Any) -> bool:
+    async def update_flow(self, flow_id: int, agent_id: int | None = None, **kwargs: Any) -> bool:
+        """agent_id, if given, scopes the update so a flow_id belonging to a
+        different agent is never modified (returns False, not an error)."""
         if not self._db:
             return False
         allowed = {"name", "description", "graph_json", "is_active"}
@@ -1647,17 +1649,26 @@ class Database:
         if not updates:
             return False
         updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE flows SET {', '.join(updates)} WHERE id = ?"
         params.append(flow_id)
-        cursor = await self._db.execute(
-            f"UPDATE flows SET {', '.join(updates)} WHERE id = ?", params
-        )
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        cursor = await self._db.execute(query, params)
         await self._db.commit()
         return cursor.rowcount > 0
 
-    async def delete_flow(self, flow_id: int) -> bool:
+    async def delete_flow(self, flow_id: int, agent_id: int | None = None) -> bool:
+        """agent_id, if given, scopes the delete so a flow_id belonging to a
+        different agent is never removed (returns False, not an error)."""
         if not self._db:
             return False
-        cursor = await self._db.execute("DELETE FROM flows WHERE id = ?", (flow_id,))
+        query = "DELETE FROM flows WHERE id = ?"
+        params: list[Any] = [flow_id]
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        cursor = await self._db.execute(query, params)
         await self._db.commit()
         return cursor.rowcount > 0
 
@@ -1693,7 +1704,9 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def update_connection(self, connection_id: int, **kwargs: Any) -> bool:
+    async def update_connection(self, connection_id: int, agent_id: int | None = None, **kwargs: Any) -> bool:
+        """agent_id, if given, scopes the update so a connection_id belonging
+        to a different agent is never modified (returns False, not an error)."""
         if not self._db:
             return False
         allowed = {"name", "config"}
@@ -1704,17 +1717,26 @@ class Database:
                 params.append(val)
         if not updates:
             return False
+        query = f"UPDATE connections SET {', '.join(updates)} WHERE id = ?"
         params.append(connection_id)
-        cursor = await self._db.execute(
-            f"UPDATE connections SET {', '.join(updates)} WHERE id = ?", params
-        )
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        cursor = await self._db.execute(query, params)
         await self._db.commit()
         return cursor.rowcount > 0
 
-    async def delete_connection(self, connection_id: int) -> bool:
+    async def delete_connection(self, connection_id: int, agent_id: int | None = None) -> bool:
+        """agent_id, if given, scopes the delete so a connection_id belonging
+        to a different agent is never removed (returns False, not an error)."""
         if not self._db:
             return False
-        cursor = await self._db.execute("DELETE FROM connections WHERE id = ?", (connection_id,))
+        query = "DELETE FROM connections WHERE id = ?"
+        params: list[Any] = [connection_id]
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        cursor = await self._db.execute(query, params)
         await self._db.commit()
         return cursor.rowcount > 0
 
