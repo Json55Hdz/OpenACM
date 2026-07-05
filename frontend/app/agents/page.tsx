@@ -1796,6 +1796,7 @@ function FlowsTab({ agentId }: { agentId: number }) {
           ← Volver a la lista
         </button>
         <FlowCanvas
+          agentId={agentId}
           flow={editingFlow}
           onSave={(graphJson) => {
             update.mutate({ id: editingFlow.id, data: { graph_json: graphJson } });

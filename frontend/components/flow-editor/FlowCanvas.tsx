@@ -8,6 +8,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { NODE_TYPES } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
+import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
 
 interface GraphJson {
   nodes: Array<{ id: string; type: string; config: Record<string, unknown>; position: { x: number; y: number } }>;
@@ -46,12 +47,27 @@ function maxNodeIdSuffix(nodes: Node[]): number {
   return max;
 }
 
-export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJson: string) => void }) {
+export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
   const initial = useMemo(() => toReactFlow(JSON.parse(flow.graph_json || '{"nodes":[],"edges":[]}')), [flow.id]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const nodeIdCounterRef = useRef(maxNodeIdSuffix(initial.nodes));
+
+  const { data: connections } = useAgentConnections(agentId);
+  const createConnection = useCreateConnection(agentId);
+  const [showNewConnectionForm, setShowNewConnectionForm] = useState(false);
+  const [newConnName, setNewConnName] = useState('');
+  const [newConnUrl, setNewConnUrl] = useState('');
+  const [newConnKey, setNewConnKey] = useState('');
+  const [newConnSecret, setNewConnSecret] = useState('');
+
+  const submitNewConnection = () => {
+    createConnection.mutate(
+      { name: newConnName, type: 'woocommerce', url: newConnUrl, consumer_key: newConnKey, consumer_secret: newConnSecret },
+      { onSuccess: () => { setShowNewConnectionForm(false); setNewConnName(''); setNewConnUrl(''); setNewConnKey(''); setNewConnSecret(''); } },
+    );
+  };
 
   const nextNodeId = (prefix: string) => {
     nodeIdCounterRef.current += 1;
@@ -137,6 +153,29 @@ export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJs
           )}
           {selectedNode.type === 'woocommerce' && (
             <>
+              <label>Conexión</label>
+              <select
+                className="acm-input w-full mb-2"
+                value={String(selectedNode.data.connection_id ?? '')}
+                onChange={e => updateSelectedNodeData({ connection_id: Number(e.target.value) })}
+              >
+                <option value="">Seleccionar...</option>
+                {(connections || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {showNewConnectionForm ? (
+                <div className="flex flex-col gap-1 mb-2">
+                  <input className="acm-input w-full" placeholder="Nombre" value={newConnName} onChange={e => setNewConnName(e.target.value)} />
+                  <input className="acm-input w-full" placeholder="URL de la tienda" value={newConnUrl} onChange={e => setNewConnUrl(e.target.value)} />
+                  <input className="acm-input w-full" placeholder="Consumer Key" value={newConnKey} onChange={e => setNewConnKey(e.target.value)} />
+                  <input className="acm-input w-full" placeholder="Consumer Secret" type="password" value={newConnSecret} onChange={e => setNewConnSecret(e.target.value)} />
+                  <div className="flex gap-1 justify-end">
+                    <button onClick={() => setShowNewConnectionForm(false)} className="btn-secondary text-[11px] px-2 py-1">Cancelar</button>
+                    <button onClick={submitNewConnection} disabled={createConnection.isPending || !newConnName} className="btn-secondary text-[11px] px-2 py-1">Guardar</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setShowNewConnectionForm(true)} className="btn-secondary text-[11px] px-2 py-1 mb-2">+ Nueva conexión</button>
+              )}
               <label>Término de búsqueda</label>
               <input className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
             </>
