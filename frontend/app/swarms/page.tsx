@@ -17,7 +17,7 @@ import remarkGfm from 'remark-gfm';
 import { Bug } from 'lucide-react';
 import { MessageBubble } from '@/components/chat/message-bubble';
 import { useTools, type ToolInfo } from '@/hooks/use-api';
-import { useUpdateWorkerTools, parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
+import { useUpdateWorkerTools, parseAllowedTools, serializeAllowedTools, useWorkerSkills, useToggleWorkerGlobalSkill, useToggleWorkerPrivateSkill, useDeleteWorkerPrivateSkill, useGenerateWorkerSkill } from '@/hooks/use-worker-config';
 import { Settings, Search } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -386,6 +386,79 @@ function ToolsTab({ worker, swarmId }: { worker: Worker; swarmId: number }) {
   );
 }
 
+function SkillsTab({ worker, swarmId }: { worker: Worker; swarmId: number }) {
+  const { data, isLoading } = useWorkerSkills(swarmId, worker.id);
+  const toggleGlobal = useToggleWorkerGlobalSkill(swarmId, worker.id);
+  const togglePrivate = useToggleWorkerPrivateSkill(swarmId, worker.id);
+  const deletePrivate = useDeleteWorkerPrivateSkill(swarmId, worker.id);
+  const generate = useGenerateWorkerSkill(swarmId, worker.id);
+  const [showGenerateForm, setShowGenerateForm] = useState(false);
+  const [genName, setGenName] = useState('');
+  const [genDescription, setGenDescription] = useState('');
+  const [genUseCases, setGenUseCases] = useState('');
+
+  if (isLoading || !data) return <Loader2 size={16} className="animate-spin" />;
+
+  const submitGenerate = () => {
+    generate.mutate(
+      { name: genName, description: genDescription, use_cases: genUseCases },
+      { onSuccess: () => { setShowGenerateForm(false); setGenName(''); setGenDescription(''); setGenUseCases(''); } },
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div className="label text-[var(--acm-fg-4)] mb-1">Skills del sistema</div>
+        {data.global_skills.map(s => (
+          <label key={s.id} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!s.enabled}
+              onChange={() => toggleGlobal.mutate({ skillId: s.id, enable: !s.enabled })}
+            />
+            <span>{s.name}</span>
+          </label>
+        ))}
+      </div>
+
+      <div className="border-t border-[var(--acm-border)] pt-2">
+        <div className="label text-[var(--acm-fg-4)] mb-1">Skills de este worker</div>
+        {data.private_skills.map(s => (
+          <div key={s.id} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)]">
+            <input type="checkbox" checked={!!s.is_active} onChange={() => togglePrivate.mutate(s.id)} />
+            <span className="flex-1">{s.name}</span>
+            <button onClick={() => deletePrivate.mutate(s.id)} className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]">
+              <Trash2 size={11} />
+            </button>
+          </div>
+        ))}
+
+        {showGenerateForm ? (
+          <div className="flex flex-col gap-1 mt-2">
+            <input value={genName} onChange={e => setGenName(e.target.value)} placeholder="Nombre"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <input value={genDescription} onChange={e => setGenDescription(e.target.value)} placeholder="Descripción"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <input value={genUseCases} onChange={e => setGenUseCases(e.target.value)} placeholder="Casos de uso"
+              className="bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1 text-[11px]" />
+            <div className="flex gap-1 justify-end">
+              <button onClick={() => setShowGenerateForm(false)} className="btn-secondary text-[11px] px-2 py-1">Cancelar</button>
+              <button onClick={submitGenerate} disabled={generate.isPending || !genName} className="btn-secondary text-[11px] px-2 py-1">
+                {generate.isPending ? 'Generando...' : 'Generar'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setShowGenerateForm(true)} className="btn-secondary text-[11px] px-2 py-1 mt-2">
+            + Nueva skill personalizada
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Worker Card ──────────────────────────────────────────────────────────────
 
 function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swarmId: number; onUpdate: () => void; ctxPct?: number | null }) {
@@ -394,6 +467,7 @@ function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swa
   const [modelVal, setModelVal] = useState(worker.model || '');
   const [expanded, setExpanded] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [configTab, setConfigTab] = useState<'tools' | 'skills'>('tools');
 
   const saveModel = async () => {
     await fetchAPI(`/api/swarms/${swarmId}/workers/${worker.id}`, {
@@ -486,7 +560,25 @@ function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swa
         <Settings size={11} />
         <span className="label">Configurar</span>
       </button>
-      {configOpen && <ToolsTab worker={worker} swarmId={swarmId} />}
+      {configOpen && (
+        <div className="flex flex-col gap-2 border-t border-[var(--acm-border)] pt-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfigTab('tools')}
+              className={`label px-2 py-1 rounded ${configTab === 'tools' ? 'bg-[var(--acm-elev)] text-[var(--acm-fg)]' : 'text-[var(--acm-fg-4)]'}`}
+            >
+              Herramientas
+            </button>
+            <button
+              onClick={() => setConfigTab('skills')}
+              className={`label px-2 py-1 rounded ${configTab === 'skills' ? 'bg-[var(--acm-elev)] text-[var(--acm-fg)]' : 'text-[var(--acm-fg-4)]'}`}
+            >
+              Skills
+            </button>
+          </div>
+          {configTab === 'tools' ? <ToolsTab worker={worker} swarmId={swarmId} /> : <SkillsTab worker={worker} swarmId={swarmId} />}
+        </div>
+      )}
     </div>
   );
 }
