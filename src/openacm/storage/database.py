@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 33
+    _SCHEMA_VERSION = 34
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1007,6 +1007,39 @@ class Database:
             """)
             await self._db.commit()
             log.info("Migration 33: per-agent skill scoping (skills.agent_id, agent_skills)")
+
+        # ── Migration 34: agent node flows + reusable connections ────────
+        # A Flow is a node graph (JSON) that becomes a dynamically-registered
+        # tool for its owning agent. A Connection is a reusable set of
+        # credentials (e.g. a WooCommerce store's API keys) a flow's nodes
+        # can reference, so the same store doesn't need re-entering per flow.
+        # Both are 100% private to one agent (ON DELETE CASCADE, no sharing).
+        if current < 34:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS flows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    graph_json TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_flows_agent ON flows(agent_id);
+
+                CREATE TABLE IF NOT EXISTS connections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    config TEXT NOT NULL DEFAULT '{}',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_connections_agent ON connections(agent_id);
+            """)
+            await self._db.commit()
+            log.info("Migration 34: agent node flows (flows, connections)")
 
         # Save new version
         await self._db.execute(
