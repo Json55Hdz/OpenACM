@@ -10,6 +10,7 @@ import {
 } from '@/hooks/use-agents';
 import { useTools, type ToolInfo } from '@/hooks/use-api';
 import { useAgentFlows, useCreateFlow, useUpdateFlow, useDeleteFlow } from '@/hooks/use-agent-flows';
+import { FlowCanvas } from '@/components/flow-editor/FlowCanvas';
 import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
 import {
   Bot,
@@ -1787,14 +1788,19 @@ function FlowsTab({ agentId }: { agentId: number }) {
   };
 
   if (editingFlowId !== null) {
+    const editingFlow = flows.find(f => f.id === editingFlowId);
+    if (!editingFlow) return null;
     return (
       <div className="flex flex-col gap-2">
         <button onClick={() => setEditingFlowId(null)} className="btn-secondary self-start text-[11px] px-2 py-1">
           ← Volver a la lista
         </button>
-        <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>
-          Editor de nodos — llega en la Tarea 11. (flow id: {editingFlowId})
-        </div>
+        <FlowCanvas
+          flow={editingFlow}
+          onSave={(graphJson) => {
+            update.mutate({ id: editingFlow.id, data: { graph_json: graphJson } });
+          }}
+        />
       </div>
     );
   }
