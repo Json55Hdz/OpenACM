@@ -56,6 +56,13 @@ class TestListAndGetFlows:
             resp = await ac.get("/api/agents/42/flows/999")
         assert resp.status_code == 404
 
+    async def test_get_flow_belonging_to_a_different_agent_404s(self, app_client, _mock_state):
+        """flow_id 7 belongs to agent_id 42 (FLOW_ROW) — requesting it via a
+        different agent's URL must 404, not leak another agent's flow."""
+        async with app_client as ac:
+            resp = await ac.get("/api/agents/999/flows/7")
+        assert resp.status_code == 404
+
 
 class TestCreateUpdateDeleteFlow:
     async def test_create_flow(self, app_client, _mock_state):
@@ -94,4 +101,11 @@ class TestTestFlowEndpoint:
         _mock_state.get_flow.return_value = None
         async with app_client as ac:
             resp = await ac.post("/api/agents/42/flows/999/test", json={"params": {}})
+        assert resp.status_code == 404
+
+    async def test_flow_belonging_to_a_different_agent_404s(self, app_client, _mock_state):
+        """flow_id 7 belongs to agent_id 42 (FLOW_ROW) — running it via a
+        different agent's URL must 404, not execute another agent's flow."""
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/999/flows/7/test", json={"params": {}})
         assert resp.status_code == 404

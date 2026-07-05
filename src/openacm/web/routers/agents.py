@@ -169,7 +169,7 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         flow = await _state.database.get_flow(flow_id)
-        if not flow:
+        if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
         return flow
 
@@ -211,7 +211,7 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         flow = await _state.database.get_flow(flow_id)
-        if not flow:
+        if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
 
         from openacm.core.flow_executor import FlowExecutor
