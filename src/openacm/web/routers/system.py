@@ -57,7 +57,7 @@ def register_routes(app: FastAPI) -> None:
                 return await call_next(request)
 
             # API routes below here require auth (except public ones)
-            if path in ("/api/auth/check", "/api/ping", "/api/system/info", "/api/config/google/callback", "/api/tools"):
+            if path in ("/api/auth/check", "/api/ping", "/api/system/info", "/api/config/google/callback"):
                 return await call_next(request)
 
             # Check token for other API routes
