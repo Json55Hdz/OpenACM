@@ -944,7 +944,7 @@ class Database:
         # which would let multiple global skills share a name.
         if current < 32:
             await self._db.executescript("""
-                CREATE TABLE skills_new (
+                CREATE TABLE IF NOT EXISTS skills_new (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     description TEXT NOT NULL,
@@ -964,8 +964,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_skills_category ON skills(category);
                 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
                 CREATE INDEX IF NOT EXISTS idx_skills_worker ON skills(worker_id);
-                CREATE UNIQUE INDEX idx_skills_name_global ON skills(name) WHERE worker_id IS NULL;
-                CREATE UNIQUE INDEX idx_skills_name_per_worker ON skills(name, worker_id) WHERE worker_id IS NOT NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_global ON skills(name) WHERE worker_id IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_per_worker ON skills(name, worker_id) WHERE worker_id IS NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS worker_skills (
                     worker_id INTEGER NOT NULL REFERENCES swarm_workers(id) ON DELETE CASCADE,
