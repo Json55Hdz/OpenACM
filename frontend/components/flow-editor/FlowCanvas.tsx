@@ -10,6 +10,14 @@ import { NODE_TYPES } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
 import { useAPI } from '@/hooks/use-api';
+import { Trash2 } from 'lucide-react';
+
+interface StartParam {
+  name: string;
+  type: 'string' | 'number' | 'boolean';
+  description: string;
+  required: boolean;
+}
 
 interface GraphJson {
   nodes: Array<{ id: string; type: string; config: Record<string, unknown>; position: { x: number; y: number } }>;
@@ -121,6 +129,26 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
     setNodes(nds => nds.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, ...patch } } : n));
   };
 
+  const startParamsOf = (node: Node): StartParam[] => (node.data.parameters as StartParam[] | undefined) || [];
+
+  const addStartParam = () => {
+    if (!selectedNode) return;
+    const next = [...startParamsOf(selectedNode), { name: '', type: 'string' as const, description: '', required: true }];
+    updateSelectedNodeData({ parameters: next });
+  };
+
+  const updateStartParam = (index: number, patch: Partial<StartParam>) => {
+    if (!selectedNode) return;
+    const next = startParamsOf(selectedNode).map((p, i) => i === index ? { ...p, ...patch } : p);
+    updateSelectedNodeData({ parameters: next });
+  };
+
+  const removeStartParam = (index: number) => {
+    if (!selectedNode) return;
+    const next = startParamsOf(selectedNode).filter((_, i) => i !== index);
+    updateSelectedNodeData({ parameters: next });
+  };
+
   const handleSave = () => onSave(JSON.stringify(toGraphJson(nodes, edges)));
 
   return (
@@ -171,6 +199,44 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
       {selectedNode && (
         <div className="shrink-0 p-2 text-[11px]" style={{ width: 220, border: '1px solid var(--acm-border)', borderRadius: 8, color: 'var(--acm-fg-2)' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>{selectedNode.type}</div>
+          {selectedNode.type === 'start' && (
+            <>
+              <label>Parámetros que el LLM puede enviar</label>
+              {((selectedNode.data.parameters as StartParam[] | undefined) || []).map((p, i) => (
+                <div key={i} className="flex flex-col gap-1 mb-2 p-1" style={{ border: '1px solid var(--acm-border)', borderRadius: 4 }}>
+                  <input
+                    className="acm-input w-full"
+                    placeholder="nombre (ej: producto)"
+                    value={p.name}
+                    onChange={e => updateStartParam(i, { name: e.target.value })}
+                  />
+                  <select
+                    className="acm-input w-full"
+                    value={p.type}
+                    onChange={e => updateStartParam(i, { type: e.target.value as StartParam['type'] })}
+                  >
+                    <option value="string">texto</option>
+                    <option value="number">número</option>
+                    <option value="boolean">verdadero/falso</option>
+                  </select>
+                  <input
+                    className="acm-input w-full"
+                    placeholder="descripción (ayuda al LLM a saber qué mandar)"
+                    value={p.description}
+                    onChange={e => updateStartParam(i, { description: e.target.value })}
+                  />
+                  <label className="flex items-center gap-1">
+                    <input type="checkbox" checked={p.required} onChange={e => updateStartParam(i, { required: e.target.checked })} />
+                    Obligatorio
+                  </label>
+                  <button onClick={() => removeStartParam(i)} className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] self-end">
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+              <button onClick={addStartParam} className="btn-secondary w-full">+ Parámetro</button>
+            </>
+          )}
           {selectedNode.type === 'http' && (
             <>
               <label>URL</label>
