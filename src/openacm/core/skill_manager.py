@@ -352,3 +352,95 @@ Make it practical and actionable. The AI should be able to immediately apply thi
             content=content,
             category="generated",
         )
+
+    async def create_worker_skill(
+        self,
+        worker_id: int,
+        name: str,
+        description: str,
+        content: str,
+        category: str = "custom",
+    ) -> dict[str, Any] | None:
+        """Create a skill private to one swarm worker. Unlike create_skill(),
+        this never touches the ./skills/ file-sync path — that path treats
+        every .md file as a global skill to (re)import on next startup, which
+        would silently make a "private" skill global again."""
+        skill_id = await self.database.create_skill(
+            name=name,
+            description=description,
+            content=content,
+            category=category,
+            is_builtin=False,
+            worker_id=worker_id,
+        )
+        return await self.database.get_skill(skill_id)
+
+    async def generate_worker_skill(
+        self,
+        worker_id: int,
+        name: str,
+        description: str,
+        use_cases: str,
+        llm_router=None,
+    ) -> dict[str, Any] | None:
+        """Generate a private, worker-scoped skill using the LLM — same
+        prompt shape as generate_skill(), but saved via create_worker_skill()
+        instead of create_skill()."""
+        if not llm_router:
+            raise ValueError("LLM router required for skill generation")
+
+        prompt = f"""Create a comprehensive skill guide for an AI assistant.
+
+Skill Name: {name}
+Description: {description}
+Use Cases: {use_cases}
+
+Write the skill content in Markdown format following this structure:
+
+# {name}
+
+## Overview
+Brief description of what this skill does.
+
+## Guidelines
+Detailed instructions, best practices, and specific patterns to follow.
+
+## Examples
+Concrete examples of how to apply this skill.
+
+## Common Pitfalls
+What to avoid and why.
+
+Make it practical and actionable. The AI should be able to immediately apply this knowledge.
+"""
+        response = await llm_router.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+        )
+        content = response.get("content", "")
+
+        return await self.create_worker_skill(
+            worker_id=worker_id,
+            name=name,
+            description=description,
+            content=content,
+            category="generated",
+        )
+
+    async def get_active_skills_prompt_for_worker(self, worker_id: int, user_message: str = "") -> str:
+        """Build a skills prompt for one swarm worker: its own active private
+        skills, plus whichever global skills it has enabled. Does not touch
+        self._active_skills / self._skills_cache — those are the main
+        assistant's global-only cache."""
+        private_skills = [s for s in await self.database.get_worker_private_skills(worker_id) if s["is_active"]]
+
+        enabled_ids = await self.database.get_worker_enabled_global_skill_ids(worker_id)
+        global_skills = await self.database.get_all_skills(active_only=True)
+        enabled_global_skills = [s for s in global_skills if s["id"] in enabled_ids]
+
+        combined = private_skills + enabled_global_skills
+        if not combined:
+            return ""
+
+        sections = [f"## {s['name']}\n\n{s['content']}" for s in combined]
+        return MSG_SKILL_CONTEXT_HEADER + "\n\n".join(sections) + MSG_SKILL_CONTEXT_FOOTER
