@@ -109,3 +109,27 @@ class TestTestFlowEndpoint:
         async with app_client as ac:
             resp = await ac.post("/api/agents/999/flows/7/test", json={"params": {}})
         assert resp.status_code == 404
+
+    async def test_graph_json_override_runs_the_supplied_graph_not_the_saved_one(self, app_client, _mock_state):
+        """A caller-supplied graph_json (the canvas's live, possibly-unsaved
+        state) must be used instead of the saved row, so testing doesn't
+        require saving first. FLOW_ROW's saved graph always returns "done";
+        this override uses a different template to prove it's not that one."""
+        override_graph = (
+            '{"nodes":[{"id":"start","type":"start","config":{"parameters":[]}},'
+            '{"id":"end","type":"end","config":{"template":"override-result"}}],'
+            '"edges":[{"from":"start","to":"end","fromHandle":"default"}]}'
+        )
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows/7/test",
+                json={"params": {}, "graph_json": override_graph},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["result"] == "override-result"
+
+    async def test_no_graph_json_override_falls_back_to_the_saved_graph(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
+        assert resp.status_code == 200
+        assert resp.json()["result"] == "done"

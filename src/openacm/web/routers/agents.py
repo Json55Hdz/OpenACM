@@ -219,12 +219,16 @@ def register_routes(app: FastAPI) -> None:
 
         data = await request.json()
         test_params = data.get("params", {})
+        # Prefer the caller-supplied graph (the canvas's current, possibly
+        # unsaved state) over the saved row, so "Probar flujo" doesn't
+        # require clicking "Guardar flujo" first every time.
+        graph_json_override = data.get("graph_json")
 
         async def get_connection(connection_id: int):
             return await _state.database.get_connection(connection_id)
 
         executor = FlowExecutor(get_connection=get_connection)
-        graph = _json.loads(flow["graph_json"])
+        graph = _json.loads(graph_json_override) if graph_json_override else _json.loads(flow["graph_json"])
         result = await executor.run(graph, test_params)
         return {"result": result}
 

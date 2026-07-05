@@ -90,9 +90,12 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
     setTesting(true);
     setTestResult(null);
     try {
+      // Test the graph as it currently stands in the canvas, not whatever
+      // was last saved — saving before every test run was real friction.
+      const currentGraph = JSON.stringify(toGraphJson(nodes, edges));
       const res = (await fetchAPI(`/api/agents/${agentId}/flows/${flow.id}/test`, {
         method: 'POST',
-        body: JSON.stringify({ params: testParams }),
+        body: JSON.stringify({ params: testParams, graph_json: currentGraph }),
       })) as { result: string };
       setTestResult(res.result);
     } catch {
