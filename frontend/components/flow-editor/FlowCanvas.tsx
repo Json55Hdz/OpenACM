@@ -175,9 +175,9 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
           <button onClick={runTest} disabled={testing} className="btn-secondary text-[11px] px-2 py-1 w-full">
             {testing ? 'Ejecutando...' : 'Probar flujo'}
           </button>
-          {testResult && (
+          {testResult !== null && (
             <div className="mt-1 p-1 text-[10px] whitespace-pre-wrap" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>
-              {testResult}
+              {testResult || '(el flujo no devolvió texto — revisa la plantilla del nodo Final)'}
             </div>
           )}
         </div>
