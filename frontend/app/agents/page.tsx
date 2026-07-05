@@ -979,7 +979,13 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
 
   const handleSave = async () => {
     try {
-      await update.mutateAsync({ id: agent.id, data: form });
+      // Only send the fields this tab actually has controls for — allowed_tools
+      // is saved independently by AgentToolsTab, and including the mount-time
+      // snapshot here would silently overwrite whatever was saved there since.
+      await update.mutateAsync({
+        id: agent.id,
+        data: { name: form.name, description: form.description, system_prompt: form.system_prompt },
+      });
       toast.success('Agent updated');
     } catch {
       toast.error('Failed to save agent');
