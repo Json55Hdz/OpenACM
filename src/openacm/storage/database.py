@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 32
+    _SCHEMA_VERSION = 33
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -976,6 +976,38 @@ class Database:
             await self._db.commit()
             log.info("Migration 32: per-worker skill scoping (skills.worker_id, worker_skills)")
 
+        # ── Migration 33: per-agent skill scoping ─────────────────────────
+        # Adds skills.agent_id (NULL = not agent-scoped, unchanged; set =
+        # private to that one Agent) and agent_skills (which GLOBAL skills a
+        # given agent has enabled) — the exact same shape as Migration 32's
+        # worker_id/worker_skills, but for the separate Agents feature.
+        # Unlike Migration 32, adding this column needs no table rebuild —
+        # SQLite supports ALTER TABLE ADD COLUMN for a plain nullable column
+        # fine; only the existing idx_skills_name_global index needs to be
+        # dropped and recreated, since its WHERE clause (worker_id IS NULL)
+        # doesn't yet know agent_id exists, and a global skill + an
+        # agent-scoped skill could otherwise collide on name.
+        if current < 33:
+            await self._db.execute(
+                "ALTER TABLE skills ADD COLUMN agent_id INTEGER REFERENCES agents(id) ON DELETE CASCADE"
+            )
+            await self._db.executescript("""
+                DROP INDEX IF EXISTS idx_skills_name_global;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_global
+                    ON skills(name) WHERE worker_id IS NULL AND agent_id IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_per_agent
+                    ON skills(name, agent_id) WHERE agent_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_skills_agent ON skills(agent_id);
+
+                CREATE TABLE IF NOT EXISTS agent_skills (
+                    agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+                    PRIMARY KEY (agent_id, skill_id)
+                );
+            """)
+            await self._db.commit()
+            log.info("Migration 33: per-agent skill scoping (skills.agent_id, agent_skills)")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1344,15 +1376,17 @@ class Database:
         category: str = "general",
         is_builtin: bool = False,
         worker_id: int | None = None,
+        agent_id: int | None = None,
     ) -> int:
-        """Create a new skill. worker_id=None makes it a global system skill;
-        set makes it private to that one swarm worker."""
+        """Create a new skill. worker_id=None + agent_id=None makes it a global system skill;
+        worker_id=set makes it private to that one swarm worker;
+        agent_id=set makes it private to that one agent."""
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, description, content, category, int(is_builtin), worker_id),
+            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id, agent_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (name, description, content, category, int(is_builtin), worker_id, agent_id),
         )
         await self._db.commit()
         return cursor.lastrowid
