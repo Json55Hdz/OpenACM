@@ -11,6 +11,8 @@ design rationale.
 import re
 from typing import Any, Callable, Coroutine
 
+import httpx
+
 _TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}")
 
 
@@ -48,7 +50,24 @@ class FlowExecutor:
 
     def __init__(self, get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None):
         self.get_connection = get_connection
-        self._HANDLERS: dict[str, Callable] = {}
+        self._HANDLERS: dict[str, Callable] = {"http": FlowExecutor._run_http_node}
+
+    async def _run_http_node(self, node: dict, params: dict, outputs: dict) -> Any:
+        cfg = node["config"]
+        url = substitute_templates(cfg["url"], params, outputs)
+        method = cfg.get("method", "GET").upper()
+        headers = {k: substitute_templates(v, params, outputs) for k, v in (cfg.get("headers") or {}).items()}
+        body = cfg.get("body")
+        if body:
+            body = substitute_templates(body, params, outputs)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.request(method, url, headers=headers, content=body)
+            response.raise_for_status()
+            try:
+                return response.json()
+            except Exception:
+                return response.text
 
     async def run(self, graph: dict, params: dict) -> str:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}

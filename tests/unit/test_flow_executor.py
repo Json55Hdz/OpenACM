@@ -1,6 +1,8 @@
 """Tests for FlowExecutor's core mechanics: template substitution and the
 minimal Start-to-End graph walk. Node-type-specific handlers (HTTP,
 Conditional, WooCommerce) are tested in their own dedicated test files."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
 from openacm.core.flow_executor import FlowExecutor, substitute_templates
 
 
@@ -85,3 +87,88 @@ class TestFlowExecutorStartToEnd:
         result = await executor.run(graph, params={})
 
         assert result.startswith("Error")
+
+
+def _http_graph(url="https://example.com/api", method="GET", headers=None, body=None):
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "config": {"parameters": []}},
+            {"id": "http1", "type": "http", "config": {"url": url, "method": method, "headers": headers or {}, "body": body}},
+            {"id": "end", "type": "end", "config": {"template": "{{http1.status}}"}},
+        ],
+        "edges": [
+            {"from": "start", "to": "http1", "fromHandle": "default"},
+            {"from": "http1", "to": "end", "fromHandle": "default"},
+        ],
+    }
+
+
+class TestHttpNode:
+    async def test_json_response_is_parsed_and_fields_are_addressable(self):
+        graph = _http_graph()
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"status": "ok"}
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(graph, params={})
+
+        assert result == "ok"
+
+    async def test_non_json_response_is_raw_text_and_has_no_dot_fields(self):
+        graph = _http_graph()
+        graph["nodes"][2]["config"]["template"] = "{{http1}}"
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "plain body"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(graph, params={})
+
+        assert result == "plain body"
+
+    async def test_http_error_stops_the_flow_and_returns_an_error_string(self):
+        graph = _http_graph()
+        mock_client = AsyncMock()
+        mock_client.request.side_effect = Exception("connection refused")
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(graph, params={})
+
+        assert result.startswith("Error in node 'http1'")
+        assert "connection refused" in result
+
+    async def test_url_and_body_support_template_substitution(self):
+        graph = _http_graph(url="https://example.com/{{producto}}", body='{"q": "{{producto}}"}')
+        graph["nodes"][0]["config"]["parameters"] = [{"name": "producto", "type": "string", "required": True}]
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"status": "ok"}
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client) as mock_cls:
+            executor = FlowExecutor()
+            await executor.run(graph, params={"producto": "zapatos"})
+
+        call_kwargs = mock_client.request.call_args
+        assert "zapatos" in call_kwargs.args[1] or "zapatos" in str(call_kwargs)
