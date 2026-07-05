@@ -24,6 +24,7 @@ def _mock_brain(monkeypatch):
         {"id": 2, "name": "p1", "description": "d", "content": "c", "category": "custom", "is_active": 1, "is_builtin": 0, "worker_id": 42},
     ])
     db.get_worker_enabled_global_skill_ids = AsyncMock(return_value={1})
+    db.get_skill = AsyncMock(return_value=None)
     db.enable_worker_skill = AsyncMock()
     db.disable_worker_skill = AsyncMock()
     monkeypatch.setattr(_state, "database", db)
@@ -65,6 +66,14 @@ class TestEnableDisableWorkerSkill:
             resp = await ac.delete("/api/swarms/1/workers/42/skills/1")
         assert resp.status_code == 200
         db.disable_worker_skill.assert_awaited_once_with(42, 1)
+
+    async def test_enable_rejects_a_private_skill_id_with_400(self, app_client, _mock_brain):
+        db, _ = _mock_brain
+        db.get_skill = AsyncMock(return_value={"id": 2, "name": "p1", "worker_id": 42})
+        async with app_client as ac:
+            resp = await ac.post("/api/swarms/1/workers/42/skills/2")
+        assert resp.status_code == 400
+        db.enable_worker_skill.assert_not_awaited()
 
 
 class TestGenerateWorkerSkill:

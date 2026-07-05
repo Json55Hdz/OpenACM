@@ -400,6 +400,9 @@ def register_routes(app: FastAPI) -> None:
     async def enable_worker_skill(swarm_id: int, worker_id: int, skill_id: int):
         if not _state.database:
             raise HTTPException(503, "Database not available")
+        skill = await _state.database.get_skill(skill_id)
+        if skill and skill.get("worker_id") is not None:
+            raise HTTPException(400, "Cannot enable a private skill as a global one")
         await _state.database.enable_worker_skill(worker_id, skill_id)
         return {"status": "ok", "enabled": True}
 
