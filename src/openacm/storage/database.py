@@ -1414,10 +1414,10 @@ class Database:
         return dict(row) if row else None
 
     async def get_all_skills(self, active_only: bool = False) -> list[dict[str, Any]]:
-        """Get all GLOBAL skills (never includes a worker-private skill)."""
+        """Get all GLOBAL skills (never includes a worker- or agent-private skill)."""
         if not self._db:
             return []
-        query = "SELECT * FROM skills WHERE worker_id IS NULL"
+        query = "SELECT * FROM skills WHERE worker_id IS NULL AND agent_id IS NULL"
         if active_only:
             query += " AND is_active = 1"
         query += " ORDER BY category, name"
@@ -1522,6 +1522,47 @@ class Database:
         await self._db.execute(
             "DELETE FROM worker_skills WHERE worker_id = ? AND skill_id = ?",
             (worker_id, skill_id),
+        )
+        await self._db.commit()
+
+    async def get_agent_private_skills(self, agent_id: int) -> list[dict[str, Any]]:
+        """Get an Agent's own private skills (agent_id set to it)."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM skills WHERE agent_id = ? ORDER BY category, name",
+            (agent_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_agent_enabled_global_skill_ids(self, agent_id: int) -> set[int]:
+        """IDs of global skills this Agent has opted into."""
+        if not self._db:
+            return set()
+        cursor = await self._db.execute(
+            "SELECT skill_id FROM agent_skills WHERE agent_id = ?", (agent_id,)
+        )
+        rows = await cursor.fetchall()
+        return {row["skill_id"] for row in rows}
+
+    async def enable_agent_skill(self, agent_id: int, skill_id: int) -> None:
+        """Enable a global skill for an Agent. Idempotent."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT OR IGNORE INTO agent_skills (agent_id, skill_id) VALUES (?, ?)",
+            (agent_id, skill_id),
+        )
+        await self._db.commit()
+
+    async def disable_agent_skill(self, agent_id: int, skill_id: int) -> None:
+        """Disable a global skill for an Agent. Idempotent."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "DELETE FROM agent_skills WHERE agent_id = ? AND skill_id = ?",
+            (agent_id, skill_id),
         )
         await self._db.commit()
 

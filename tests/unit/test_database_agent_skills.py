@@ -102,3 +102,72 @@ class TestMigration33Schema:
         cursor = await db._db.execute("SELECT COUNT(*) as n FROM skills WHERE id = ?", (global_skill_id,))
         assert (await cursor.fetchone())["n"] == 1
         await db.close()
+
+
+class TestAgentScopedSkillMethods:
+    async def test_create_skill_with_agent_id_is_excluded_from_get_all_skills(self):
+        db = await _make_db()
+        a1 = await _make_agent(db)
+        await db.create_skill(name="global1", description="d", content="c")
+        await db.create_skill(name="private1", description="d", content="c", agent_id=a1)
+
+        all_skills = await db.get_all_skills()
+
+        names = {s["name"] for s in all_skills}
+        assert names == {"global1"}
+        await db.close()
+
+    async def test_get_agent_private_skills_returns_only_that_agents_skills(self):
+        db = await _make_db()
+        a1 = await _make_agent(db, "a1")
+        a2 = await _make_agent(db, "a2")
+        await db.create_skill(name="p1", description="d", content="c", agent_id=a1)
+        await db.create_skill(name="p2", description="d", content="c", agent_id=a2)
+
+        a1_skills = await db.get_agent_private_skills(a1)
+
+        assert [s["name"] for s in a1_skills] == ["p1"]
+        await db.close()
+
+    async def test_enable_and_disable_agent_skill(self):
+        db = await _make_db()
+        a1 = await _make_agent(db)
+        skill_id = await db.create_skill(name="g1", description="d", content="c")
+
+        await db.enable_agent_skill(a1, skill_id)
+        assert await db.get_agent_enabled_global_skill_ids(a1) == {skill_id}
+
+        await db.disable_agent_skill(a1, skill_id)
+        assert await db.get_agent_enabled_global_skill_ids(a1) == set()
+        await db.close()
+
+    async def test_enable_agent_skill_is_idempotent(self):
+        db = await _make_db()
+        a1 = await _make_agent(db)
+        skill_id = await db.create_skill(name="g1", description="d", content="c")
+
+        await db.enable_agent_skill(a1, skill_id)
+        await db.enable_agent_skill(a1, skill_id)  # must not raise (duplicate PK)
+
+        assert await db.get_agent_enabled_global_skill_ids(a1) == {skill_id}
+        await db.close()
+
+    async def test_worker_scoped_and_agent_scoped_skills_are_mutually_exclusive_in_listings(self):
+        """A worker's private skills and an agent's private skills never leak into each other."""
+        db = await _make_db()
+        swarm_id = await db.create_swarm(name="s", goal="g")
+        worker_id = await db.create_swarm_worker(
+            swarm_id=swarm_id, name="w1", role="worker",
+            description="", system_prompt="p",
+            model=None, allowed_tools="", workspace_path="/tmp",
+        )
+        agent_id = await _make_agent(db)
+        await db.create_skill(name="worker-only", description="d", content="c", worker_id=worker_id)
+        await db.create_skill(name="agent-only", description="d", content="c", agent_id=agent_id)
+
+        worker_skills = await db.get_worker_private_skills(worker_id)
+        agent_skills = await db.get_agent_private_skills(agent_id)
+
+        assert [s["name"] for s in worker_skills] == ["worker-only"]
+        assert [s["name"] for s in agent_skills] == ["agent-only"]
+        await db.close()
