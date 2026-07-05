@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 31
+    _SCHEMA_VERSION = 32
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -932,6 +932,49 @@ class Database:
             """)
             await self._db.commit()
             log.info("Migration 31: add plugin_state table")
+
+        # ── Migration 32: per-worker skill scoping ────────────────────────
+        # Adds skills.worker_id (NULL = global system skill, unchanged;
+        # set = private to that one swarm worker) and worker_skills (which
+        # GLOBAL skills a given worker has enabled). SQLite can't ALTER a
+        # UNIQUE constraint in place, so we rebuild skills with the same
+        # columns plus worker_id, then replace the bare UNIQUE(name) with
+        # two partial unique indexes — a plain composite UNIQUE(name,
+        # worker_id) would NOT work here since SQL treats NULL != NULL,
+        # which would let multiple global skills share a name.
+        if current < 32:
+            await self._db.executescript("""
+                CREATE TABLE skills_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    category TEXT DEFAULT 'general',
+                    is_active INTEGER DEFAULT 1,
+                    is_builtin INTEGER DEFAULT 0,
+                    worker_id INTEGER REFERENCES swarm_workers(id) ON DELETE CASCADE,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO skills_new (id, name, description, content, category, is_active, is_builtin, created_at, updated_at)
+                    SELECT id, name, description, content, category, is_active, is_builtin, created_at, updated_at FROM skills;
+                DROP TABLE skills;
+                ALTER TABLE skills_new RENAME TO skills;
+
+                CREATE INDEX IF NOT EXISTS idx_skills_category ON skills(category);
+                CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
+                CREATE INDEX IF NOT EXISTS idx_skills_worker ON skills(worker_id);
+                CREATE UNIQUE INDEX idx_skills_name_global ON skills(name) WHERE worker_id IS NULL;
+                CREATE UNIQUE INDEX idx_skills_name_per_worker ON skills(name, worker_id) WHERE worker_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS worker_skills (
+                    worker_id INTEGER NOT NULL REFERENCES swarm_workers(id) ON DELETE CASCADE,
+                    skill_id  INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+                    PRIMARY KEY (worker_id, skill_id)
+                );
+            """)
+            await self._db.commit()
+            log.info("Migration 32: per-worker skill scoping (skills.worker_id, worker_skills)")
 
         # Save new version
         await self._db.execute(
