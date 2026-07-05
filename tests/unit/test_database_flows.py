@@ -74,3 +74,115 @@ class TestMigration34Schema:
         assert row["graph_json"] == '{"nodes":[],"edges":[]}'
         assert row["description"] == ""
         await db.close()
+
+
+class TestFlowCRUD:
+    async def test_create_and_get_flow(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+
+        flow_id = await db.create_flow(agent_id=agent_id, name="check-website", description="Checks a URL")
+        flow = await db.get_flow(flow_id)
+
+        assert flow["name"] == "check-website"
+        assert flow["description"] == "Checks a URL"
+        assert flow["agent_id"] == agent_id
+        assert flow["is_active"] == 1
+        await db.close()
+
+    async def test_get_agent_flows_returns_only_that_agents_flows(self):
+        db = await _make_db()
+        a1 = await _make_agent(db, "a1")
+        a2 = await _make_agent(db, "a2")
+        await db.create_flow(agent_id=a1, name="f1")
+        await db.create_flow(agent_id=a2, name="f2")
+
+        flows = await db.get_agent_flows(a1)
+
+        assert [f["name"] for f in flows] == ["f1"]
+        await db.close()
+
+    async def test_get_agent_flows_active_only_filters_inactive(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        active_id = await db.create_flow(agent_id=agent_id, name="active-flow")
+        inactive_id = await db.create_flow(agent_id=agent_id, name="inactive-flow")
+        await db.update_flow(inactive_id, is_active=0)
+
+        flows = await db.get_agent_flows(agent_id, active_only=True)
+
+        assert [f["id"] for f in flows] == [active_id]
+        await db.close()
+
+    async def test_update_flow_graph_json(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+
+        ok = await db.update_flow(flow_id, graph_json='{"nodes":[{"id":"n1"}],"edges":[]}')
+
+        assert ok
+        flow = await db.get_flow(flow_id)
+        assert flow["graph_json"] == '{"nodes":[{"id":"n1"}],"edges":[]}'
+        await db.close()
+
+    async def test_delete_flow(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+
+        ok = await db.delete_flow(flow_id)
+
+        assert ok
+        assert await db.get_flow(flow_id) is None
+        await db.close()
+
+
+class TestConnectionCRUD:
+    async def test_create_and_get_connection_includes_config(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+
+        conn_id = await db.create_connection(
+            agent_id=agent_id, name="Mi Tienda", type="woocommerce",
+            config='{"url": "https://example.com", "consumer_key": "ck_1", "consumer_secret": "cs_1"}',
+        )
+        conn = await db.get_connection(conn_id)
+
+        assert conn["name"] == "Mi Tienda"
+        assert conn["type"] == "woocommerce"
+        assert "ck_1" in conn["config"]
+        await db.close()
+
+    async def test_get_agent_connections_excludes_config(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        await db.create_connection(agent_id=agent_id, name="Mi Tienda", type="woocommerce", config='{"consumer_secret": "topsecret"}')
+
+        connections = await db.get_agent_connections(agent_id)
+
+        assert connections[0]["name"] == "Mi Tienda"
+        assert "config" not in connections[0]
+
+    async def test_update_connection_config(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        conn_id = await db.create_connection(agent_id=agent_id, name="Mi Tienda", type="woocommerce", config='{"consumer_key":"old"}')
+
+        ok = await db.update_connection(conn_id, config='{"consumer_key":"new"}')
+
+        assert ok
+        conn = await db.get_connection(conn_id)
+        assert "new" in conn["config"]
+        await db.close()
+
+    async def test_delete_connection(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        conn_id = await db.create_connection(agent_id=agent_id, name="Mi Tienda", type="woocommerce", config="{}")
+
+        ok = await db.delete_connection(conn_id)
+
+        assert ok
+        assert await db.get_connection(conn_id) is None
+        await db.close()

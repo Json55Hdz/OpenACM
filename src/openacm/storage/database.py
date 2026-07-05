@@ -1599,6 +1599,125 @@ class Database:
         )
         await self._db.commit()
 
+    # ─── Agent Node Flows ───────────────────────────────────
+
+    async def create_flow(
+        self,
+        agent_id: int,
+        name: str,
+        description: str = "",
+        graph_json: str = '{"nodes":[],"edges":[]}',
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO flows (agent_id, name, description, graph_json) VALUES (?, ?, ?, ?)",
+            (agent_id, name, description, graph_json),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_flow(self, flow_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM flows WHERE id = ?", (flow_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_agent_flows(self, agent_id: int, active_only: bool = False) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        query = "SELECT * FROM flows WHERE agent_id = ?"
+        if active_only:
+            query += " AND is_active = 1"
+        query += " ORDER BY name"
+        cursor = await self._db.execute(query, (agent_id,))
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def update_flow(self, flow_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"name", "description", "graph_json", "is_active"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(flow_id)
+        cursor = await self._db.execute(
+            f"UPDATE flows SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def delete_flow(self, flow_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM flows WHERE id = ?", (flow_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # ─── Agent Connections ────────────────────────────────────
+
+    async def create_connection(self, agent_id: int, name: str, type: str, config: str) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO connections (agent_id, name, type, config) VALUES (?, ?, ?, ?)",
+            (agent_id, name, type, config),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_connection(self, connection_id: int) -> dict[str, Any] | None:
+        """Includes config — for internal use by FlowExecutor only, never
+        return this directly from an API list/get endpoint."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM connections WHERE id = ?", (connection_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_agent_connections(self, agent_id: int) -> list[dict[str, Any]]:
+        """Excludes config — safe to return from an API response."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT id, agent_id, name, type, created_at FROM connections WHERE agent_id = ? ORDER BY name",
+            (agent_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def update_connection(self, connection_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        allowed = {"name", "config"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key in allowed:
+                updates.append(f"{key} = ?")
+                params.append(val)
+        if not updates:
+            return False
+        params.append(connection_id)
+        cursor = await self._db.execute(
+            f"UPDATE connections SET {', '.join(updates)} WHERE id = ?", params
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def delete_connection(self, connection_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM connections WHERE id = ?", (connection_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
     # ─── Settings ─────────────────────────────────────────────
 
     async def get_setting(self, key: str) -> str | None:
