@@ -1343,14 +1343,16 @@ class Database:
         content: str,
         category: str = "general",
         is_builtin: bool = False,
+        worker_id: int | None = None,
     ) -> int:
-        """Create a new skill."""
+        """Create a new skill. worker_id=None makes it a global system skill;
+        set makes it private to that one swarm worker."""
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO skills (name, description, content, category, is_builtin) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, description, content, category, int(is_builtin)),
+            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, description, content, category, int(is_builtin), worker_id),
         )
         await self._db.commit()
         return cursor.lastrowid
@@ -1378,12 +1380,12 @@ class Database:
         return dict(row) if row else None
 
     async def get_all_skills(self, active_only: bool = False) -> list[dict[str, Any]]:
-        """Get all skills."""
+        """Get all GLOBAL skills (never includes a worker-private skill)."""
         if not self._db:
             return []
-        query = "SELECT * FROM skills"
+        query = "SELECT * FROM skills WHERE worker_id IS NULL"
         if active_only:
-            query += " WHERE is_active = 1"
+            query += " AND is_active = 1"
         query += " ORDER BY category, name"
         cursor = await self._db.execute(query)
         rows = await cursor.fetchall()
@@ -1447,6 +1449,47 @@ class Database:
         )
         await self._db.commit()
         return True
+
+    async def get_worker_private_skills(self, worker_id: int) -> list[dict[str, Any]]:
+        """Get a worker's own private skills (worker_id set to it)."""
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM skills WHERE worker_id = ? ORDER BY category, name",
+            (worker_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_worker_enabled_global_skill_ids(self, worker_id: int) -> set[int]:
+        """IDs of global skills this worker has opted into."""
+        if not self._db:
+            return set()
+        cursor = await self._db.execute(
+            "SELECT skill_id FROM worker_skills WHERE worker_id = ?", (worker_id,)
+        )
+        rows = await cursor.fetchall()
+        return {row["skill_id"] for row in rows}
+
+    async def enable_worker_skill(self, worker_id: int, skill_id: int) -> None:
+        """Enable a global skill for a worker. Idempotent."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT OR IGNORE INTO worker_skills (worker_id, skill_id) VALUES (?, ?)",
+            (worker_id, skill_id),
+        )
+        await self._db.commit()
+
+    async def disable_worker_skill(self, worker_id: int, skill_id: int) -> None:
+        """Disable a global skill for a worker. Idempotent."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "DELETE FROM worker_skills WHERE worker_id = ? AND skill_id = ?",
+            (worker_id, skill_id),
+        )
+        await self._db.commit()
 
     # ─── Settings ─────────────────────────────────────────────
 

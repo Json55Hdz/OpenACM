@@ -99,3 +99,52 @@ class TestMigration32Schema:
         cursor = await db._db.execute("SELECT COUNT(*) as n FROM skills WHERE id = ?", (global_skill_id,))
         assert (await cursor.fetchone())["n"] == 1
         await db.close()
+
+
+class TestWorkerScopedSkillMethods:
+    async def test_create_skill_with_worker_id_is_excluded_from_get_all_skills(self):
+        db = await _make_db()
+        _, w1 = await _make_swarm_and_worker(db)
+        await db.create_skill(name="global1", description="d", content="c")
+        await db.create_skill(name="private1", description="d", content="c", worker_id=w1)
+
+        all_skills = await db.get_all_skills()
+
+        names = {s["name"] for s in all_skills}
+        assert names == {"global1"}
+        await db.close()
+
+    async def test_get_worker_private_skills_returns_only_that_workers_skills(self):
+        db = await _make_db()
+        _, w1 = await _make_swarm_and_worker(db, "w1")
+        _, w2 = await _make_swarm_and_worker(db, "w2")
+        await db.create_skill(name="p1", description="d", content="c", worker_id=w1)
+        await db.create_skill(name="p2", description="d", content="c", worker_id=w2)
+
+        w1_skills = await db.get_worker_private_skills(w1)
+
+        assert [s["name"] for s in w1_skills] == ["p1"]
+        await db.close()
+
+    async def test_enable_and_disable_worker_skill(self):
+        db = await _make_db()
+        _, w1 = await _make_swarm_and_worker(db)
+        skill_id = await db.create_skill(name="g1", description="d", content="c")
+
+        await db.enable_worker_skill(w1, skill_id)
+        assert await db.get_worker_enabled_global_skill_ids(w1) == {skill_id}
+
+        await db.disable_worker_skill(w1, skill_id)
+        assert await db.get_worker_enabled_global_skill_ids(w1) == set()
+        await db.close()
+
+    async def test_enable_worker_skill_is_idempotent(self):
+        db = await _make_db()
+        _, w1 = await _make_swarm_and_worker(db)
+        skill_id = await db.create_skill(name="g1", description="d", content="c")
+
+        await db.enable_worker_skill(w1, skill_id)
+        await db.enable_worker_skill(w1, skill_id)  # must not raise (duplicate PK)
+
+        assert await db.get_worker_enabled_global_skill_ids(w1) == {skill_id}
+        await db.close()
