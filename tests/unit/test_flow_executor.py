@@ -238,3 +238,103 @@ class TestConditionalNode:
         # end_true's template is "YES: {{cond1}}" — if the stored output were the
         # boolean True/False instead of the passthrough string, this would read "YES: True".
         assert result == "YES: zapatos"
+
+
+import json as _json
+
+
+def _woo_graph(connection_id=1, search_term="{{producto}}"):
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "config": {"parameters": [{"name": "producto", "type": "string", "required": True}]}},
+            {"id": "woo1", "type": "woocommerce", "config": {"connection_id": connection_id, "search_term": search_term}},
+            {"id": "end", "type": "end", "config": {"template": "{{woo1}}"}},
+        ],
+        "edges": [
+            {"from": "start", "to": "woo1", "fromHandle": "default"},
+            {"from": "woo1", "to": "end", "fromHandle": "default"},
+        ],
+    }
+
+
+def _connection_row(url="https://tienda.example.com", ck="ck_123", cs="cs_456"):
+    return {"id": 1, "config": _json.dumps({"url": url, "consumer_key": ck, "consumer_secret": cs})}
+
+
+class TestWooCommerceNode:
+    async def test_formats_top_5_products(self):
+        products = [
+            {"name": "Zapatos rojos", "price": "49.99", "stock_quantity": 3, "manage_stock": True,
+             "short_description": "<p>Comodos y <b>bonitos</b></p>", "permalink": "https://tienda.example.com/zapatos-rojos"},
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        assert "Zapatos rojos" in result
+        assert "$49.99" in result
+        assert "Comodos y bonitos" in result  # HTML stripped
+        assert "https://tienda.example.com/zapatos-rojos" in result
+
+    async def test_no_products_found_message(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result = await executor.run(_woo_graph(), params={"producto": "inexistente"})
+
+        assert "No products found" in result
+
+    async def test_missing_connection_is_an_error(self):
+        async def get_connection(conn_id):
+            return None
+
+        executor = FlowExecutor(get_connection=get_connection)
+        result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        assert result.startswith("Error in node 'woo1'")
+
+    async def test_no_get_connection_configured_is_an_error(self):
+        executor = FlowExecutor()  # get_connection defaults to None
+        result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        assert result.startswith("Error in node 'woo1'")
+
+    async def test_search_uses_basic_auth_with_connection_credentials(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row(ck="my_key", cs="my_secret")
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            await executor.run(_woo_graph(), params={"producto": "x"})
+
+        _, call_kwargs = mock_client.get.call_args
+        assert call_kwargs["auth"] == ("my_key", "my_secret")

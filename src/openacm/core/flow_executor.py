@@ -8,6 +8,7 @@ There are no loops, no multi-input nodes, and no rejoined branches — see
 docs/superpowers/specs/2026-07-05-agent-node-flows-design.md for the full
 design rationale.
 """
+import json as _json
 import re
 from typing import Any, Callable, Coroutine
 
@@ -55,6 +56,7 @@ class FlowExecutor:
         self._HANDLERS: dict[str, Callable] = {
             "http": FlowExecutor._run_http_node,
             "conditional": FlowExecutor._run_conditional_node,
+            "woocommerce": FlowExecutor._run_woocommerce_node,
         }
 
     async def _run_http_node(self, node: dict, params: dict, outputs: dict) -> Any:
@@ -93,6 +95,53 @@ class FlowExecutor:
             branch = resolved.lower().startswith("error")
 
         return {"branch": branch, "passthrough": resolved}
+
+    async def _run_woocommerce_node(self, node: dict, params: dict, outputs: dict) -> str:
+        cfg = node["config"]
+        search_term = substitute_templates(cfg["search_term"], params, outputs)
+
+        if not self.get_connection:
+            raise RuntimeError("No connection lookup configured for this flow executor")
+
+        connection = await self.get_connection(cfg["connection_id"])
+        if not connection:
+            raise RuntimeError(f"Connection {cfg['connection_id']} not found")
+
+        conn_config = _json.loads(connection["config"])
+        woo_url = conn_config["url"].rstrip("/")
+        if not woo_url.endswith("/wp-json/wc/v3/products"):
+            woo_url += "/wp-json/wc/v3/products"
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                woo_url,
+                params={"search": search_term},
+                auth=(conn_config["consumer_key"], conn_config["consumer_secret"]),
+            )
+            response.raise_for_status()
+            products = response.json()
+
+        if not products:
+            return f"No products found for query: '{search_term}'."
+
+        output = [f"Search results for '{search_term}':"]
+        for p in products[:5]:
+            stock = p.get("stock_quantity")
+            stock_text = str(stock) if stock is not None else ("In stock" if p.get("manage_stock") is False else "Out of stock")
+
+            raw_desc = p.get("short_description") or p.get("description", "")
+            clean_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()
+            clean_desc = re.sub(r"\s+", " ", clean_desc)
+
+            output.append(f"- Product: {p.get('name')}")
+            output.append(f"  Price: ${p.get('price')}")
+            output.append(f"  Stock: {stock_text}")
+            if clean_desc:
+                shortened = clean_desc[:300] + "..." if len(clean_desc) > 300 else clean_desc
+                output.append(f"  Description: {shortened}")
+            output.append(f"  Link: {p.get('permalink')}")
+
+        return "\n".join(output)
 
     async def run(self, graph: dict, params: dict) -> str:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
