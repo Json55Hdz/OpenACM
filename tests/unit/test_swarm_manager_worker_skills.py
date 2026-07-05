@@ -17,7 +17,10 @@ SWARM = {"goal": "test goal", "working_path": None}
 
 
 class TestBuildWorkerSystemPromptWithSkills:
-    def test_appends_skills_prompt_when_provided(self):
+    # async so pytest-asyncio's auto mode provides a real running event loop —
+    # SwarmManager.__init__ calls asyncio.get_event_loop(), which is fragile/
+    # order-dependent when constructed from a plain sync test with no loop.
+    async def test_appends_skills_prompt_when_provided(self):
         manager = _make_manager()
 
         result = manager._build_worker_system_prompt(WORKER, SWARM, [WORKER], skills_prompt="## my-skill\n\ndo the thing")
@@ -25,7 +28,7 @@ class TestBuildWorkerSystemPromptWithSkills:
         assert "## my-skill" in result
         assert "do the thing" in result
 
-    def test_no_skills_prompt_leaves_output_unchanged_from_before(self):
+    async def test_no_skills_prompt_leaves_output_unchanged_from_before(self):
         manager = _make_manager()
 
         with_empty = manager._build_worker_system_prompt(WORKER, SWARM, [WORKER], skills_prompt="")
