@@ -228,6 +228,60 @@ def register_routes(app: FastAPI) -> None:
         result = await executor.run(graph, test_params)
         return {"result": result}
 
+    # ─── Connections ────────────────────────────────────────
+
+    @app.get("/api/agents/{agent_id}/connections")
+    async def list_agent_connections(agent_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        return await _state.database.get_agent_connections(agent_id)
+
+    @app.post("/api/agents/{agent_id}/connections")
+    async def create_agent_connection(agent_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        import json as _json
+        config = _json.dumps({
+            "url": data.get("url", ""),
+            "consumer_key": data.get("consumer_key", ""),
+            "consumer_secret": data.get("consumer_secret", ""),
+        })
+        connection_id = await _state.database.create_connection(
+            agent_id=agent_id, name=data.get("name", "Untitled connection"),
+            type=data.get("type", "woocommerce"), config=config,
+        )
+        return {"id": connection_id, "name": data.get("name"), "type": data.get("type")}
+
+    @app.put("/api/agents/{agent_id}/connections/{connection_id}")
+    async def update_agent_connection(agent_id: int, connection_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        kwargs: dict = {}
+        if "name" in data:
+            kwargs["name"] = data["name"]
+        if any(k in data for k in ("url", "consumer_key", "consumer_secret")):
+            import json as _json
+            kwargs["config"] = _json.dumps({
+                "url": data.get("url", ""),
+                "consumer_key": data.get("consumer_key", ""),
+                "consumer_secret": data.get("consumer_secret", ""),
+            })
+        ok = await _state.database.update_connection(connection_id, **kwargs)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        return {"status": "ok"}
+
+    @app.delete("/api/agents/{agent_id}/connections/{connection_id}")
+    async def delete_agent_connection(agent_id: int, connection_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _state.database.delete_connection(connection_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connection not found")
+        return {"status": "ok", "deleted": True}
+
     # ─── Knowledge Base ───────────────────────────────────────
 
     def _knowledge_public(item: dict) -> dict:
