@@ -109,6 +109,53 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="Agent not found")
         return {"status": "ok", "deleted": True}
 
+    # ─── Skills ─────────────────────────────────────────────
+
+    @app.get("/api/agents/{agent_id}/skills")
+    async def get_agent_skills(agent_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        global_skills = await _state.database.get_all_skills()
+        enabled_ids = await _state.database.get_agent_enabled_global_skill_ids(agent_id)
+        annotated = [{**s, "enabled": s["id"] in enabled_ids} for s in global_skills]
+        private_skills = await _state.database.get_agent_private_skills(agent_id)
+        return {"global_skills": annotated, "private_skills": private_skills}
+
+    @app.post("/api/agents/{agent_id}/skills/generate")
+    async def generate_agent_skill_endpoint(agent_id: int, request: Request):
+        if not _state.brain or not _state.brain.skill_manager:
+            raise HTTPException(status_code=503, detail="Skill manager not available")
+        data = await request.json()
+        try:
+            skill = await _state.brain.skill_manager.generate_agent_skill(
+                agent_id=agent_id,
+                name=data["name"],
+                description=data["description"],
+                use_cases=data.get("use_cases", ""),
+                llm_router=_state.brain.llm_router,
+            )
+            return skill
+        except Exception as e:
+            log.error("Failed to generate agent skill", error=str(e))
+            raise HTTPException(status_code=500, detail="Failed to generate skill")
+
+    @app.post("/api/agents/{agent_id}/skills/{skill_id}")
+    async def enable_agent_skill(agent_id: int, skill_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        skill = await _state.database.get_skill(skill_id)
+        if skill and skill.get("agent_id") is not None:
+            raise HTTPException(400, "Cannot enable a private skill as a global one")
+        await _state.database.enable_agent_skill(agent_id, skill_id)
+        return {"status": "ok", "enabled": True}
+
+    @app.delete("/api/agents/{agent_id}/skills/{skill_id}")
+    async def disable_agent_skill(agent_id: int, skill_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        await _state.database.disable_agent_skill(agent_id, skill_id)
+        return {"status": "ok", "enabled": False}
+
     # ─── Knowledge Base ───────────────────────────────────────
 
     def _knowledge_public(item: dict) -> dict:
