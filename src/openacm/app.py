@@ -475,6 +475,7 @@ class OpenACM:
                 tool_registry=self.tool_registry,
                 memory=self.memory,
                 event_bus=self.event_bus,
+                skill_manager=self.skill_manager,
             )
             console.print("  [green]✓[/green] Swarm manager ready")
         except Exception as e:

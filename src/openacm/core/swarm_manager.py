@@ -45,10 +45,11 @@ EVENT_SWARM_TASK_UPDATED = "swarm:task_updated"
 class SwarmManager:
     """Manages swarm lifecycle: planning, execution, and worker coordination."""
 
-    def __init__(self, database, llm_router, tool_registry, memory, event_bus):
+    def __init__(self, database, llm_router, tool_registry, memory, event_bus, skill_manager=None):
         self.db = database
         self.llm_router = llm_router
         self.tool_registry = tool_registry
+        self.skill_manager = skill_manager
         self.memory = memory
         self.event_bus = event_bus
         # Running swarm tasks keyed by swarm_id
@@ -1070,7 +1071,10 @@ class SwarmManager:
             )
 
             # System prompt with swarm awareness
-            system_prompt = self._build_worker_system_prompt(worker, swarm, all_workers)
+            skills_prompt = ""
+            if self.skill_manager:
+                skills_prompt = await self.skill_manager.get_active_skills_prompt_for_worker(worker["id"])
+            system_prompt = self._build_worker_system_prompt(worker, swarm, all_workers, skills_prompt)
 
             config = AssistantConfig(
                 name=worker["name"],
@@ -1320,9 +1324,13 @@ class SwarmManager:
             context = self._build_worker_context(swarm, worker, task, messages_in, dep_outputs or None)
             context += f"\n\n**Debate perspective — adopt this lens for your solution:** {perspective}"
 
+            worker_skills_prompt = ""
+            if self.skill_manager:
+                worker_skills_prompt = await self.skill_manager.get_active_skills_prompt_for_worker(worker["id"])
+
             config = AssistantConfig(
                 name=worker["name"],
-                system_prompt=self._build_worker_system_prompt(worker, swarm, all_workers),
+                system_prompt=self._build_worker_system_prompt(worker, swarm, all_workers, worker_skills_prompt),
                 max_tool_iterations=20,
                 onboarding_completed=True,
             )
@@ -1737,9 +1745,9 @@ BAD Details (worker still has to investigate):
   ✗ "Update to match the schema"
 
 GOOD Details (worker knows exactly what to write):
-  ✓ "File has NARRATIVES for step-1..step-4. Add exactly 3 new entries after step-4 following this format: {\"step-5\":{\"title\":\"...\",\"text\":\"...\"},\"step-6\":{...},\"step-7\":{...}}. Copy the structure from existing step-4 entry."
+  ✓ "File has NARRATIVES for step-1..step-4. Add exactly 3 new entries after step-4 following this format: {{"step-5":{{"title":"...","text":"..."}},"step-6":{{...}},"step-7":{{...}}}}. Copy the structure from existing step-4 entry."
   ✓ "Replace line: const MAX = 10 with: const MAX = 50 in the config block at the top of the file."
-  ✓ "Create file with these exact fields: {id, name, email, created_at}. Use declarative_base from db/base.py (already written by DB Worker)."
+  ✓ "Create file with these exact fields: {{id, name, email, created_at}}. Use declarative_base from db/base.py (already written by DB Worker)."
 
 **Dependencies — decision rule**
 Add task A to depends_on of task B if and only if: B needs to open or import a file that A creates or modifies.
@@ -1908,7 +1916,7 @@ Rules:
         return "failed", "Worker produced no output and did not confirm completion (missing TASK_STATUS marker)"
 
     def _build_worker_system_prompt(
-        self, worker: dict, swarm: dict, all_workers: list[dict]
+        self, worker: dict, swarm: dict, all_workers: list[dict], skills_prompt: str = ""
     ) -> str:
         teammates = [
             f"- {w['name']}: {w.get('description', w.get('role', 'worker'))}"
@@ -1929,8 +1937,12 @@ Rules:
 
         shared_ws = (swarm.get("working_path") or "").strip() or worker["workspace_path"]
 
+        base_prompt = worker["system_prompt"]
+        if skills_prompt:
+            base_prompt = f"{base_prompt}\n\n{skills_prompt}"
+
         return (
-            f"{worker['system_prompt']}\n\n"
+            f"{base_prompt}\n\n"
             f"---\n"
             f"**Swarm context:**\n"
             f"Project goal: {swarm['goal']}\n"
