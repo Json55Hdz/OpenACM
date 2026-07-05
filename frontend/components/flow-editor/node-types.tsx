@@ -8,6 +8,11 @@ const baseStyle: React.CSSProperties = {
   minWidth: 140,
 };
 
+const idStyle: React.CSSProperties = {
+  fontFamily: 'monospace', fontSize: 10, color: 'var(--acm-accent)', marginTop: 4,
+  userSelect: 'all', cursor: 'text',
+};
+
 export function StartNode({ data }: NodeProps) {
   return (
     <div style={{ ...baseStyle, borderColor: 'var(--acm-accent)' }}>
@@ -18,22 +23,24 @@ export function StartNode({ data }: NodeProps) {
   );
 }
 
-export function HttpNode({ data }: NodeProps) {
+export function HttpNode({ id, data }: NodeProps) {
   return (
     <div style={baseStyle}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>🌐 HTTP Request</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.method || 'GET')} {String(data.url || '')}</div>
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
   );
 }
 
-export function ConditionalNode({ data }: NodeProps) {
+export function ConditionalNode({ id, data }: NodeProps) {
   return (
     <div style={baseStyle}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>◆ Condicional</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.field || '')} {String(data.operator || '')} {String(data.value || '')}</div>
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="true" style={{ left: '30%' }} />
       <Handle type="source" position={Position.Bottom} id="false" style={{ left: '70%' }} />
@@ -41,11 +48,12 @@ export function ConditionalNode({ data }: NodeProps) {
   );
 }
 
-export function WooCommerceNode({ data }: NodeProps) {
+export function WooCommerceNode({ id, data }: NodeProps) {
   return (
     <div style={baseStyle}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>🛒 WooCommerce</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.search_term || '')}</div>
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
