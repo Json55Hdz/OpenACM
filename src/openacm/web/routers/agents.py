@@ -156,6 +156,78 @@ def register_routes(app: FastAPI) -> None:
         await _state.database.disable_agent_skill(agent_id, skill_id)
         return {"status": "ok", "enabled": False}
 
+    # ─── Flows ──────────────────────────────────────────────
+
+    @app.get("/api/agents/{agent_id}/flows")
+    async def list_agent_flows(agent_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        return await _state.database.get_agent_flows(agent_id)
+
+    @app.get("/api/agents/{agent_id}/flows/{flow_id}")
+    async def get_agent_flow(agent_id: int, flow_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        return flow
+
+    @app.post("/api/agents/{agent_id}/flows")
+    async def create_agent_flow(agent_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        flow_id = await _state.database.create_flow(
+            agent_id=agent_id,
+            name=data.get("name", "Untitled flow"),
+            description=data.get("description", ""),
+        )
+        return await _state.database.get_flow(flow_id)
+
+    @app.put("/api/agents/{agent_id}/flows/{flow_id}")
+    async def update_agent_flow(agent_id: int, flow_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        allowed_fields = {"name", "description", "graph_json", "is_active"}
+        kwargs = {k: v for k, v in data.items() if k in allowed_fields}
+        ok = await _state.database.update_flow(flow_id, **kwargs)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        return await _state.database.get_flow(flow_id)
+
+    @app.delete("/api/agents/{agent_id}/flows/{flow_id}")
+    async def delete_agent_flow(agent_id: int, flow_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _state.database.delete_flow(flow_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        return {"status": "ok", "deleted": True}
+
+    @app.post("/api/agents/{agent_id}/flows/{flow_id}/test")
+    async def test_agent_flow(agent_id: int, flow_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found")
+
+        from openacm.core.flow_executor import FlowExecutor
+        import json as _json
+
+        data = await request.json()
+        test_params = data.get("params", {})
+
+        async def get_connection(connection_id: int):
+            return await _state.database.get_connection(connection_id)
+
+        executor = FlowExecutor(get_connection=get_connection)
+        graph = _json.loads(flow["graph_json"])
+        result = await executor.run(graph, test_params)
+        return {"result": result}
+
     # ─── Knowledge Base ───────────────────────────────────────
 
     def _knowledge_public(item: dict) -> dict:
