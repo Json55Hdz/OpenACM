@@ -368,6 +368,48 @@ def register_routes(app: FastAPI) -> None:
         workers = await _state.database.get_swarm_workers(swarm_id)
         return next((w for w in workers if w["id"] == worker_id), {})
 
+    @app.get("/api/swarms/{swarm_id}/workers/{worker_id}/skills")
+    async def get_worker_skills(swarm_id: int, worker_id: int):
+        if not _state.database:
+            raise HTTPException(503, "Database not available")
+        global_skills = await _state.database.get_all_skills()
+        enabled_ids = await _state.database.get_worker_enabled_global_skill_ids(worker_id)
+        annotated = [{**s, "enabled": s["id"] in enabled_ids} for s in global_skills]
+        private_skills = await _state.database.get_worker_private_skills(worker_id)
+        return {"global_skills": annotated, "private_skills": private_skills}
+
+    @app.post("/api/swarms/{swarm_id}/workers/{worker_id}/skills/generate")
+    async def generate_worker_skill_endpoint(swarm_id: int, worker_id: int, request: Request):
+        if not _state.brain or not _state.brain.skill_manager:
+            raise HTTPException(status_code=503, detail="Skill manager not available")
+        data = await request.json()
+        try:
+            skill = await _state.brain.skill_manager.generate_worker_skill(
+                worker_id=worker_id,
+                name=data["name"],
+                description=data["description"],
+                use_cases=data.get("use_cases", ""),
+                llm_router=_state.brain.llm_router,
+            )
+            return skill
+        except Exception as e:
+            log.error("Failed to generate worker skill", error=str(e))
+            raise HTTPException(status_code=500, detail="Failed to generate skill")
+
+    @app.post("/api/swarms/{swarm_id}/workers/{worker_id}/skills/{skill_id}")
+    async def enable_worker_skill(swarm_id: int, worker_id: int, skill_id: int):
+        if not _state.database:
+            raise HTTPException(503, "Database not available")
+        await _state.database.enable_worker_skill(worker_id, skill_id)
+        return {"status": "ok", "enabled": True}
+
+    @app.delete("/api/swarms/{swarm_id}/workers/{worker_id}/skills/{skill_id}")
+    async def disable_worker_skill(swarm_id: int, worker_id: int, skill_id: int):
+        if not _state.database:
+            raise HTTPException(503, "Database not available")
+        await _state.database.disable_worker_skill(worker_id, skill_id)
+        return {"status": "ok", "enabled": False}
+
     @app.get("/api/swarms/{swarm_id}/messages")
     async def get_swarm_messages(swarm_id: int):
         if not _state.database:
