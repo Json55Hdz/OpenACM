@@ -9,6 +9,7 @@ import {
   type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem,
 } from '@/hooks/use-agents';
 import { useTools, type ToolInfo } from '@/hooks/use-api';
+import { useAgentFlows, useCreateFlow, useUpdateFlow, useDeleteFlow } from '@/hooks/use-agent-flows';
 import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
 import {
   Bot,
@@ -934,7 +935,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
   const [genDescription, setGenDescription] = useState('');
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills'>('config');
+  const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills' | 'flows'>('config');
 
   const set = (field: keyof AgentFormData, val: string) =>
     setForm((f) => ({ ...f, [field]: val }));
@@ -1019,6 +1020,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
         </button>
         <button onClick={() => setActiveTab('tools')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'tools' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>Herramientas</button>
         <button onClick={() => setActiveTab('skills')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'skills' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>Skills</button>
+        <button onClick={() => setActiveTab('flows')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'flows' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>Flujos</button>
       </div>
 
       <div className="p-2 pt-5 space-y-5 overflow-y-auto acm-scroll flex-1">
@@ -1030,6 +1032,8 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
           <AgentToolsTab agent={agent} />
         ) : activeTab === 'skills' ? (
           <AgentSkillsTab agentId={agent.id} />
+        ) : activeTab === 'flows' ? (
+          <FlowsTab agentId={agent.id} />
         ) : (
           <>
             {/* ── AI Generator ─────────────────────────────── */}
@@ -1763,6 +1767,65 @@ function AgentSkillsTab({ agentId }: { agentId: number }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function FlowsTab({ agentId }: { agentId: number }) {
+  const { data: flows, isLoading } = useAgentFlows(agentId);
+  const create = useCreateFlow(agentId);
+  const update = useUpdateFlow(agentId);
+  const del = useDeleteFlow(agentId);
+  const [editingFlowId, setEditingFlowId] = useState<number | null>(null);
+
+  if (isLoading || !flows) return <Loader2 size={16} className="animate-spin" />;
+
+  const handleCreate = () => {
+    create.mutate({ name: 'Nuevo flujo', description: '' }, {
+      onSuccess: (created: any) => setEditingFlowId(created.id),
+    });
+  };
+
+  if (editingFlowId !== null) {
+    return (
+      <div className="flex flex-col gap-2">
+        <button onClick={() => setEditingFlowId(null)} className="btn-secondary self-start text-[11px] px-2 py-1">
+          ← Volver a la lista
+        </button>
+        <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>
+          Editor de nodos — llega en la Tarea 11. (flow id: {editingFlowId})
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button onClick={handleCreate} disabled={create.isPending} className="btn-secondary self-end text-[11px] px-2 py-1">
+        + Nuevo flujo
+      </button>
+      {flows.length === 0 ? (
+        <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Este agente no tiene flujos todavía.</div>
+      ) : (
+        flows.map(f => (
+          <div key={f.id} className="flex items-center gap-2 py-1.5 px-2 rounded text-[12px]" style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}>
+            <input
+              type="checkbox"
+              checked={!!f.is_active}
+              onChange={() => update.mutate({ id: f.id, data: { is_active: f.is_active ? 0 : 1 } })}
+              title="Activo"
+            />
+            <div className="flex-1">
+              <div style={{ color: 'var(--acm-fg-2)' }}>{f.name}</div>
+              {f.description && <div style={{ color: 'var(--acm-fg-4)' }}>{f.description}</div>}
+            </div>
+            <button onClick={() => setEditingFlowId(f.id)} className="btn-secondary text-[11px] px-2 py-1">Editar</button>
+            <button onClick={() => del.mutate(f.id)} className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]">
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))
+      )}
     </div>
   );
 }
