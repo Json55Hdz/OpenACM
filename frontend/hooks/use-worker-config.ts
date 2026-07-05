@@ -1,26 +1,7 @@
 'use client';
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAPI, useIsAuthenticated } from '@/hooks/use-api';
-
-export interface ToolInfo {
-  name: string;
-  description: string;
-  risk_level: string;
-  category: string;
-}
-
-export function useTools() {
-  const { fetchAPI } = useAPI();
-  const isAuthenticated = useIsAuthenticated();
-
-  return useQuery<ToolInfo[]>({
-    queryKey: ['tools'],
-    queryFn: () => fetchAPI('/api/tools'),
-    enabled: isAuthenticated,
-    staleTime: 5 * 60_000, // tool list rarely changes within a session
-  });
-}
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useAPI } from './use-api';
 
 export function useUpdateWorkerTools(swarmId: number, workerId: number) {
   const { fetchAPI } = useAPI();

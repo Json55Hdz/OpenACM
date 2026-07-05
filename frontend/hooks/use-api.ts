@@ -162,11 +162,19 @@ export function useConfig() {
   };
 }
 
+export interface ToolInfo {
+  name: string;
+  description: string;
+  risk_level: string;
+  category: string;
+  parameters: Record<string, unknown>;
+}
+
 export function useTools() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();
 
-  return useQuery({
+  return useQuery<ToolInfo[]>({
     queryKey: ['tools'],
     queryFn: async () => fetchAPI('/api/tools'),
     enabled: isAuthenticated,

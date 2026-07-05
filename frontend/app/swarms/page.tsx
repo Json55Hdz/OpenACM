@@ -16,7 +16,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bug } from 'lucide-react';
 import { MessageBubble } from '@/components/chat/message-bubble';
-import { useTools, useUpdateWorkerTools, parseAllowedTools, serializeAllowedTools, type ToolInfo } from '@/hooks/use-worker-config';
+import { useTools, type ToolInfo } from '@/hooks/use-api';
+import { useUpdateWorkerTools, parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
 import { Settings, Search } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -324,11 +325,20 @@ function ToolsTab({ worker, swarmId }: { worker: Worker; swarmId: number }) {
   const { data: tools, isLoading } = useTools();
   const updateTools = useUpdateWorkerTools(swarmId, worker.id);
   const [search, setSearch] = useState('');
-  const allNames = (tools ?? []).map(t => t.name);
-  const [selected, setSelected] = useState<Set<string>>(() => parseAllowedTools(worker.allowed_tools, allNames));
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (tools && !initializedRef.current) {
+      const allNames = tools.map(t => t.name);
+      setSelected(parseAllowedTools(worker.allowed_tools, allNames));
+      initializedRef.current = true;
+    }
+  }, [tools, worker.allowed_tools]);
 
   if (isLoading || !tools) return <Loader2 size={16} className="animate-spin" />;
 
+  const allNames = tools.map(t => t.name);
   const filtered = tools.filter(t =>
     !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.category.toLowerCase().includes(search.toLowerCase())
   );
