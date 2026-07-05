@@ -140,7 +140,8 @@ __all__ = ["{safe_name}"]
     if not apply:
         event_bus = getattr(_brain, "event_bus", None)
         channel_id = kwargs.get("channel_id")
-        report = await run_tool_validation(safe_name, code, file_content, event_bus, channel_id)
+        user_id = kwargs.get("user_id")
+        report = await run_tool_validation(safe_name, code, file_content, event_bus, channel_id, user_id)
         overall = "✅ Todos los tests pasaron" if report.passed else "❌ Hay errores que corregir"
         if report.passed and report.has_warnings:
             overall = "⚠️ Tests pasaron con advertencias"

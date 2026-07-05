@@ -153,12 +153,13 @@ async def run_tool_validation(
     full_module_code: str,
     event_bus: "EventBus | None" = None,
     channel_id: str | None = None,
+    user_id: str | None = None,
 ) -> ValidationReport:
     """
     Run all checks and emit EVENT_TOOL_VALIDATION events for each step.
 
     Each event payload:
-      { tool, channel_id, step, status: "running"|"passed"|"failed"|"warning", detail }
+      { tool, channel_id, user_id, step, status: "running"|"passed"|"failed"|"warning", detail }
     """
     from openacm.core.events import EVENT_TOOL_VALIDATION
 
@@ -167,6 +168,7 @@ async def run_tool_validation(
             await event_bus.emit(EVENT_TOOL_VALIDATION, {
                 "tool": name,
                 "channel_id": channel_id,
+                "user_id": user_id,
                 "step": step,
                 "status": status,
                 "detail": detail,

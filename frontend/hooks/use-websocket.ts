@@ -248,11 +248,19 @@ export function useWebSocket() {
       const data: WebSocketMessage = JSON.parse(event.data);
       // Read currentTarget from the live store ref (not a stale closure)
       const { currentTarget, addMessage } = storeRef.current;
+      // A channel_id alone isn't a unique chat — the web dashboard reuses
+      // channel_id="web" for every conversation, distinguished only by
+      // user_id (see startNewConversation in chat/page.tsx). Matching on
+      // channel_id alone here would show one web conversation's activity
+      // in every other web conversation.
+      const isForCurrentChat = (channelId?: string, userId?: string) =>
+        (!channelId || channelId === currentTarget.channel) &&
+        (!userId || userId === currentTarget.user);
 
       if (data.type === 'message.received') {
         // Web channel messages are already added locally by handleSend() — skip the echo
         if (data.channel_type === 'web') return;
-        if (data.channel_id === currentTarget.channel) {
+        if (isForCurrentChat(data.channel_id, data.user_id)) {
           addMessage({
             content: data.content || '',
             role: 'user',
@@ -261,10 +269,10 @@ export function useWebSocket() {
         }
       } else if (data.type === 'message.sent') {
         if (data.channel_type === 'web') {
-          const { channel_id, partial, is_error, content, attachments: atts } = data as WebSocketMessage & { is_error?: boolean };
+          const { channel_id, user_id, partial, is_error, content, attachments: atts } = data as WebSocketMessage & { is_error?: boolean };
           // Always show: partial AI text emitted before tool calls, OR error responses
           // (errors come from brain when LLM times out / fails — show them regardless)
-          if ((partial || is_error) && channel_id === currentTarget.channel) {
+          if ((partial || is_error) && isForCurrentChat(channel_id, user_id)) {
             addMessage({
               content: content || '',
               role: is_error ? 'error' : 'assistant',
@@ -278,7 +286,7 @@ export function useWebSocket() {
           // Non-partial, non-error web responses come through /ws/chat directly — skip
           return;
         }
-        if (data.channel_id === currentTarget.channel) {
+        if (isForCurrentChat(data.channel_id, data.user_id)) {
           addMessage({
             content: data.content || '',
             role: 'assistant',
@@ -294,11 +302,11 @@ export function useWebSocket() {
           setTimeout(() => storeRef.current.setMemoryRecall(null), 2500);
         }
       } else if (data.type === 'message.reasoning_stream') {
-        if (data.chunk && (!data.channel_id || data.channel_id === currentTarget.channel)) {
+        if (data.chunk && isForCurrentChat(data.channel_id, data.user_id)) {
           storeRef.current.appendReasoningChunk(data.chunk);
         }
       } else if (data.type === 'message.reasoning') {
-        if (data.content && (!data.channel_id || data.channel_id === currentTarget.channel)) {
+        if (data.content && isForCurrentChat(data.channel_id, data.user_id)) {
           storeRef.current.finalizeReasoning(data.content);
         }
       } else if (data.type === 'context:stats') {
@@ -342,7 +350,7 @@ export function useWebSocket() {
           }
         }
       } else if (data.type === 'tool.called') {
-        if (data.channel_id !== currentTarget.channel) return;
+        if (!isForCurrentChat(data.channel_id, data.user_id)) return;
         // Deduplicate: same tool+args arriving multiple times within 1s = broadcast storm
         const toolKey = `${data.tool}::${data.arguments ?? ''}`;
         const now = Date.now();
@@ -360,7 +368,7 @@ export function useWebSocket() {
         });
         // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.result') {
-        if (data.channel_id !== currentTarget.channel) return;
+        if (!isForCurrentChat(data.channel_id, data.user_id)) return;
         // Update the existing running tool call in-place (no duplicate message)
         storeRef.current.updateToolCall(
           data.tool || '',
@@ -369,7 +377,7 @@ export function useWebSocket() {
         );
         // terminal WS path handles this — no mirror needed
       } else if (data.type === 'tool.validation') {
-        if (data.channel_id !== currentTarget.channel) return;
+        if (!isForCurrentChat(data.channel_id, data.user_id)) return;
         const tool = data.tool || '';
         const stepName = data.step || '';
         const status = (data.status || 'running') as 'running' | 'passed' | 'failed' | 'warning';
@@ -387,7 +395,7 @@ export function useWebSocket() {
           storeRef.current.upsertValidationStep(tool, { step: stepName, status, detail });
         }
       } else if (data.type === 'tool.confirmation_needed') {
-        if (data.channel_id !== currentTarget.channel) return;
+        if (!isForCurrentChat(data.channel_id, data.user_id)) return;
         storeRef.current.addMessage({
           content: data.command || '',
           role: 'system',
