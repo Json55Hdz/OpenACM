@@ -418,6 +418,7 @@ class OpenACM:
                 memory=self.memory,
                 event_bus=self.event_bus,
                 database=self.database,
+                skill_manager=self.skill_manager,
             )
             self._agent_channel_manager = AgentChannelManager(
                 agent_runner=agent_runner,

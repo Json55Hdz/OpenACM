@@ -466,6 +466,7 @@ def register_routes(app: FastAPI) -> None:
             memory=_state.brain.memory,
             event_bus=_state.brain.event_bus,
             database=_state.database,
+            skill_manager=_state.brain.skill_manager,
         )
         response = await runner.run(agent=agent, message=message, user_id=user_id)
         return {"response": response, "agent": agent["name"]}
@@ -585,6 +586,7 @@ def register_routes(app: FastAPI) -> None:
             memory=_state.brain.memory,
             event_bus=_state.brain.event_bus,
             database=_state.database,
+            skill_manager=_state.brain.skill_manager,
         )
         response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
         return {"response": response}

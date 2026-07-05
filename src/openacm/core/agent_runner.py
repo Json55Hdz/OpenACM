@@ -28,12 +28,13 @@ class AgentRunner:
     - knowledge base (injected from agent_knowledge table if database is set)
     """
 
-    def __init__(self, llm_router, tool_registry, memory, event_bus, database=None):
+    def __init__(self, llm_router, tool_registry, memory, event_bus, database=None, skill_manager=None):
         self.llm_router = llm_router
         self.tool_registry = tool_registry
         self.memory = memory
         self.event_bus = event_bus
         self.database = database
+        self.skill_manager = skill_manager
 
     def _get_tools(self, allowed_tools: str) -> list[dict] | None:
         """Return the tools list for this agent based on its policy."""
@@ -94,6 +95,11 @@ class AgentRunner:
                 log.warning("AgentRunner: failed to fetch knowledge", agent_id=agent["id"], error=str(exc))
 
         system_prompt = self._build_system_prompt(agent["system_prompt"], knowledge_items)
+
+        if self.skill_manager:
+            skills_prompt = await self.skill_manager.get_active_skills_prompt_for_agent(agent["id"])
+            if skills_prompt:
+                system_prompt = f"{system_prompt}\n\n{skills_prompt}"
 
         config = AssistantConfig(
             name=agent["name"],
