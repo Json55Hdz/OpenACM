@@ -33,10 +33,13 @@ def _make_runner(database=None):
 
 class _FakeToolRegistry:
     def __init__(self):
-        self.tools = {"some_static_tool": MagicMock()}
+        self.tools = {"some_static_tool": MagicMock(), "other_static_tool": MagicMock()}
 
     def get_tools_schema(self):
-        return [{"type": "function", "function": {"name": "some_static_tool"}}]
+        return [
+            {"type": "function", "function": {"name": "some_static_tool"}},
+            {"type": "function", "function": {"name": "other_static_tool"}},
+        ]
 
     def get_tools_by_intent(self, msg):
         return self.get_tools_schema()
@@ -134,7 +137,7 @@ class TestFlowToolsExposedToAgent:
             await runner.run(agent=AGENT, message="hi")
 
         schema_names = {t["function"]["name"] for t in captured["tool_registry"].get_tools_schema()}
-        assert schema_names == {"some_static_tool"}
+        assert schema_names == {"some_static_tool", "other_static_tool"}
 
     async def test_no_database_means_no_flow_tools_but_static_tools_still_work(self):
         runner = _make_runner(database=None)
@@ -153,7 +156,7 @@ class TestFlowToolsExposedToAgent:
             await runner.run(agent=AGENT, message="hi")
 
         schema_names = {t["function"]["name"] for t in captured["tool_registry"].get_tools_schema()}
-        assert schema_names == {"some_static_tool"}
+        assert schema_names == {"some_static_tool", "other_static_tool"}
 
     async def test_allowed_tools_none_still_gets_no_tool_registry_at_all(self):
         """Existing behavior (from before this task) must be preserved:
@@ -178,3 +181,32 @@ class TestFlowToolsExposedToAgent:
             await runner.run(agent=agent_none, message="hi")
 
         assert captured["tool_registry"] is None
+
+    async def test_json_list_allowed_tools_combined_with_active_flows(self):
+        """allowed_tools as a JSON list of system tool names must still
+        filter the static tool schema (existing sub-project-1 behavior),
+        AND active flow tools must still be added on top of that filtered
+        set — the two features compose rather than one overriding the other."""
+        db = MagicMock()
+        db.get_agent_knowledge = AsyncMock(return_value=[])
+        db.get_agent_flows = AsyncMock(return_value=[FLOW_ROW])
+        runner = _make_runner(database=db)
+        runner.tool_registry = _FakeToolRegistry()
+        agent_filtered = {**AGENT, "allowed_tools": json.dumps(["some_static_tool"])}
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                captured["tool_registry"] = tool_registry
+
+            async def process_message(self, **kwargs):
+                return "ok"
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=agent_filtered, message="hi")
+
+        schema_names = {t["function"]["name"] for t in captured["tool_registry"].get_tools_schema()}
+        assert schema_names == {"some_static_tool", "flow_7"}
+        assert "other_static_tool" not in schema_names
+        assert "flow_7" in captured["tool_registry"].tools
