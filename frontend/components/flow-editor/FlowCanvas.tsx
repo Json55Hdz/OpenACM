@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MiniMap, addEdge, applyNodeChanges, applyEdgeChanges,
   type Node, type Edge, type Connection, type NodeChange, type EdgeChange,
@@ -30,10 +30,20 @@ function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
   };
 }
 
-let _nodeIdCounter = 0;
-function nextNodeId(prefix: string) {
-  _nodeIdCounter += 1;
-  return `${prefix}_${_nodeIdCounter}`;
+// Node ids look like "prefix_N" (matching the template-substitution regex's
+// [a-zA-Z0-9_]+ charset, so a UUID with hyphens is not an option here).
+// The counter is seeded per-flow from the highest existing suffix already
+// in that flow's graph, rather than a module-level counter that resets to
+// 0 on every reload — otherwise reopening a saved flow and adding a node
+// could regenerate an id already used by an existing node, silently
+// dropping one of them when FlowExecutor keys nodes by id.
+function maxNodeIdSuffix(nodes: Node[]): number {
+  let max = 0;
+  for (const n of nodes) {
+    const match = /_(\d+)$/.exec(n.id);
+    if (match) max = Math.max(max, parseInt(match[1], 10));
+  }
+  return max;
 }
 
 export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJson: string) => void }) {
@@ -41,6 +51,12 @@ export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJs
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const nodeIdCounterRef = useRef(maxNodeIdSuffix(initial.nodes));
+
+  const nextNodeId = (prefix: string) => {
+    nodeIdCounterRef.current += 1;
+    return `${prefix}_${nodeIdCounterRef.current}`;
+  };
 
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes(nds => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds)), []);
@@ -82,6 +98,7 @@ export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJs
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_e, node) => setSelectedId(node.id)}
+          onPaneClick={() => setSelectedId(null)}
           nodeTypes={NODE_TYPES}
           fitView
         >
