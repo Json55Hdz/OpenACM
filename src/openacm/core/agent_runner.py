@@ -12,9 +12,74 @@ from typing import Any
 
 import structlog
 
+from openacm.tools.base import ToolDefinition
+
 log = structlog.get_logger()
 
 _KNOWLEDGE_CHAR_LIMIT = 40_000
+
+
+def _build_flow_tool(flow: dict, executor) -> ToolDefinition:
+    """Convert one flow DB row into a dynamically-callable ToolDefinition."""
+    graph = json.loads(flow["graph_json"])
+    start_node = next((n for n in graph["nodes"] if n["type"] == "start"), None)
+    properties: dict = {}
+    required: list[str] = []
+    for p in (start_node["config"].get("parameters", []) if start_node else []):
+        properties[p["name"]] = {"type": p.get("type", "string"), "description": p.get("description", "")}
+        if p.get("required"):
+            required.append(p["name"])
+
+    async def handler(_brain=None, **kwargs) -> str:
+        call_params = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        return await executor.run(graph, call_params)
+
+    return ToolDefinition(
+        name=f"flow_{flow['id']}",
+        description=flow["description"] or flow["name"],
+        parameters={"type": "object", "properties": properties, "required": required},
+        handler=handler,
+        risk_level="medium",
+        category="custom_flow",
+    )
+
+
+class _AgentToolRegistry:
+    """Wraps the shared, global tool registry for one AgentRunner.run() call:
+    applies this agent's allowed_tools system-tool filter (unchanged from
+    before this class existed) AND always adds this agent's active flow
+    tools on top, regardless of that filter. Flow tools are agent-private
+    and additive — they are never subject to the allowed_tools allowlist,
+    which only ever applied to the shared static/system tool set.
+
+    Exposes `.tools` explicitly (not via __getattr__) because Brain's
+    agentic loop gates every tool call on `tool_name in tool_registry.tools`
+    before calling execute() — see brain_loop.py."""
+
+    def __init__(self, base_registry, filtered_schema: list[dict] | None, flow_tools: dict[str, "ToolDefinition"]):
+        self._base = base_registry
+        self._filtered_schema = filtered_schema
+        self._flow_tools = flow_tools
+        self.tools = {**getattr(base_registry, "tools", {}), **flow_tools}
+
+    def get_tools_schema(self) -> list[dict]:
+        base_schema = self._filtered_schema if self._filtered_schema is not None else self._base.get_tools_schema()
+        return base_schema + [t.to_openai_schema() for t in self._flow_tools.values()]
+
+    def get_tools_by_intent(self, message: str) -> list[dict]:
+        base_schema = self._base.get_tools_by_intent(message)
+        if self._filtered_schema is not None:
+            allowed_names = {t["function"]["name"] for t in self._filtered_schema}
+            base_schema = [t for t in base_schema if t["function"]["name"] in allowed_names]
+        return base_schema + [t.to_openai_schema() for t in self._flow_tools.values()]
+
+    async def execute(self, tool_name: str, arguments: dict, user_id: str = "", channel_id: str = "", channel_type: str = "web", _brain=None) -> str:
+        if tool_name in self._flow_tools:
+            return await self._flow_tools[tool_name].handler(_brain=_brain, **arguments)
+        return await self._base.execute(tool_name, arguments, user_id, channel_id, channel_type, _brain=_brain)
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
 
 
 class AgentRunner:
@@ -112,29 +177,36 @@ class AgentRunner:
         if channel_id is None:
             channel_id = f"agent_{agent['id']}"
 
+        allowed = agent.get("allowed_tools", "all")
+
+        flow_tools: dict[str, ToolDefinition] = {}
+        if self.database and allowed != "none":
+            try:
+                active_flows = await self.database.get_agent_flows(agent["id"], active_only=True)
+            except Exception as exc:
+                log.warning("AgentRunner: failed to fetch flows", agent_id=agent["id"], error=str(exc))
+                active_flows = []
+            if active_flows:
+                from openacm.core.flow_executor import FlowExecutor
+
+                async def get_connection(connection_id: int):
+                    return await self.database.get_connection(connection_id)
+
+                executor = FlowExecutor(get_connection=get_connection)
+                flow_tools = {f"flow_{f['id']}": _build_flow_tool(f, executor) for f in active_flows}
+
+        agent_tool_registry = self.tool_registry if allowed != "none" else None
+        if allowed != "none" and (allowed not in ("all",) or flow_tools):
+            filtered_schema = self._get_tools(allowed) if allowed not in ("all", "none") else None
+            agent_tool_registry = _AgentToolRegistry(self.tool_registry, filtered_schema, flow_tools)
+
         brain = Brain(
             config=config,
             llm_router=self.llm_router,
             memory=self.memory,
             event_bus=self.event_bus,
-            tool_registry=self.tool_registry if agent.get("allowed_tools", "all") != "none" else None,
+            tool_registry=agent_tool_registry,
         )
-
-        allowed = agent.get("allowed_tools", "all")
-        if allowed not in ("all", "none"):
-            _tools = self._get_tools(allowed)
-
-            class _FilteredRegistry:
-                def get_tools_schema(self_inner):
-                    return _tools or []
-
-                def get_tools_by_intent(self_inner, msg):
-                    return _tools or []
-
-                def __getattr__(self_inner, name):
-                    return getattr(self.tool_registry, name)
-
-            brain.tool_registry = _FilteredRegistry()
 
         try:
             response = await brain.process_message(
