@@ -626,34 +626,20 @@ function ChannelsTab({ agentId }: { agentId: number }) {
 // ── Agent Form Modal ──────────────────────────────────────────────────────────
 
 function AgentFormModal({
-  initial,
   onSave,
   onClose,
   isSaving,
 }: {
-  initial?: Agent | null;
   onSave: (data: AgentFormData) => void;
   onClose: () => void;
   isSaving: boolean;
 }) {
   const { generate } = useAgentMutations();
-  const [form, setForm] = useState<AgentFormData>(
-    initial
-      ? {
-          name: initial.name,
-          description: initial.description,
-          system_prompt: initial.system_prompt,
-          allowed_tools: initial.allowed_tools,
-          telegram_token: initial.telegram_token ?? '',
-        }
-      : DEFAULT_FORM
-  );
+  const [form, setForm] = useState<AgentFormData>(DEFAULT_FORM);
   const [genDescription, setGenDescription] = useState('');
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels'>('config');
-  const isEditing = !!initial;
 
   const set = (field: keyof AgentFormData, val: string) =>
     setForm((f) => ({ ...f, [field]: val }));
@@ -708,7 +694,7 @@ function AgentFormModal({
           style={{ borderBottom: '1px solid var(--acm-border)' }}
         >
           <h2 className="text-[15px] font-semibold" style={{ color: 'var(--acm-fg)' }}>
-            {initial ? 'Edit Agent' : 'New Agent'}
+            New Agent
           </h2>
           <button
             onClick={onClose}
@@ -721,59 +707,7 @@ function AgentFormModal({
           </button>
         </div>
 
-        {/* Tab bar — only shown when editing */}
-        {isEditing && (
-          <div className="flex border-b border-zinc-800 px-6 -mt-0">
-            <button
-              onClick={() => setActiveTab('config')}
-              className={cn(
-                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                activeTab === 'config'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
-              )}
-            >
-              ⚙ Config
-            </button>
-            <button
-              onClick={() => setActiveTab('knowledge')}
-              className={cn(
-                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                activeTab === 'knowledge'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
-              )}
-            >
-              <span className="flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5" />
-                Knowledge
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('channels')}
-              className={cn(
-                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors',
-                activeTab === 'channels'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-300'
-              )}
-            >
-              <span className="flex items-center gap-1.5">
-                <Radio className="w-3.5 h-3.5" />
-                Channels
-              </span>
-            </button>
-          </div>
-        )}
-
         <div className="p-6 space-y-5 overflow-y-auto acm-scroll">
-
-          {activeTab === 'channels' && isEditing && initial?.id ? (
-            <ChannelsTab agentId={initial.id} />
-          ) : activeTab === 'knowledge' && isEditing && initial?.id ? (
-            <KnowledgeTab agentId={initial.id} />
-          ) : (
-          <>
           {/* ── AI Generator ─────────────────────────────── */}
           <div
             className="rounded-xl p-4 space-y-3"
@@ -952,8 +886,6 @@ function AgentFormModal({
               </p>
             </div>
           )}
-          </>
-          )}
         </div>
 
         {/* Footer */}
@@ -970,17 +902,197 @@ function AgentFormModal({
           >
             Cancel
           </button>
-          {activeTab === 'config' && (
-            <button
-              onClick={() => onSave(form)}
-              disabled={isSaving || !form.name.trim() || !form.system_prompt.trim()}
-              className="btn-primary"
-            >
-              {isSaving && <Loader2 size={13} className="animate-spin" />}
-              {initial ? 'Save changes' : 'Create Agent'}
-            </button>
-          )}
+          <button
+            onClick={() => onSave(form)}
+            disabled={isSaving || !form.name.trim() || !form.system_prompt.trim()}
+            className="btn-primary"
+          >
+            {isSaving && <Loader2 size={13} className="animate-spin" />}
+            Create Agent
+          </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Agent Detail View (in-place, replaces the grid — not an overlay) ──────────
+
+function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void }) {
+  const { update, generate } = useAgentMutations();
+  const [form, setForm] = useState<AgentFormData>({
+    name: agent.name,
+    description: agent.description,
+    system_prompt: agent.system_prompt,
+    allowed_tools: agent.allowed_tools,
+    telegram_token: agent.telegram_token ?? '',
+  });
+  const [genDescription, setGenDescription] = useState('');
+  const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills'>('config');
+
+  const set = (field: keyof AgentFormData, val: string) =>
+    setForm((f) => ({ ...f, [field]: val }));
+
+  const handleGenerate = async () => {
+    if (!genDescription.trim()) return;
+    try {
+      const res = await generate.mutateAsync({ description: genDescription, files: droppedFiles.length ? droppedFiles : undefined });
+      setForm((f) => ({
+        ...f,
+        name: res.name || f.name,
+        description: res.description || f.description,
+        system_prompt: res.system_prompt || f.system_prompt,
+      }));
+      toast.success('Agent config generated!');
+    } catch {
+      toast.error('Generation failed — try again');
+    }
+  };
+
+  const addFiles = (incoming: FileList | null) => {
+    if (!incoming) return;
+    const allowed = ['pdf', 'txt', 'md', 'csv', 'json', 'yaml', 'yml'];
+    const next = Array.from(incoming).filter((f) => {
+      const ext = f.name.split('.').pop()?.toLowerCase() ?? '';
+      return allowed.includes(ext);
+    });
+    setDroppedFiles((prev) => {
+      const names = new Set(prev.map((f) => f.name));
+      return [...prev, ...next.filter((f) => !names.has(f.name))];
+    });
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    addFiles(e.dataTransfer.files);
+  };
+
+  const removeFile = (name: string) =>
+    setDroppedFiles((prev) => prev.filter((f) => f.name !== name));
+
+  const handleSave = async () => {
+    try {
+      await update.mutateAsync({ id: agent.id, data: form });
+      toast.success('Agent updated');
+    } catch {
+      toast.error('Failed to save agent');
+    }
+  };
+
+  return (
+    <div className="w-full flex flex-col" style={{ minHeight: '70vh' }}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-2 py-4 shrink-0" style={{ borderBottom: '1px solid var(--acm-border)' }}>
+        <h2 className="text-[18px] font-semibold" style={{ color: 'var(--acm-fg)' }}>{agent.name}</h2>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded transition-colors"
+          style={{ color: 'var(--acm-fg-4)' }}
+          onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      {/* Tab bar — 5 tabs now */}
+      <div className="flex border-b border-zinc-800 px-2 flex-wrap">
+        <button onClick={() => setActiveTab('config')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'config' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>⚙ Config</button>
+        <button onClick={() => setActiveTab('knowledge')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'knowledge' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>
+          <span className="flex items-center gap-1.5"><BookOpen className="w-3.5 h-3.5" />Knowledge</span>
+        </button>
+        <button onClick={() => setActiveTab('channels')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'channels' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>
+          <span className="flex items-center gap-1.5"><Radio className="w-3.5 h-3.5" />Channels</span>
+        </button>
+        <button onClick={() => setActiveTab('tools')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'tools' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>Herramientas</button>
+        <button onClick={() => setActiveTab('skills')} className={cn('px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors', activeTab === 'skills' ? 'border-blue-500 text-blue-400' : 'border-transparent text-zinc-500 hover:text-zinc-300')}>Skills</button>
+      </div>
+
+      <div className="p-2 pt-5 space-y-5 overflow-y-auto acm-scroll flex-1">
+        {activeTab === 'channels' ? (
+          <ChannelsTab agentId={agent.id} />
+        ) : activeTab === 'knowledge' ? (
+          <KnowledgeTab agentId={agent.id} />
+        ) : activeTab === 'tools' ? (
+          <AgentToolsTab agent={agent} />
+        ) : activeTab === 'skills' ? (
+          <AgentSkillsTab agentId={agent.id} />
+        ) : (
+          <>
+            {/* ── AI Generator ─────────────────────────────── */}
+            <div className="rounded-xl p-4 space-y-3" style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}>
+              <p className="text-[11px] font-semibold flex items-center gap-1.5 uppercase tracking-[0.1em]" style={{ color: 'var(--acm-accent)' }}>
+                <Sparkles size={12} /> Generate with AI
+              </p>
+              <textarea
+                value={genDescription}
+                onChange={(e) => setGenDescription(e.target.value)}
+                placeholder="Describe what your agent should do..."
+                rows={3}
+                className="acm-input w-full resize-none text-[13px]"
+              />
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={onDrop}
+                className="relative rounded-lg px-4 py-3 transition-colors cursor-pointer"
+                style={{
+                  border: `2px dashed ${isDragging ? 'var(--acm-accent)' : 'var(--acm-border-strong)'}`,
+                  background: isDragging ? 'var(--acm-accent-tint)' : 'transparent',
+                }}
+              >
+                <input
+                  id="agent-detail-file-input"
+                  type="file"
+                  accept=".pdf,.txt,.md,.csv,.json,.yaml,.yml"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => addFiles(e.target.files)}
+                />
+                <label htmlFor="agent-detail-file-input" className="flex items-center gap-2 text-[12px] cursor-pointer" style={{ color: 'var(--acm-fg-3)' }}>
+                  <Upload size={14} />
+                  Drop files here or click to attach (optional context for generation)
+                </label>
+                {droppedFiles.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {droppedFiles.map((f) => (
+                      <span key={f.name} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', color: 'var(--acm-fg-3)' }}>
+                        {f.name}
+                        <button onClick={(e) => { e.stopPropagation(); removeFile(f.name); }}><X size={10} /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button onClick={handleGenerate} disabled={generate.isPending || !genDescription.trim()} className="btn-secondary w-full justify-center">
+                {generate.isPending ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                Generate
+              </button>
+            </div>
+
+            {/* ── Fields ───────────────────────────────────── */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-3)' }}>Name</label>
+              <input value={form.name} onChange={(e) => set('name', e.target.value)} className="acm-input w-full text-[13px]" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-3)' }}>Description</label>
+              <input value={form.description} onChange={(e) => set('description', e.target.value)} className="acm-input w-full text-[13px]" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-3)' }}>System Prompt</label>
+              <textarea value={form.system_prompt} onChange={(e) => set('system_prompt', e.target.value)} rows={8} className="acm-input w-full text-[13px] resize-y" />
+            </div>
+
+            <button onClick={handleSave} disabled={update.isPending || !form.name.trim() || !form.system_prompt.trim()} className="btn-primary">
+              {update.isPending && <Loader2 size={13} className="animate-spin" />}
+              Save changes
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1308,29 +1420,23 @@ export default function AgentsPage() {
   const { data: agents = [], isLoading } = useAgents();
   const { create, update, remove } = useAgentMutations();
 
-  const [modal, setModal] = useState<'create' | 'edit' | null>(null);
-  const [editing, setEditing] = useState<Agent | null>(null);
+  const [modal, setModal] = useState<'create' | null>(null);
+  const [viewingAgent, setViewingAgent] = useState<Agent | null>(null);
   const [pendingSecret, setPendingSecret] = useState<{ name: string; secret: string } | null>(null);
 
-  const openCreate = () => { setEditing(null); setModal('create'); };
-  const openEdit = (a: Agent) => { setEditing(a); setModal('edit'); };
-  const closeModal = () => { setModal(null); setEditing(null); };
+  const openCreate = () => setModal('create');
+  const openEdit = (a: Agent) => setViewingAgent(a);
+  const closeModal = () => setModal(null);
 
   const handleSave = async (data: AgentFormData) => {
     try {
-      if (modal === 'edit' && editing) {
-        await update.mutateAsync({ id: editing.id, data });
-        toast.success('Agent updated');
-        closeModal();
-      } else {
-        const res = await create.mutateAsync(data);
-        closeModal();
-        // Show the secret once after creation
-        if (res?.webhook_secret) {
-          setPendingSecret({ name: res.name, secret: res.webhook_secret });
-        }
-        toast.success('Agent created');
+      const res = await create.mutateAsync(data);
+      closeModal();
+      // Show the secret once after creation
+      if (res?.webhook_secret) {
+        setPendingSecret({ name: res.name, secret: res.webhook_secret });
       }
+      toast.success('Agent created');
     } catch (e: unknown) {
       toast.error('Failed to save agent');
     }
@@ -1362,72 +1468,77 @@ export default function AgentsPage() {
     <AppLayout>
       <div className="p-6 lg:p-8">
 
-        {/* ── Page Header ──────────────────────────────────── */}
-        <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <span className="acm-breadcrumb">/ agents</span>
-            <h1 className="text-[22px] font-semibold tracking-[-0.01em]" style={{ color: 'var(--acm-fg)' }}>
-              Autonomous Agents
-            </h1>
-            <p className="text-[12px] mt-1" style={{ color: 'var(--acm-fg-3)' }}>
-              {agents.length} agents · {activeCount} active
-            </p>
-          </div>
-          <button onClick={openCreate} className="btn-primary">
-            <Plus size={14} /> New Agent
-          </button>
-        </header>
-
-        {/* ── Content ──────────────────────────────────────── */}
-        {isLoading ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 size={24} className="animate-spin" style={{ color: 'var(--acm-fg-4)' }} />
-          </div>
-        ) : agents.length === 0 ? (
-          /* Empty state */
-          <div
-            className="flex flex-col items-center justify-center py-24 text-center rounded-xl"
-            style={{ border: '1px dashed var(--acm-border)' }}
-          >
-            <div
-              className="w-16 h-16 rounded-full flex items-center justify-center mb-5"
-              style={{ background: 'var(--acm-elev)' }}
-            >
-              <Bot size={30} style={{ color: 'var(--acm-fg-4)' }} />
-            </div>
-            <h3 className="text-[15px] font-medium mb-2" style={{ color: 'var(--acm-fg-2)' }}>
-              No agents yet
-            </h3>
-            <p className="text-[13px] max-w-sm mb-2" style={{ color: 'var(--acm-fg-4)' }}>
-              Create an agent with its own rules and connect it to any service via webhook.
-            </p>
-            <p className="text-[12px] mb-6 flex items-center gap-1.5" style={{ color: 'var(--acm-accent-dim)' }}>
-              <Sparkles size={12} /> Try generating one with AI
-            </p>
-            <button onClick={openCreate} className="btn-primary">
-              <Plus size={14} /> Create your first agent
-            </button>
-          </div>
+        {viewingAgent ? (
+          <AgentDetailView agent={viewingAgent} onClose={() => setViewingAgent(null)} />
         ) : (
-          /* Agent grid */
-          <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
-            {agents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                onEdit={openEdit}
-                onDelete={handleDelete}
-                onToggle={handleToggle}
-              />
-            ))}
-          </div>
+          <>
+            {/* ── Page Header ──────────────────────────────────── */}
+            <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <span className="acm-breadcrumb">/ agents</span>
+                <h1 className="text-[22px] font-semibold tracking-[-0.01em]" style={{ color: 'var(--acm-fg)' }}>
+                  Autonomous Agents
+                </h1>
+                <p className="text-[12px] mt-1" style={{ color: 'var(--acm-fg-3)' }}>
+                  {agents.length} agents · {activeCount} active
+                </p>
+              </div>
+              <button onClick={openCreate} className="btn-primary">
+                <Plus size={14} /> New Agent
+              </button>
+            </header>
+
+            {/* ── Content ──────────────────────────────────────── */}
+            {isLoading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 size={24} className="animate-spin" style={{ color: 'var(--acm-fg-4)' }} />
+              </div>
+            ) : agents.length === 0 ? (
+              /* Empty state */
+              <div
+                className="flex flex-col items-center justify-center py-24 text-center rounded-xl"
+                style={{ border: '1px dashed var(--acm-border)' }}
+              >
+                <div
+                  className="w-16 h-16 rounded-full flex items-center justify-center mb-5"
+                  style={{ background: 'var(--acm-elev)' }}
+                >
+                  <Bot size={30} style={{ color: 'var(--acm-fg-4)' }} />
+                </div>
+                <h3 className="text-[15px] font-medium mb-2" style={{ color: 'var(--acm-fg-2)' }}>
+                  No agents yet
+                </h3>
+                <p className="text-[13px] max-w-sm mb-2" style={{ color: 'var(--acm-fg-4)' }}>
+                  Create an agent with its own rules and connect it to any service via webhook.
+                </p>
+                <p className="text-[12px] mb-6 flex items-center gap-1.5" style={{ color: 'var(--acm-accent-dim)' }}>
+                  <Sparkles size={12} /> Try generating one with AI
+                </p>
+                <button onClick={openCreate} className="btn-primary">
+                  <Plus size={14} /> Create your first agent
+                </button>
+              </div>
+            ) : (
+              /* Agent grid */
+              <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
+                {agents.map((agent) => (
+                  <AgentCard
+                    key={agent.id}
+                    agent={agent}
+                    onEdit={openEdit}
+                    onDelete={handleDelete}
+                    onToggle={handleToggle}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* ── Create / Edit Modal ───────────────────────────── */}
+      {/* ── Create Modal ───────────────────────────── */}
       {modal && (
         <AgentFormModal
-          initial={editing}
           onSave={handleSave}
           onClose={closeModal}
           isSaving={isSaving}
@@ -1504,4 +1615,14 @@ export default function AgentsPage() {
       )}
     </AppLayout>
   );
+}
+
+// ── Tools / Skills Tabs (placeholders — real implementations land in Tasks 7 & 8) ──
+
+function AgentToolsTab({ agent }: { agent: Agent }) {
+  return <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Coming in Task 7.</div>;
+}
+
+function AgentSkillsTab({ agentId }: { agentId: number }) {
+  return <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Coming in Task 8.</div>;
 }
