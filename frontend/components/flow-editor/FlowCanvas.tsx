@@ -9,6 +9,7 @@ import '@xyflow/react/dist/style.css';
 import { NODE_TYPES } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
+import { useAPI } from '@/hooks/use-api';
 
 interface GraphJson {
   nodes: Array<{ id: string; type: string; config: Record<string, unknown>; position: { x: number; y: number } }>;
@@ -69,6 +70,30 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
     );
   };
 
+  const [testParams, setTestParams] = useState<Record<string, string>>({});
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const { fetchAPI } = useAPI();
+
+  const startNode = nodes.find(n => n.type === 'start');
+  const startParams = (startNode?.data.parameters as Array<{ name: string }> | undefined) || [];
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = (await fetchAPI(`/api/agents/${agentId}/flows/${flow.id}/test`, {
+        method: 'POST',
+        body: JSON.stringify({ params: testParams }),
+      })) as { result: string };
+      setTestResult(res.result);
+    } catch {
+      setTestResult('Error al ejecutar la prueba.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const nextNodeId = (prefix: string) => {
     nodeIdCounterRef.current += 1;
     return `${prefix}_${nodeIdCounterRef.current}`;
@@ -105,6 +130,26 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
           <button key={t} onClick={() => addNode(t)} className="btn-secondary text-[11px] px-2 py-1">+ {t}</button>
         ))}
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
+          <div className="text-[11px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>Probar flujo</div>
+          {startParams.map(p => (
+            <input
+              key={p.name}
+              className="acm-input w-full mb-1 text-[11px]"
+              placeholder={p.name}
+              value={testParams[p.name] || ''}
+              onChange={e => setTestParams(prev => ({ ...prev, [p.name]: e.target.value }))}
+            />
+          ))}
+          <button onClick={runTest} disabled={testing} className="btn-secondary text-[11px] px-2 py-1 w-full">
+            {testing ? 'Ejecutando...' : 'Probar flujo'}
+          </button>
+          {testResult && (
+            <div className="mt-1 p-1 text-[10px] whitespace-pre-wrap" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>
+              {testResult}
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex-1" style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}>
         <ReactFlow
