@@ -16,6 +16,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Bug } from 'lucide-react';
 import { MessageBubble } from '@/components/chat/message-bubble';
+import { useTools, useUpdateWorkerTools, parseAllowedTools, serializeAllowedTools, type ToolInfo } from '@/hooks/use-worker-config';
+import { Settings, Search } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -318,6 +320,62 @@ function CreateSwarmModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
+function ToolsTab({ worker, swarmId }: { worker: Worker; swarmId: number }) {
+  const { data: tools, isLoading } = useTools();
+  const updateTools = useUpdateWorkerTools(swarmId, worker.id);
+  const [search, setSearch] = useState('');
+  const allNames = (tools ?? []).map(t => t.name);
+  const [selected, setSelected] = useState<Set<string>>(() => parseAllowedTools(worker.allowed_tools, allNames));
+
+  if (isLoading || !tools) return <Loader2 size={16} className="animate-spin" />;
+
+  const filtered = tools.filter(t =>
+    !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.category.toLowerCase().includes(search.toLowerCase())
+  );
+  const byCategory: Record<string, ToolInfo[]> = {};
+  for (const t of filtered) (byCategory[t.category] ??= []).push(t);
+
+  const toggle = (name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  const save = () => updateTools.mutate(serializeAllowedTools(selected, allNames));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2 bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1">
+        <Search size={12} className="text-[var(--acm-fg-4)]" />
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar herramienta o categoría..."
+          className="flex-1 bg-transparent text-[11px] text-[var(--acm-fg)] focus:outline-none mono"
+        />
+      </div>
+      <div className="max-h-60 overflow-auto flex flex-col gap-2">
+        {Object.entries(byCategory).map(([category, catTools]) => (
+          <div key={category}>
+            <div className="label text-[var(--acm-fg-4)] mb-1">{category}</div>
+            {catTools.map(t => (
+              <label key={t.name} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)] cursor-pointer">
+                <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggle(t.name)} />
+                <span className="mono">{t.name}</span>
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+      <button onClick={save} disabled={updateTools.isPending} className="btn-secondary self-end text-[11px] px-2 py-1">
+        {updateTools.isPending ? 'Guardando...' : 'Guardar herramientas'}
+      </button>
+    </div>
+  );
+}
+
 // ─── Worker Card ──────────────────────────────────────────────────────────────
 
 function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swarmId: number; onUpdate: () => void; ctxPct?: number | null }) {
@@ -325,6 +383,7 @@ function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swa
   const [editModel, setEditModel] = useState(false);
   const [modelVal, setModelVal] = useState(worker.model || '');
   const [expanded, setExpanded] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const saveModel = async () => {
     await fetchAPI(`/api/swarms/${swarmId}/workers/${worker.id}`, {
@@ -410,6 +469,14 @@ function WorkerCard({ worker, swarmId, onUpdate, ctxPct }: { worker: Worker; swa
           {worker.system_prompt}
         </pre>
       )}
+      <button
+        onClick={() => setConfigOpen(v => !v)}
+        className="flex items-center gap-1 text-[10px] text-[var(--acm-fg-4)] hover:text-[var(--acm-fg-3)] transition-colors"
+      >
+        <Settings size={11} />
+        <span className="label">Configurar</span>
+      </button>
+      {configOpen && <ToolsTab worker={worker} swarmId={swarmId} />}
     </div>
   );
 }
