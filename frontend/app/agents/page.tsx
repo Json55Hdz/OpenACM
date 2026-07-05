@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import {
   useAgents, useAgentMutations, useAgentKnowledge, useAgentKnowledgeMutations,
   useAgentChannels, useAgentChannelMutations,
   type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem,
 } from '@/hooks/use-agents';
+import { useTools, type ToolInfo } from '@/hooks/use-api';
+import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
 import {
   Bot,
   Plus,
@@ -31,6 +33,7 @@ import {
   AlertTriangle,
   Radio,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -1620,7 +1623,68 @@ export default function AgentsPage() {
 // ── Tools / Skills Tabs (placeholders — real implementations land in Tasks 7 & 8) ──
 
 function AgentToolsTab({ agent }: { agent: Agent }) {
-  return <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Coming in Task 7.</div>;
+  const { data: tools, isLoading } = useTools();
+  const { update } = useAgentMutations();
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const initializedRef = useRef(false);
+
+  useEffect(() => {
+    if (tools && !initializedRef.current) {
+      const allNames = tools.map(t => t.name);
+      setSelected(parseAllowedTools(agent.allowed_tools, allNames));
+      initializedRef.current = true;
+    }
+  }, [tools, agent.allowed_tools]);
+
+  if (isLoading || !tools) return <Loader2 size={16} className="animate-spin" />;
+
+  const allNames = tools.map(t => t.name);
+  const filtered = tools.filter(t =>
+    !search || t.name.toLowerCase().includes(search.toLowerCase()) || t.category.toLowerCase().includes(search.toLowerCase())
+  );
+  const byCategory: Record<string, typeof tools> = {};
+  for (const t of filtered) (byCategory[t.category] ??= []).push(t);
+
+  const toggle = (name: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  const save = () => update.mutate({ id: agent.id, data: { allowed_tools: serializeAllowedTools(selected, allNames) } });
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-2 bg-[var(--acm-elev)] border border-[var(--acm-border)] rounded px-2 py-1">
+        <Search size={12} className="text-[var(--acm-fg-4)]" />
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar herramienta o categoría..."
+          className="flex-1 bg-transparent text-[11px] text-[var(--acm-fg)] focus:outline-none mono"
+        />
+      </div>
+      <div className="max-h-96 overflow-auto flex flex-col gap-2">
+        {Object.entries(byCategory).map(([category, catTools]) => (
+          <div key={category}>
+            <div className="label text-[var(--acm-fg-4)] mb-1">{category}</div>
+            {catTools.map(t => (
+              <label key={t.name} className="flex items-center gap-2 py-0.5 text-[11px] text-[var(--acm-fg-2)] cursor-pointer">
+                <input type="checkbox" checked={selected.has(t.name)} onChange={() => toggle(t.name)} />
+                <span className="mono">{t.name}</span>
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+      <button onClick={save} disabled={update.isPending} className="btn-secondary self-end text-[11px] px-2 py-1">
+        {update.isPending ? 'Guardando...' : 'Guardar herramientas'}
+      </button>
+    </div>
+  );
 }
 
 function AgentSkillsTab({ agentId }: { agentId: number }) {
