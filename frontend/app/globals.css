@@ -21,6 +21,8 @@
   --acm-warn:             oklch(0.82  0.1   78);
   --acm-err:              oklch(0.68  0.13  22);
   --acm-info:             oklch(0.74  0.06 230);
+  --acm-node-logic:       oklch(0.74  0.12 300);
+  --acm-node-data:        oklch(0.74  0.10 195);
   --acm-radius:           8px;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
@@ -44,6 +46,8 @@
   --color-acm-warn:          var(--acm-warn);
   --color-acm-err:           var(--acm-err);
   --color-acm-info:          var(--acm-info);
+  --color-acm-node-logic:    var(--acm-node-logic);
+  --color-acm-node-data:     var(--acm-node-data);
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */

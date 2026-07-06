@@ -120,6 +120,7 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
       http: { url: '', method: 'GET', headers: {}, body: '' },
       conditional: { field: '', operator: 'contains', value: '' },
       woocommerce: { connection_id: null, search_term: '' },
+      variable: { name: '' },
       end: { template: '' },
     };
     setNodes(nds => [...nds, { id: nextNodeId(type), type, position: { x: 100, y: 100 + nds.length * 90 }, data: defaults[type] }]);
