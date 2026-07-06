@@ -216,8 +216,14 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     setNodes(nds => [...nds, { id: nextNodeId('set'), type: 'set', position: { x, y }, data: { name } }]);
   };
 
-  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, connectionState: { isValid: boolean | null; fromNode: Node | null; fromHandle: { id?: string | null } | null }) => {
-    if (connectionState.isValid || !connectionState.fromNode) return; // landed on a real target — nothing to promote
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, connectionState: { isValid: boolean | null; fromNode: Node | null; fromHandle: { id?: string | null } | null; toHandle: { id?: string | null } | null }) => {
+    // Only promote when the drag truly ended on empty canvas. `isValid`
+    // alone doesn't distinguish that from "released near a real but
+    // incompatible handle" (e.g. overshooting between the Conditional
+    // node's adjacent true/false output handles) — in that case toHandle
+    // is non-null even though isValid is false, and this must NOT create
+    // a spurious Set node.
+    if (connectionState.isValid || !connectionState.fromNode || connectionState.toHandle) return;
     const bounds = canvasWrapperRef.current?.getBoundingClientRect();
     if (!bounds) return;
     const point = 'changedTouches' in event ? event.changedTouches[0] : event;
