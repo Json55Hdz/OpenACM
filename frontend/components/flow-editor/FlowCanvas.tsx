@@ -2,11 +2,11 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ReactFlow, Background, Controls, MiniMap, addEdge, applyNodeChanges, applyEdgeChanges,
+  ReactFlow, ReactFlowProvider, useReactFlow, Background, Controls, MiniMap, addEdge, applyNodeChanges, applyEdgeChanges,
   type Node, type Edge, type Connection, type NodeChange, type EdgeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { NODE_TYPES } from './node-types';
+import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
 import { useAPI } from '@/hooks/use-api';
@@ -56,12 +56,28 @@ function maxNodeIdSuffix(nodes: Node[]): number {
   return max;
 }
 
-export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
+const NODE_CATEGORIES: Array<{ label: string; types: Array<keyof typeof NODE_TYPES> }> = [
+  { label: 'FLUJO', types: ['start', 'end'] },
+  { label: 'LÓGICA', types: ['conditional'] },
+  { label: 'INTEGRACIONES', types: ['http', 'woocommerce'] },
+  { label: 'DATOS', types: ['variable'] },
+];
+
+const NODE_LABELS: Record<keyof typeof NODE_TYPES, string> = {
+  start: '▶ Inicio', end: '■ Final', conditional: '◆ Condicional',
+  http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', variable: '📦 Variable',
+};
+
+function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
   const initial = useMemo(() => toReactFlow(JSON.parse(flow.graph_json || '{"nodes":[],"edges":[]}')), [flow.id]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const nodeIdCounterRef = useRef(maxNodeIdSuffix(initial.nodes));
+  const { screenToFlowPosition } = useReactFlow();
+  const canvasWrapperRef = useRef<HTMLDivElement>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
+  const [contextMenuSearch, setContextMenuSearch] = useState('');
 
   const { data: connections } = useAgentConnections(agentId);
   const createConnection = useCreateConnection(agentId);
@@ -114,7 +130,7 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((connection: Connection) => setEdges(eds => addEdge(connection, eds)), []);
 
-  const addNode = (type: keyof typeof NODE_TYPES) => {
+  const addNodeAt = (type: keyof typeof NODE_TYPES, x: number, y: number) => {
     const defaults: Record<string, Record<string, unknown>> = {
       start: { parameters: [] },
       http: { url: '', method: 'GET', headers: {}, body: '' },
@@ -123,8 +139,22 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
       variable: { name: '' },
       end: { template: '' },
     };
-    setNodes(nds => [...nds, { id: nextNodeId(type), type, position: { x: 100, y: 100 + nds.length * 90 }, data: defaults[type] }]);
+    setNodes(nds => [...nds, { id: nextNodeId(type), type, position: { x, y }, data: defaults[type] }]);
   };
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
+    event.preventDefault();
+    const bounds = canvasWrapperRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const flowPosition = screenToFlowPosition({ x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY });
+    setContextMenu({
+      x: (event as MouseEvent).clientX - bounds.left,
+      y: (event as MouseEvent).clientY - bounds.top,
+      flowX: flowPosition.x,
+      flowY: flowPosition.y,
+    });
+    setContextMenuSearch('');
+  }, [screenToFlowPosition]);
 
   const selectedNode = nodes.find(n => n.id === selectedId) || null;
 
@@ -158,9 +188,7 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
   return (
     <div className="flex gap-2" style={{ height: 500 }}>
       <div className="flex flex-col gap-1 shrink-0" style={{ width: 120 }}>
-        {(Object.keys(NODE_TYPES) as (keyof typeof NODE_TYPES)[]).map(t => (
-          <button key={t} onClick={() => addNode(t)} className="btn-secondary text-[11px] px-2 py-1">+ {t}</button>
-        ))}
+        <div className="text-[10px]" style={{ color: 'var(--acm-fg-4)' }}>Clic derecho en el lienzo para agregar un nodo</div>
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <div className="text-[11px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>Probar flujo</div>
@@ -183,7 +211,7 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
           )}
         </div>
       </div>
-      <div className="flex-1" style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}>
+      <div ref={canvasWrapperRef} className="flex-1 relative" style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -191,7 +219,8 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_e, node) => setSelectedId(node.id)}
-          onPaneClick={() => setSelectedId(null)}
+          onPaneClick={() => { setSelectedId(null); setContextMenu(null); }}
+          onPaneContextMenu={onPaneContextMenu}
           nodeTypes={NODE_TYPES}
           fitView
         >
@@ -199,6 +228,40 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
           <Controls />
           <MiniMap />
         </ReactFlow>
+        {contextMenu && (
+          <div
+            className="absolute z-50 p-2"
+            style={{ left: contextMenu.x, top: contextMenu.y, background: 'var(--acm-elev)', border: '1px solid var(--acm-border)', borderRadius: 8, width: 200, maxHeight: 320, overflowY: 'auto' }}
+          >
+            <input
+              autoFocus
+              className="acm-input w-full mb-2 text-[11px]"
+              placeholder="Buscar nodo..."
+              value={contextMenuSearch}
+              onChange={e => setContextMenuSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape') setContextMenu(null); }}
+            />
+            {NODE_CATEGORIES.map(cat => {
+              const filteredTypes = cat.types.filter(t => NODE_LABELS[t].toLowerCase().includes(contextMenuSearch.toLowerCase()));
+              if (filteredTypes.length === 0) return null;
+              return (
+                <div key={cat.label} className="mb-1">
+                  <div className="label text-[var(--acm-fg-4)] mb-1">{cat.label}</div>
+                  {filteredTypes.map(t => (
+                    <button
+                      key={t}
+                      className="btn-secondary w-full text-left text-[11px] px-2 py-1 mb-1"
+                      style={{ borderColor: CATEGORY_COLORS[NODE_CATEGORY[t]] }}
+                      onClick={() => { addNodeAt(t, contextMenu.flowX, contextMenu.flowY); setContextMenu(null); }}
+                    >
+                      {NODE_LABELS[t]}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       {selectedNode && (
         <div className="shrink-0 p-2 text-[11px]" style={{ width: 220, border: '1px solid var(--acm-border)', borderRadius: 8, color: 'var(--acm-fg-2)' }}>
@@ -304,5 +367,13 @@ export function FlowCanvas({ agentId, flow, onSave }: { agentId: number; flow: A
         </div>
       )}
     </div>
+  );
+}
+
+export function FlowCanvas(props: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
+  return (
+    <ReactFlowProvider>
+      <FlowCanvasInner {...props} />
+    </ReactFlowProvider>
   );
 }
