@@ -122,6 +122,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const nodeIdCounterRef = useRef(maxNodeIdSuffix(initial.nodes));
+  const variableNameCounterRef = useRef(0);
   const { screenToFlowPosition } = useReactFlow();
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
@@ -179,6 +180,16 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     return `${prefix}_${nodeIdCounterRef.current}`;
   };
 
+  const variableNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const n of nodes) {
+      if ((n.type === 'set' || n.type === 'get') && typeof n.data.name === 'string' && n.data.name) {
+        names.add(n.data.name);
+      }
+    }
+    return Array.from(names).sort();
+  }, [nodes]);
+
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes(nds => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((connection: Connection) => setEdges(eds => addEdge(connection, eds)), []);
@@ -194,6 +205,14 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       end: { template: '' },
     };
     setNodes(nds => [...nds, { id: nextNodeId(type), type, position: { x, y }, data: defaults[type] }]);
+  };
+
+  const addNewVariable = () => {
+    variableNameCounterRef.current += 1;
+    const name = `variable_${variableNameCounterRef.current}`;
+    const x = 100;
+    const y = 100 + nodes.length * 90;
+    setNodes(nds => [...nds, { id: nextNodeId('set'), type: 'set', position: { x, y }, data: { name } }]);
   };
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
@@ -244,6 +263,23 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       <div className="flex flex-col gap-1 shrink-0" style={{ width: 120 }}>
         <div className="text-[10px]" style={{ color: 'var(--acm-fg-4)' }}>Clic derecho en el lienzo para agregar un nodo</div>
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
+          <div className="label text-[var(--acm-fg-4)] mb-1">Variables</div>
+          {variableNames.length === 0 ? (
+            <div className="text-[10px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>Ninguna todavía</div>
+          ) : (
+            variableNames.map(name => (
+              <div
+                key={name}
+                className="text-[11px] px-2 py-1 mb-1 rounded"
+                style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-node-data)', color: 'var(--acm-fg-2)', cursor: 'grab' }}
+              >
+                {name}
+              </div>
+            ))
+          )}
+          <button onClick={addNewVariable} className="btn-secondary w-full text-[11px] px-2 py-1">+ Nueva variable</button>
+        </div>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <div className="text-[11px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>Probar flujo</div>
           {startParams.map(p => (
