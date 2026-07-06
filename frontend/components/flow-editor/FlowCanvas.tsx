@@ -216,6 +216,26 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     setNodes(nds => [...nds, { id: nextNodeId('set'), type: 'set', position: { x, y }, data: { name } }]);
   };
 
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, connectionState: { isValid: boolean | null; fromNode: Node | null; fromHandle: { id?: string | null } | null }) => {
+    if (connectionState.isValid || !connectionState.fromNode) return; // landed on a real target — nothing to promote
+    const bounds = canvasWrapperRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+    const flowPosition = screenToFlowPosition({ x: point.clientX, y: point.clientY });
+
+    variableNameCounterRef.current += 1;
+    const name = `variable_${variableNameCounterRef.current}`;
+    const newId = nextNodeId('set');
+
+    setNodes(nds => [...nds, { id: newId, type: 'set', position: flowPosition, data: { name } }]);
+    setEdges(eds => [...eds, {
+      id: `${connectionState.fromNode!.id}-${newId}-${connectionState.fromHandle?.id || 'default'}`,
+      source: connectionState.fromNode!.id,
+      target: newId,
+      sourceHandle: connectionState.fromHandle?.id || 'default',
+    }]);
+  }, [screenToFlowPosition]);
+
   const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
     event.preventDefault();
     const bounds = canvasWrapperRef.current?.getBoundingClientRect();
@@ -339,6 +359,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectEnd={onConnectEnd}
           onNodeClick={(_e, node) => setSelectedId(node.id)}
           onPaneClick={() => { setSelectedId(null); setContextMenu(null); setVariableDropMenu(null); }}
           onPaneContextMenu={onPaneContextMenu}
