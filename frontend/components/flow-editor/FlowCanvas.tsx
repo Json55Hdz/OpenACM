@@ -56,6 +56,54 @@ function maxNodeIdSuffix(nodes: Node[]): number {
   return max;
 }
 
+function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: string): string[] {
+  // Every node has exactly one incoming edge (the graph is linear + one
+  // branch point at Conditional) — walking backward from a specific node
+  // through "target -> source" is a single, unambiguous path. It never
+  // needs to know which of a Conditional's branches is "taken" at
+  // runtime, because tracing backward from one node only ever follows
+  // the one path that actually leads to it.
+  const incomingBySource: Record<string, string> = {};
+  for (const e of edges) incomingBySource[e.target] = e.source;
+
+  const names: string[] = [];
+  let currentId: string | undefined = incomingBySource[selectedNodeId];
+  while (currentId) {
+    const node = nodes.find(n => n.id === currentId);
+    const name = node?.type === 'variable' ? (node.data.name as string | undefined) : undefined;
+    if (name) names.push(name);
+    currentId = incomingBySource[currentId];
+  }
+  return names;
+}
+
+function VariablePicker({ names, targetRef, value, onInsert }: {
+  names: string[];
+  targetRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
+  value: string;
+  onInsert: (newValue: string) => void;
+}) {
+  if (names.length === 0) return null;
+  return (
+    <select
+      className="acm-input w-full mb-1 text-[10px]"
+      value=""
+      onChange={e => {
+        const name = e.target.value;
+        if (!name) return;
+        const insertText = `{{${name}}}`;
+        const el = targetRef.current;
+        const start = el?.selectionStart ?? value.length;
+        const end = el?.selectionEnd ?? value.length;
+        onInsert(value.slice(0, start) + insertText + value.slice(end));
+      }}
+    >
+      <option value="">Insertar variable...</option>
+      {names.map(n => <option key={n} value={n}>{n}</option>)}
+    </select>
+  );
+}
+
 const NODE_CATEGORIES: Array<{ label: string; types: Array<keyof typeof NODE_TYPES> }> = [
   { label: 'FLUJO', types: ['start', 'end'] },
   { label: 'LÓGICA', types: ['conditional'] },
@@ -78,6 +126,11 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
   const [contextMenuSearch, setContextMenuSearch] = useState('');
+  const urlInputRef = useRef<HTMLInputElement>(null);
+  const bodyInputRef = useRef<HTMLTextAreaElement>(null);
+  const conditionalFieldRef = useRef<HTMLInputElement>(null);
+  const searchTermRef = useRef<HTMLInputElement>(null);
+  const templateRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: connections } = useAgentConnections(agentId);
   const createConnection = useCreateConnection(agentId);
@@ -265,7 +318,14 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       </div>
       {selectedNode && (
         <div className="shrink-0 p-2 text-[11px]" style={{ width: 220, border: '1px solid var(--acm-border)', borderRadius: 8, color: 'var(--acm-fg-2)' }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>{selectedNode.type}</div>
+          <div
+            style={{
+              fontWeight: 600, marginBottom: 8, paddingBottom: 6,
+              borderBottom: `2px solid ${CATEGORY_COLORS[NODE_CATEGORY[selectedNode.type || 'http']]}`,
+            }}
+          >
+            {NODE_LABELS[(selectedNode.type || 'http') as keyof typeof NODE_TYPES]}
+          </div>
           {selectedNode.type === 'start' && (
             <>
               <label>Parámetros que el LLM puede enviar</label>
@@ -306,18 +366,40 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           )}
           {selectedNode.type === 'http' && (
             <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Petición HTTP</div>
               <label>URL</label>
-              <input className="acm-input w-full mb-2" value={String(selectedNode.data.url || '')} onChange={e => updateSelectedNodeData({ url: e.target.value })} />
+              <VariablePicker
+                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                targetRef={urlInputRef}
+                value={String(selectedNode.data.url || '')}
+                onInsert={v => updateSelectedNodeData({ url: v })}
+              />
+              <input ref={urlInputRef} className="acm-input w-full mb-2" value={String(selectedNode.data.url || '')} onChange={e => updateSelectedNodeData({ url: e.target.value })} />
               <label>Método</label>
               <select className="acm-input w-full mb-2" value={String(selectedNode.data.method || 'GET')} onChange={e => updateSelectedNodeData({ method: e.target.value })}>
                 <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
               </select>
+              <label>Cuerpo (para POST/PUT)</label>
+              <VariablePicker
+                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                targetRef={bodyInputRef}
+                value={String(selectedNode.data.body || '')}
+                onInsert={v => updateSelectedNodeData({ body: v })}
+              />
+              <textarea ref={bodyInputRef} className="acm-input w-full" rows={3} value={String(selectedNode.data.body || '')} onChange={e => updateSelectedNodeData({ body: e.target.value })} />
             </>
           )}
           {selectedNode.type === 'conditional' && (
             <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Condición</div>
               <label>Campo (ej: {'{{http1.status}}'})</label>
-              <input className="acm-input w-full mb-2" value={String(selectedNode.data.field || '')} onChange={e => updateSelectedNodeData({ field: e.target.value })} />
+              <VariablePicker
+                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                targetRef={conditionalFieldRef}
+                value={String(selectedNode.data.field || '')}
+                onInsert={v => updateSelectedNodeData({ field: v })}
+              />
+              <input ref={conditionalFieldRef} className="acm-input w-full mb-2" value={String(selectedNode.data.field || '')} onChange={e => updateSelectedNodeData({ field: e.target.value })} />
               <label>Operador</label>
               <select className="acm-input w-full mb-2" value={String(selectedNode.data.operator || 'contains')} onChange={e => updateSelectedNodeData({ operator: e.target.value })}>
                 <option value="contains">contiene</option>
@@ -331,6 +413,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           )}
           {selectedNode.type === 'woocommerce' && (
             <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">WooCommerce</div>
               <label>Conexión</label>
               <select
                 className="acm-input w-full mb-2"
@@ -355,13 +438,38 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 <button onClick={() => setShowNewConnectionForm(true)} className="btn-secondary text-[11px] px-2 py-1 mb-2">+ Nueva conexión</button>
               )}
               <label>Término de búsqueda</label>
-              <input className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
+              <VariablePicker
+                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                targetRef={searchTermRef}
+                value={String(selectedNode.data.search_term || '')}
+                onInsert={v => updateSelectedNodeData({ search_term: v })}
+              />
+              <input ref={searchTermRef} className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
             </>
           )}
           {selectedNode.type === 'end' && (
             <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Respuesta</div>
               <label>Plantilla de respuesta</label>
-              <textarea className="acm-input w-full" rows={4} value={String(selectedNode.data.template || '')} onChange={e => updateSelectedNodeData({ template: e.target.value })} />
+              <VariablePicker
+                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                targetRef={templateRef}
+                value={String(selectedNode.data.template || '')}
+                onInsert={v => updateSelectedNodeData({ template: v })}
+              />
+              <textarea ref={templateRef} className="acm-input w-full" rows={4} value={String(selectedNode.data.template || '')} onChange={e => updateSelectedNodeData({ template: e.target.value })} />
+            </>
+          )}
+          {selectedNode.type === 'variable' && (
+            <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Variable</div>
+              <label>Nombre</label>
+              <input
+                className="acm-input w-full"
+                placeholder="ej: resultado_busqueda"
+                value={String(selectedNode.data.name || '')}
+                onChange={e => updateSelectedNodeData({ name: e.target.value })}
+              />
             </>
           )}
         </div>
