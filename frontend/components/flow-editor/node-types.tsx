@@ -17,7 +17,8 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
   conditional: 'logic',
   http: 'integration',
   woocommerce: 'integration',
-  variable: 'data',
+  set: 'data',
+  get: 'data',
 };
 
 function baseStyleFor(type: string): React.CSSProperties {
@@ -31,6 +32,10 @@ function baseStyleFor(type: string): React.CSSProperties {
 const idStyle: React.CSSProperties = {
   fontFamily: 'monospace', fontSize: 10, color: 'var(--acm-accent)', marginTop: 4,
   userSelect: 'all', cursor: 'text',
+};
+
+const pinLabelStyle: React.CSSProperties = {
+  fontSize: 9, color: 'var(--acm-fg-4)', marginTop: 2,
 };
 
 export function StartNode({ data }: NodeProps) {
@@ -49,6 +54,7 @@ export function HttpNode({ id, data }: NodeProps) {
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🌐 HTTP Request</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.method || 'GET')} {String(data.url || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>salida: response</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
@@ -61,6 +67,7 @@ export function ConditionalNode({ id, data }: NodeProps) {
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.logic }}>◆ Condicional</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.field || '')} {String(data.operator || '')} {String(data.value || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>salida: result</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="true" style={{ left: '30%' }} />
       <Handle type="source" position={Position.Bottom} id="false" style={{ left: '70%' }} />
@@ -74,19 +81,33 @@ export function WooCommerceNode({ id, data }: NodeProps) {
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🛒 WooCommerce</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.search_term || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>salida: result</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
   );
 }
 
-export function VariableNode({ id, data }: NodeProps) {
+export function SetNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('variable')}>
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>📦 Variable</div>
+    <div style={baseStyleFor('set')}>
+      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>💾 Guardar (Set)</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>salida: value</div>
       <Handle type="target" position={Position.Top} id="default" />
+      <Handle type="source" position={Position.Bottom} id="default" />
+    </div>
+  );
+}
+
+export function GetNode({ id, data }: NodeProps) {
+  return (
+    <div style={baseStyleFor('get')}>
+      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>📤 Obtener (Get)</div>
+      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>salida: value</div>
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
   );
@@ -107,6 +128,7 @@ export const NODE_TYPES = {
   http: HttpNode,
   conditional: ConditionalNode,
   woocommerce: WooCommerceNode,
-  variable: VariableNode,
+  set: SetNode,
+  get: GetNode,
   end: EndNode,
 };

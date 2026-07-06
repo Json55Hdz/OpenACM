@@ -70,7 +70,7 @@ function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: st
   let currentId: string | undefined = incomingBySource[selectedNodeId];
   while (currentId) {
     const node = nodes.find(n => n.id === currentId);
-    const name = node?.type === 'variable' ? (node.data.name as string | undefined) : undefined;
+    const name = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
     if (name) names.push(name);
     currentId = incomingBySource[currentId];
   }
@@ -108,12 +108,12 @@ const NODE_CATEGORIES: Array<{ label: string; types: Array<keyof typeof NODE_TYP
   { label: 'FLUJO', types: ['start', 'end'] },
   { label: 'LÓGICA', types: ['conditional'] },
   { label: 'INTEGRACIONES', types: ['http', 'woocommerce'] },
-  { label: 'DATOS', types: ['variable'] },
+  { label: 'DATOS', types: ['set', 'get'] },
 ];
 
 const NODE_LABELS: Record<keyof typeof NODE_TYPES, string> = {
   start: '▶ Inicio', end: '■ Final', conditional: '◆ Condicional',
-  http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', variable: '📦 Variable',
+  http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', set: '💾 Guardar (Set)', get: '📤 Obtener (Get)',
 };
 
 function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
@@ -189,7 +189,8 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       http: { url: '', method: 'GET', headers: {}, body: '' },
       conditional: { field: '', operator: 'contains', value: '' },
       woocommerce: { connection_id: null, search_term: '' },
-      variable: { name: '' },
+      set: { name: '' },
+      get: { name: '' },
       end: { template: '' },
     };
     setNodes(nds => [...nds, { id: nextNodeId(type), type, position: { x, y }, data: defaults[type] }]);
@@ -460,10 +461,22 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <textarea ref={templateRef} className="acm-input w-full" rows={4} value={String(selectedNode.data.template || '')} onChange={e => updateSelectedNodeData({ template: e.target.value })} />
             </>
           )}
-          {selectedNode.type === 'variable' && (
+          {selectedNode.type === 'set' && (
             <>
-              <div className="label text-[var(--acm-fg-4)] mb-1">Variable</div>
-              <label>Nombre</label>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Guardar (Set)</div>
+              <label>Nombre de la variable</label>
+              <input
+                className="acm-input w-full"
+                placeholder="ej: resultado_busqueda"
+                value={String(selectedNode.data.name || '')}
+                onChange={e => updateSelectedNodeData({ name: e.target.value })}
+              />
+            </>
+          )}
+          {selectedNode.type === 'get' && (
+            <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Obtener (Get)</div>
+              <label>Nombre de la variable</label>
               <input
                 className="acm-input w-full"
                 placeholder="ej: resultado_busqueda"
