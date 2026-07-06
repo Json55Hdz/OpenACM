@@ -146,8 +146,10 @@ class FlowExecutor:
     async def run(self, graph: dict, params: dict) -> str:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
         edges_by_source: dict[str, dict[str, str]] = {}
+        edges_by_target: dict[str, str] = {}
         for edge in graph.get("edges", []):
             edges_by_source.setdefault(edge["from"], {})[edge.get("fromHandle", "default")] = edge["to"]
+            edges_by_target[edge["to"]] = edge["from"]
 
         start_node = next((n for n in nodes.values() if n["type"] == "start"), None)
         if not start_node:
@@ -168,6 +170,15 @@ class FlowExecutor:
             if node["type"] == "end":
                 template = node["config"].get("template", "")
                 return substitute_templates(template, params, outputs)
+
+            if node["type"] == "variable":
+                source_id = edges_by_target.get(node["id"])
+                if source_id and source_id in outputs:
+                    value = outputs[source_id]
+                    outputs[node["id"]] = value
+                    outputs[node["config"]["name"]] = value
+                current_id = edges_by_source.get(node["id"], {}).get("default")
+                continue
 
             handler = self._HANDLERS.get(node["type"])
             if handler is None:

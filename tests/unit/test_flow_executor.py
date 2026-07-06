@@ -338,3 +338,118 @@ class TestWooCommerceNode:
 
         _, call_kwargs = mock_client.get.call_args
         assert call_kwargs["auth"] == ("my_key", "my_secret")
+
+
+def _variable_graph(source_type="http", var_name="mi_variable"):
+    """Start -> source_node -> Variable(name=var_name) -> End(template referencing the variable)."""
+    source_node = {"id": "src1", "type": source_type, "config": {}}
+    if source_type == "http":
+        source_node["config"] = {"url": "https://example.com", "method": "GET"}
+    return {
+        "nodes": [
+            {"id": "start", "type": "start", "config": {"parameters": []}},
+            source_node,
+            {"id": "var1", "type": "variable", "config": {"name": var_name}},
+            {"id": "end", "type": "end", "config": {"template": "Valor: {{" + var_name + "}}"}},
+        ],
+        "edges": [
+            {"from": "start", "to": "src1", "fromHandle": "default"},
+            {"from": "src1", "to": "var1", "fromHandle": "default"},
+            {"from": "var1", "to": "end", "fromHandle": "default"},
+        ],
+    }
+
+
+class TestVariableNode:
+    async def test_aliases_the_incoming_nodes_output_under_the_declared_name(self):
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "hola mundo"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(_variable_graph(), params={})
+
+        assert result == "Valor: hola mundo"
+
+    async def test_variable_output_is_also_addressable_by_its_own_node_id(self):
+        """{{var1}} (the node's own id) must still work too — the variable
+        node is stored under both keys, not just the friendly name."""
+        graph = _variable_graph()
+        graph["nodes"][3]["config"]["template"] = "Por id: {{var1}}"
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "hola mundo"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(graph, params={})
+
+        assert result == "Por id: hola mundo"
+
+    async def test_variable_with_no_incoming_edge_aliases_none(self):
+        """A Variable node placed directly after Start (or otherwise with no
+        real predecessor output to alias) resolves to the missing-marker,
+        not a crash — substitute_templates already handles a None/missing
+        outputs value via its existing missing-marker logic once the key
+        is simply absent, so the variable handler stores nothing for a
+        node with no incoming edge."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "var1", "type": "variable", "config": {"name": "huerfana"}},
+                {"id": "end", "type": "end", "config": {"template": "{{huerfana}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "var1", "fromHandle": "default"},
+                {"from": "var1", "to": "end", "fromHandle": "default"},
+            ],
+        }
+        executor = FlowExecutor()
+        result = await executor.run(graph, params={})
+        assert result == "[missing: huerfana]"
+
+    async def test_two_variables_with_the_same_name_last_one_wins(self):
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "segundo valor"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "var1", "type": "variable", "config": {"name": "dup"}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
+                {"id": "var2", "type": "variable", "config": {"name": "dup"}},
+                {"id": "end", "type": "end", "config": {"template": "{{dup}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "var1", "fromHandle": "default"},
+                {"from": "var1", "to": "http1", "fromHandle": "default"},
+                {"from": "http1", "to": "var2", "fromHandle": "default"},
+                {"from": "var2", "to": "end", "fromHandle": "default"},
+            ],
+        }
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result = await executor.run(graph, params={})
+
+        assert result == "segundo valor"
