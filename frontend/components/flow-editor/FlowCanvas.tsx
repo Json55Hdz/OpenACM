@@ -127,6 +127,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null);
   const [contextMenuSearch, setContextMenuSearch] = useState('');
+  const [variableDropMenu, setVariableDropMenu] = useState<{ x: number; y: number; flowX: number; flowY: number; name: string } | null>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const bodyInputRef = useRef<HTMLTextAreaElement>(null);
   const conditionalFieldRef = useRef<HTMLInputElement>(null);
@@ -229,6 +230,28 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     setContextMenuSearch('');
   }, [screenToFlowPosition]);
 
+  const onCanvasDragOver = useCallback((event: React.DragEvent) => {
+    if (event.dataTransfer.types.includes('application/flow-variable-name')) {
+      event.preventDefault();
+    }
+  }, []);
+
+  const onCanvasDrop = useCallback((event: React.DragEvent) => {
+    const name = event.dataTransfer.getData('application/flow-variable-name');
+    if (!name) return;
+    event.preventDefault();
+    const bounds = canvasWrapperRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const flowPosition = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    setVariableDropMenu({
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top,
+      flowX: flowPosition.x,
+      flowY: flowPosition.y,
+      name,
+    });
+  }, [screenToFlowPosition]);
+
   const selectedNode = nodes.find(n => n.id === selectedId) || null;
 
   const updateSelectedNodeData = (patch: Record<string, unknown>) => {
@@ -271,6 +294,8 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
             variableNames.map(name => (
               <div
                 key={name}
+                draggable
+                onDragStart={e => e.dataTransfer.setData('application/flow-variable-name', name)}
                 className="text-[11px] px-2 py-1 mb-1 rounded"
                 style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-node-data)', color: 'var(--acm-fg-2)', cursor: 'grab' }}
               >
@@ -301,7 +326,13 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           )}
         </div>
       </div>
-      <div ref={canvasWrapperRef} className="flex-1 relative" style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}>
+      <div
+        ref={canvasWrapperRef}
+        className="flex-1 relative"
+        style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}
+        onDragOver={onCanvasDragOver}
+        onDrop={onCanvasDrop}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -309,7 +340,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_e, node) => setSelectedId(node.id)}
-          onPaneClick={() => { setSelectedId(null); setContextMenu(null); }}
+          onPaneClick={() => { setSelectedId(null); setContextMenu(null); setVariableDropMenu(null); }}
           onPaneContextMenu={onPaneContextMenu}
           nodeTypes={NODE_TYPES}
           fitView
@@ -350,6 +381,32 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 </div>
               );
             })}
+          </div>
+        )}
+        {variableDropMenu && (
+          <div
+            className="absolute z-50 p-2 flex flex-col gap-1"
+            style={{ left: variableDropMenu.x, top: variableDropMenu.y, background: 'var(--acm-elev)', border: '1px solid var(--acm-border)', borderRadius: 8, width: 160 }}
+          >
+            <div className="text-[10px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>{variableDropMenu.name}</div>
+            <button
+              className="btn-secondary text-[11px] px-2 py-1"
+              onClick={() => {
+                setNodes(nds => [...nds, { id: nextNodeId('get'), type: 'get', position: { x: variableDropMenu.flowX, y: variableDropMenu.flowY }, data: { name: variableDropMenu.name } }]);
+                setVariableDropMenu(null);
+              }}
+            >
+              📤 Obtener (Get)
+            </button>
+            <button
+              className="btn-secondary text-[11px] px-2 py-1"
+              onClick={() => {
+                setNodes(nds => [...nds, { id: nextNodeId('set'), type: 'set', position: { x: variableDropMenu.flowX, y: variableDropMenu.flowY }, data: { name: variableDropMenu.name } }]);
+                setVariableDropMenu(null);
+              }}
+            >
+              💾 Guardar (Set)
+            </button>
           </div>
         )}
       </div>
