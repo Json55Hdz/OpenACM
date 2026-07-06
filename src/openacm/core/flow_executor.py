@@ -171,12 +171,19 @@ class FlowExecutor:
                 template = node["config"].get("template", "")
                 return substitute_templates(template, params, outputs)
 
-            if node["type"] == "variable":
+            if node["type"] == "set":
                 source_id = edges_by_target.get(node["id"])
                 if source_id and source_id in outputs:
                     value = outputs[source_id]
                     outputs[node["id"]] = value
                     outputs[node["config"]["name"]] = value
+                current_id = edges_by_source.get(node["id"], {}).get("default")
+                continue
+
+            if node["type"] == "get":
+                name = node["config"]["name"]
+                if name in outputs:
+                    outputs[node["id"]] = outputs[name]
                 current_id = edges_by_source.get(node["id"], {}).get("default")
                 continue
 
