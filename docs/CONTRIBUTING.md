@@ -56,6 +56,20 @@ Open an issue with:
 - What happened (include logs if relevant)
 - Your OS and Python/Node versions
 
+## Releasing
+
+Releases follow [Semantic Versioning](https://semver.org/) (`vMAJOR.MINOR.PATCH`).
+
+1. Bump `version` in `pyproject.toml`.
+2. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading, and start a fresh empty `[Unreleased]` section above it.
+3. Commit: `git commit -m "chore: release vX.Y.Z"`.
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+5. Pushing the tag triggers `.github/workflows/release-image.yml`, which
+   builds and pushes `ghcr.io/<owner>/openacm:X.Y.Z` to the private GHCR
+   registry. Client deployments pin to this tag — see
+   `docs/DEPLOY_VPS.md` → "Distribución para clientes".
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the same [MIT License](LICENSE) that covers this project.
