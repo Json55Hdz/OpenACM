@@ -4,8 +4,6 @@ registered when their config toggle is enabled.
 """
 from unittest.mock import MagicMock
 
-import pytest
-
 from openacm.app import OpenACM
 from openacm.core.config import AppConfig
 
