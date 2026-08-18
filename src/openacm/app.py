@@ -295,7 +295,8 @@ class OpenACM:
         self.tool_registry.register_module(google_services)
         self.tool_registry.register_module(screenshot)
         self.tool_registry.register_module(rag_tools)
-        self.tool_registry.register_module(browser_agent)
+        if self.config.features.browser_agent:
+            self.tool_registry.register_module(browser_agent)
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(add_resurrection_path)
