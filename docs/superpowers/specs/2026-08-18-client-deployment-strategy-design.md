@@ -97,6 +97,12 @@ da visibilidad para notar cuándo 2+ clientes piden lo mismo (señal de que eso
 debe graduar de "plugin de cliente" a "punto de extensión en el core", ver
 sección 2.3).
 
+Es un repo **privado hosteado** (ej. GitHub privado), no algo que viva solo en
+la máquina local — se clona local para trabajar en él día a día (igual que
+`OpenACM`), pero el remoto es la fuente de verdad. Un repo solo-local no
+sobrevive a la pérdida del disco, y el CI que construye/sube las imágenes de
+cada cliente necesita disparar desde un push al remoto.
+
 Cada carpeta de cliente contiene:
 - Su plugin package (integraciones propias, si aplica).
 - Su `config/` (incluye su `client_profile` si aplica) + `.env.example`.
