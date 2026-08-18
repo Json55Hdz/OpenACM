@@ -22,6 +22,7 @@ from openacm.core.config import (
     WebConfig,
     WhatsAppConfig,
     LocalRouterConfig,
+    FeaturesConfig,
     _deep_merge,
     _resolve_env_vars,
     _find_project_root,
@@ -80,6 +81,16 @@ class TestLocalRouterConfigDefaults:
         assert 0.0 < cfg.confidence_threshold < 1.0
 
 
+class TestFeaturesConfigDefaults:
+    def test_browser_agent_enabled_by_default(self):
+        cfg = FeaturesConfig()
+        assert cfg.browser_agent is True
+
+    def test_voice_enabled_by_default(self):
+        cfg = FeaturesConfig()
+        assert cfg.voice is True
+
+
 class TestAppConfigDefaults:
     def test_app_config_instantiates_with_no_args(self):
         cfg = AppConfig()
@@ -92,6 +103,12 @@ class TestAppConfigDefaults:
     def test_resurrection_paths_empty_by_default(self):
         cfg = AppConfig()
         assert cfg.resurrection_paths == []
+
+    def test_features_present_by_default(self):
+        cfg = AppConfig()
+        assert cfg.features is not None
+        assert cfg.features.browser_agent is True
+        assert cfg.features.voice is True
 
 
 # ---------------------------------------------------------------------------
@@ -235,3 +252,29 @@ class TestLoadConfig:
         from openacm.core.config import load_config
         cfg = load_config(config_path=default_file)
         assert cfg.assistant.name == "LocalBot"
+
+
+class TestLoadConfigFeatures:
+    def _load_isolated(self, monkeypatch, tmp_path, cfg_file):
+        import openacm.core.config as cfg_module
+        monkeypatch.setattr(cfg_module, "_find_project_root", lambda: tmp_path)
+        from openacm.core.config import load_config
+        return load_config(config_path=cfg_file)
+
+    def test_features_disabled_via_yaml(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "default.yaml"
+        cfg_file.write_text(textwrap.dedent("""\
+            features:
+              browser_agent: false
+              voice: false
+        """))
+        cfg = self._load_isolated(monkeypatch, tmp_path, cfg_file)
+        assert cfg.features.browser_agent is False
+        assert cfg.features.voice is False
+
+    def test_features_default_true_when_omitted(self, monkeypatch, tmp_path):
+        cfg_file = tmp_path / "default.yaml"
+        cfg_file.write_text("assistant:\n  name: Minimal\n")
+        cfg = self._load_isolated(monkeypatch, tmp_path, cfg_file)
+        assert cfg.features.browser_agent is True
+        assert cfg.features.voice is True

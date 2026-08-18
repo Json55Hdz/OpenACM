@@ -162,3 +162,12 @@ web:
 #     - /chat
 #     - /gmail-classifier
 #     - /swarms
+
+# ─── Features ─────────────────────────────────────────────────
+# Disable heavy/optional subsystems for a client deployment that doesn't
+# need them. Both default to true (no change from today's behavior).
+# To activate: add the block below to config/local.yaml and restart.
+#
+# features:
+#   browser_agent: false   # disables the Playwright-based browser_agent tool
+#   voice: false            # disables the Voice daemon (STT/TTS) entirely

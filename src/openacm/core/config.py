@@ -134,6 +134,18 @@ class LocalRouterConfig(BaseModel):
     confidence_threshold: float = 0.88
 
 
+class FeaturesConfig(BaseModel):
+    """Toggles for heavy/optional subsystems, off-by-default-capable per client deployment.
+
+    Unlike ChannelsConfig entries these default to True — the general repo and
+    existing deployments must see no behavior change. A client deployment
+    disables what it doesn't need via config/local.yaml.
+    """
+
+    browser_agent: bool = True  # Playwright-based `browser_agent` tool
+    voice: bool = True          # Voice daemon (STT/TTS)
+
+
 class ClientProfileConfig(BaseModel):
     """Restricts the UI to a subset of features for a specific client deployment.
 
@@ -160,6 +172,7 @@ class AppConfig(BaseModel):
     local_router: LocalRouterConfig = Field(default_factory=LocalRouterConfig)
     resurrection_paths: list[str] = Field(default_factory=list)
     client_profile: ClientProfileConfig = Field(default_factory=ClientProfileConfig)
+    features: FeaturesConfig = Field(default_factory=FeaturesConfig)
 
 
 # ─── Config Loading ──────────────────────────────────────────
@@ -271,6 +284,8 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config_data["resurrection_paths"] = data["resurrection_paths"]
     if "client_profile" in data:
         config_data["client_profile"] = data["client_profile"]
+    if "features" in data:
+        config_data["features"] = data["features"]
 
     # Make paths absolute relative to project root
     config = AppConfig(**config_data)
