@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Instalar utilidades de sistema necesarias
 RUN apt-get update && apt-get install -y \
-    curl build-essential xdotool \
+    curl build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar `uv` para descargas ultrarrápidas de Python
