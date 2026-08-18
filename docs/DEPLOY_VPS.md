@@ -378,7 +378,9 @@ services:
       start_period: 60s
 ```
 
-**Quitar `xdotool` del `docker/Dockerfile`** (herramienta de GUI X11, inútil en VPS headless):
+Nota: `xdotool` (herramienta de GUI X11, inútil en VPS headless) ya fue
+removido del `docker/Dockerfile` de este repo — el bloque de abajo queda
+como referencia histórica de cómo quedó la instalación de paquetes apt:
 
 ```dockerfile
 RUN apt-get update && apt-get install -y \

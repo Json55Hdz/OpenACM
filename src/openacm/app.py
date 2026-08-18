@@ -295,8 +295,12 @@ class OpenACM:
         self.tool_registry.register_module(google_services)
         self.tool_registry.register_module(screenshot)
         self.tool_registry.register_module(rag_tools)
+        # Browser agent — skipped entirely for client deployments that don't
+        # want it, mirroring the voice daemon toggle in _init_watchers.
         if self.config.features.browser_agent:
             self.tool_registry.register_module(browser_agent)
+        else:
+            console.print("  [dim]~[/dim] browser_agent tool disabled (features.browser_agent: false)")
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(add_resurrection_path)

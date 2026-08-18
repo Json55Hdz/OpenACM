@@ -1,6 +1,7 @@
 """
-Tests for OpenACM._init_tools — verifies feature-flagged tools are only
-registered when their config toggle is enabled.
+Tests for OpenACM._init_tools and _init_watchers — verifies feature-flagged
+tools/subsystems are only registered/instantiated when their config toggle
+is enabled.
 """
 from unittest.mock import MagicMock
 

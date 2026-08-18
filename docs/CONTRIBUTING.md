@@ -69,6 +69,9 @@ Releases follow [Semantic Versioning](https://semver.org/) (`vMAJOR.MINOR.PATCH`
    builds and pushes `ghcr.io/<owner>/openacm:X.Y.Z` to the private GHCR
    registry. Client deployments pin to this tag — see
    `docs/DEPLOY_VPS.md` → "Distribución para clientes".
+6. On the first publish only, go to GitHub → Packages → openacm → Package
+   settings and confirm the visibility is set to **Private** —
+   `GITHUB_TOKEN` cannot set this automatically.
 
 ## License
 
