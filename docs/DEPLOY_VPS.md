@@ -396,3 +396,26 @@ docker logs openacm   # ver el token la primera vez
 ```
 
 En NPM, el Forward Port sería `8080` en lugar de `47821`.
+
+---
+
+## Distribución para clientes: imagen privada versionada
+
+Para deployments de cliente (ver `docs/superpowers/specs/2026-08-18-client-deployment-strategy-design.md`),
+el server del cliente **nunca** clona este repo ni corre `git pull` en producción.
+En su lugar:
+
+1. Se etiqueta un release en este repo: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+2. El workflow `.github/workflows/release-image.yml` construye la imagen y la
+   sube a `ghcr.io/<owner>/openacm:X.Y.Z` (registry **privado** — verifica en
+   GitHub → Packages → openacm → Package settings que la visibilidad quedó en
+   Private la primera vez que se publica).
+3. El `Dockerfile` del cliente (en su propio repo privado, fuera de este repo)
+   hace `FROM ghcr.io/<owner>/openacm:X.Y.Z`, copia su plugin package y su
+   config, y construye su propia imagen.
+4. El server del cliente solo hace `docker pull` de la imagen de **su** cliente,
+   nunca de este repo.
+
+Actualizar un cliente = subir el tag base que usa su `Dockerfile` a mano,
+reconstruir su imagen, hacer push, y que el server haga `docker pull` del tag
+nuevo. Nunca automático, nunca sigue `main`.
