@@ -33,3 +33,20 @@ class TestBrowserAgentToggle:
         app = await _make_app(db, event_bus, browser_agent_enabled=False)
         assert "run_command" in app.tool_registry.tools
         assert "read_file" in app.tool_registry.tools
+
+
+class TestVoiceDaemonToggle:
+    async def test_not_instantiated_when_disabled(self, db, event_bus):
+        app = OpenACM()
+        app.config = AppConfig()
+        app.config.features.voice = False
+        app.database = db
+        app.event_bus = event_bus
+        app.brain = MagicMock()
+        # _init_watchers also starts ActivityWatcher/ResurrectionWatcher/CronScheduler/
+        # SwarmManager — each wrapped in its own try/except in the source, so they
+        # fail silently against the unset self.llm_router/tool_registry/memory/
+        # skill_manager (all None by default from OpenACM.__init__) and don't
+        # affect this assertion.
+        await app._init_watchers()
+        assert app._voice_daemon is None

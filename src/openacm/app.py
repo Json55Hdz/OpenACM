@@ -483,23 +483,28 @@ class OpenACM:
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Swarm manager skipped: {e}")
 
-        # Voice daemon — always instantiated so API endpoints are available;
-        # engine_available property reflects whether optional deps are installed.
-        try:
-            from openacm.voice.voice_daemon import VoiceDaemon
-            self._voice_daemon = VoiceDaemon(
-                database=self.database,
-                event_bus=self.event_bus,
-                brain=self.brain,
-            )
-            deps = self._voice_daemon.check_deps()
-            if self._voice_daemon.engine_available:
-                console.print("  [green]✓[/green] Voice daemon ready (sounddevice + faster-whisper)")
-            else:
-                missing = [k for k, v in deps.items() if not v and k != "pyttsx3"]
-                console.print(f"  [dim]~[/dim] Voice daemon available (missing: {', '.join(missing)})")
-        except Exception as e:
-            console.print(f"  [yellow]~[/yellow] Voice daemon skipped: {e}")
+        # Voice daemon — instantiated (when enabled) so API endpoints are
+        # available; engine_available property reflects whether optional
+        # deps are installed. Disabled entirely via config.features.voice
+        # for client deployments that don't want it at all.
+        if self.config.features.voice:
+            try:
+                from openacm.voice.voice_daemon import VoiceDaemon
+                self._voice_daemon = VoiceDaemon(
+                    database=self.database,
+                    event_bus=self.event_bus,
+                    brain=self.brain,
+                )
+                deps = self._voice_daemon.check_deps()
+                if self._voice_daemon.engine_available:
+                    console.print("  [green]✓[/green] Voice daemon ready (sounddevice + faster-whisper)")
+                else:
+                    missing = [k for k, v in deps.items() if not v and k != "pyttsx3"]
+                    console.print(f"  [dim]~[/dim] Voice daemon available (missing: {', '.join(missing)})")
+            except Exception as e:
+                console.print(f"  [yellow]~[/yellow] Voice daemon skipped: {e}")
+        else:
+            console.print("  [dim]~[/dim] Voice daemon disabled (features.voice: false)")
 
         # Pass swarm_manager to cron scheduler so run_swarm_template works
         if self._cron_scheduler and self._swarm_manager:
