@@ -6,6 +6,8 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-18
+
 ### Added
 - `features.browser_agent` and `features.voice` config toggles to disable
   the browser agent tool and the Voice daemon entirely for deployments that
