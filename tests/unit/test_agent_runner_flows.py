@@ -210,3 +210,107 @@ class TestFlowToolsExposedToAgent:
         assert schema_names == {"some_static_tool", "flow_7"}
         assert "other_static_tool" not in schema_names
         assert "flow_7" in captured["tool_registry"].tools
+
+
+class TestFlowSkillInjection:
+    async def test_skill_present_when_the_message_is_relevant_to_the_flow(self):
+        db = MagicMock()
+        db.get_agent_knowledge = AsyncMock(return_value=[])
+        db.get_agent_flows = AsyncMock(return_value=[FLOW_ROW])
+        db.get_connection = AsyncMock(return_value=None)
+
+        skill_manager = MagicMock()
+        skill_manager.get_active_skills_prompt_for_agent = AsyncMock(return_value="")
+        skill_manager.get_flow_skill = AsyncMock(
+            return_value={"id": 1, "flow_id": 7, "name": "cuando-usar", "content": "Usa esto para disponibilidad."}
+        )
+
+        base_registry = MagicMock()
+        base_registry.is_relevant = MagicMock(return_value=True)
+        base_registry.tools = {"some_static_tool": MagicMock()}
+        base_registry.get_tools_schema.return_value = [{"type": "function", "function": {"name": "some_static_tool"}}]
+        base_registry.get_tools_by_intent.return_value = base_registry.get_tools_schema.return_value
+
+        runner = AgentRunner(
+            llm_router=MagicMock(), tool_registry=base_registry, memory=MagicMock(),
+            event_bus=MagicMock(), database=db, skill_manager=skill_manager,
+        )
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                captured["config"] = config
+
+            async def process_message(self, **kwargs):
+                return "ok"
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=AGENT, message="hay zapatos disponibles?")
+
+        assert "Usa esto para disponibilidad." in captured["config"].system_prompt
+        base_registry.is_relevant.assert_called_once_with(
+            "hay zapatos disponibles?", "check-availability Checks product availability"
+        )
+
+    async def test_skill_absent_when_the_message_is_not_relevant_to_the_flow(self):
+        db = MagicMock()
+        db.get_agent_knowledge = AsyncMock(return_value=[])
+        db.get_agent_flows = AsyncMock(return_value=[FLOW_ROW])
+        db.get_connection = AsyncMock(return_value=None)
+
+        skill_manager = MagicMock()
+        skill_manager.get_active_skills_prompt_for_agent = AsyncMock(return_value="")
+        skill_manager.get_flow_skill = AsyncMock(
+            return_value={"id": 1, "flow_id": 7, "name": "cuando-usar", "content": "Usa esto para disponibilidad."}
+        )
+
+        base_registry = MagicMock()
+        base_registry.is_relevant = MagicMock(return_value=False)
+        base_registry.tools = {"some_static_tool": MagicMock()}
+        base_registry.get_tools_schema.return_value = [{"type": "function", "function": {"name": "some_static_tool"}}]
+        base_registry.get_tools_by_intent.return_value = base_registry.get_tools_schema.return_value
+
+        runner = AgentRunner(
+            llm_router=MagicMock(), tool_registry=base_registry, memory=MagicMock(),
+            event_bus=MagicMock(), database=db, skill_manager=skill_manager,
+        )
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                captured["config"] = config
+
+            async def process_message(self, **kwargs):
+                return "ok"
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=AGENT, message="qué clima hace hoy?")
+
+        assert "Usa esto para disponibilidad." not in captured["config"].system_prompt
+        skill_manager.get_flow_skill.assert_not_awaited()
+
+    async def test_no_flows_means_is_relevant_is_never_called(self):
+        db = MagicMock()
+        db.get_agent_knowledge = AsyncMock(return_value=[])
+        db.get_agent_flows = AsyncMock(return_value=[])
+
+        skill_manager = MagicMock()
+        skill_manager.get_active_skills_prompt_for_agent = AsyncMock(return_value="")
+
+        base_registry = MagicMock()
+        base_registry.is_relevant = MagicMock(return_value=True)
+        base_registry.tools = {"some_static_tool": MagicMock()}
+        base_registry.get_tools_schema.return_value = [{"type": "function", "function": {"name": "some_static_tool"}}]
+        base_registry.get_tools_by_intent.return_value = base_registry.get_tools_schema.return_value
+
+        runner = AgentRunner(
+            llm_router=MagicMock(), tool_registry=base_registry, memory=MagicMock(),
+            event_bus=MagicMock(), database=db, skill_manager=skill_manager,
+        )
+
+        with patch("openacm.core.brain.Brain", MagicMock(return_value=MagicMock(process_message=AsyncMock(return_value="ok")))):
+            await runner.run(agent=AGENT, message="hola")
+
+        base_registry.is_relevant.assert_not_called()

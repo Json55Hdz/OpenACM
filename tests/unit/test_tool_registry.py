@@ -104,6 +104,19 @@ class TestKwMatch:
 # _is_conversational
 # ---------------------------------------------------------------------------
 
+class TestIsRelevant:
+    def test_matching_keyword_is_relevant(self, tool_registry):
+        assert tool_registry.is_relevant("hay zapatos disponibles?", "Consulta disponibilidad de zapatos en la tienda") is True
+
+    def test_no_matching_keyword_is_not_relevant(self, tool_registry):
+        assert tool_registry.is_relevant("qué clima hace hoy?", "Consulta disponibilidad de zapatos en la tienda") is False
+
+    def test_short_words_are_ignored_to_avoid_noise_matches(self, tool_registry):
+        # "de" and "en" are 2 letters — must not cause an accidental match
+        # against unrelated text that also happens to contain them.
+        assert tool_registry.is_relevant("de qué color es el auto?", "Envía un correo de bienvenida") is False
+
+
 class TestIsConversational:
     def test_greeting_is_conversational(self, tool_registry):
         assert tool_registry._is_conversational("hola") is True

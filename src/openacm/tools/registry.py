@@ -157,6 +157,26 @@ class ToolRegistry:
 
         return selected
 
+    def is_relevant(self, message: str, text: str) -> bool:
+        """One-off semantic relevance check between an arbitrary message and
+        an arbitrary text — for content that was never part of the
+        precomputed tool-embedding matrix (e.g. a dynamically-registered
+        flow tool's description), so get_tools_semantic's batch cosine
+        similarity doesn't apply. Falls back to a keyword-overlap heuristic
+        when the semantic model isn't loaded, same graceful-degradation
+        shape as get_tools_by_intent uses for the static tool set."""
+        if self._semantic_model is None:
+            words = {w for w in re.findall(r"[a-zA-Z0-9áéíóúñÁÉÍÓÚÑ]{3,}", text.lower())}
+            msg_lower = message.lower()
+            return any(w in msg_lower for w in words)
+
+        embeddings = self._semantic_model.encode(
+            [message, text], convert_to_numpy=True, show_progress_bar=False
+        )
+        norm = embeddings / (np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8)
+        similarity = float(norm[0] @ norm[1])
+        return similarity >= SEMANTIC_TOOL_THRESHOLD
+
     # Keyword-to-category mapping for intent-based tool filtering
     INTENT_KEYWORDS: dict[str, list[str]] = _DEFAULT_INTENT_KEYWORDS
 

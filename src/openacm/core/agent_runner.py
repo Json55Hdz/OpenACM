@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from openacm.tools.base import ToolDefinition
+from openacm.core.messages import MSG_SKILL_CONTEXT_HEADER, MSG_SKILL_CONTEXT_FOOTER
 
 log = structlog.get_logger()
 
@@ -161,25 +162,10 @@ class AgentRunner:
 
         system_prompt = self._build_system_prompt(agent["system_prompt"], knowledge_items)
 
-        if self.skill_manager:
-            skills_prompt = await self.skill_manager.get_active_skills_prompt_for_agent(agent["id"])
-            if skills_prompt:
-                system_prompt = f"{system_prompt}\n\n{skills_prompt}"
-
-        config = AssistantConfig(
-            name=agent["name"],
-            system_prompt=system_prompt,
-            max_tool_iterations=10,
-            onboarding_completed=True,
-            is_agent=True,
-        )
-
-        if channel_id is None:
-            channel_id = f"agent_{agent['id']}"
-
         allowed = agent.get("allowed_tools", "all")
 
         flow_tools: dict[str, ToolDefinition] = {}
+        active_flows: list[dict] = []
         if self.database and allowed != "none":
             try:
                 active_flows = await self.database.get_agent_flows(agent["id"], active_only=True)
@@ -199,6 +185,41 @@ class AgentRunner:
         if allowed != "none" and (allowed not in ("all",) or flow_tools):
             filtered_schema = self._get_tools(allowed) if allowed not in ("all", "none") else None
             agent_tool_registry = _AgentToolRegistry(self.tool_registry, filtered_schema, flow_tools)
+
+        if self.skill_manager:
+            skills_prompt = await self.skill_manager.get_active_skills_prompt_for_agent(agent["id"])
+            if skills_prompt:
+                system_prompt = f"{system_prompt}\n\n{skills_prompt}"
+
+            # Flow-skills activate WITH their tool, not unconditionally like
+            # agent skills above — checked via ToolRegistry.is_relevant
+            # (Task 8's own new method), NOT via get_tools_by_intent, which
+            # always includes every active flow tool regardless of message
+            # (see this task's header note on why). Entirely self-contained
+            # here — no changes to Brain's shared agentic loop.
+            if flow_tools and self.tool_registry:
+                for flow in active_flows:
+                    relevance_text = f"{flow['name']} {flow['description']}"
+                    if not self.tool_registry.is_relevant(message, relevance_text):
+                        continue
+                    flow_skill = await self.skill_manager.get_flow_skill(flow["id"])
+                    if flow_skill:
+                        system_prompt = (
+                            f"{system_prompt}\n\n{MSG_SKILL_CONTEXT_HEADER}"
+                            f"\n\n## {flow_skill['name']}\n\n{flow_skill['content']}"
+                            f"{MSG_SKILL_CONTEXT_FOOTER}"
+                        )
+
+        config = AssistantConfig(
+            name=agent["name"],
+            system_prompt=system_prompt,
+            max_tool_iterations=10,
+            onboarding_completed=True,
+            is_agent=True,
+        )
+
+        if channel_id is None:
+            channel_id = f"agent_{agent['id']}"
 
         brain = Brain(
             config=config,
