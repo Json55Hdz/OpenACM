@@ -189,8 +189,17 @@ export function useAgentMutations() {
   });
 
   const test = useMutation({
-    mutationFn: ({ id, message }: { id: number; message: string }) =>
-      fetchAPI(`/api/agents/${id}/test`, { method: 'POST', body: JSON.stringify({ message }) }),
+    mutationFn: ({ id, message, channel_id, extra_system_context }: {
+      id: number; message: string; channel_id?: string; extra_system_context?: string;
+    }) =>
+      fetchAPI(`/api/agents/${id}/test`, {
+        method: 'POST',
+        body: JSON.stringify({
+          message,
+          ...(channel_id && { channel_id }),
+          ...(extra_system_context && { extra_system_context }),
+        }),
+      }),
   });
 
   const getSecret = useMutation({

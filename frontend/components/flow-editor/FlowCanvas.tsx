@@ -13,6 +13,7 @@ import { useAgentFlowSkill, useSaveFlowSkill, useGenerateFlowSkill } from '@/hoo
 import { useAPI } from '@/hooks/use-api';
 import { Trash2 } from 'lucide-react';
 import { InspectorSection } from './InspectorSection';
+import { FlowChatPanel } from './FlowChatPanel';
 
 interface StartParam {
   name: string;
@@ -289,6 +290,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const saveFlowSkill = useSaveFlowSkill(agentId, flow.id);
   const generateFlowSkill = useGenerateFlowSkill(agentId, flow.id);
   const [showSkillPanel, setShowSkillPanel] = useState(false);
+  const [showChatPanel, setShowChatPanel] = useState(false);
   const [skillName, setSkillName] = useState(flowSkill?.name || flow.name);
   const [skillContent, setSkillContent] = useState(flowSkill?.content || '');
   const [skillError, setSkillError] = useState<string | null>(null);
@@ -587,6 +589,9 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
         <button onClick={() => { setSkillName(flowSkill?.name || flow.name); setSkillContent(flowSkill?.content || ''); setSkillError(null); setShowSkillPanel(true); }} className="btn-secondary text-[11px] px-2 py-1 mt-1">
           {flowSkill ? 'Editar skill' : '+ Skill'}
         </button>
+        <button onClick={() => setShowChatPanel(v => !v)} className="btn-secondary text-[11px] px-2 py-1 mt-1">
+          💬 Chat con IA
+        </button>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <div className="label text-[var(--acm-fg-4)] mb-1">Variables</div>
           {variableNames.length === 0 ? (
@@ -627,6 +632,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           )}
         </div>
       </div>
+      {showChatPanel && <FlowChatPanel agentId={agentId} flow={flow} />}
       <div
         ref={canvasWrapperRef}
         className="flex-1 relative"
