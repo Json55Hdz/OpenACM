@@ -46,8 +46,16 @@ const mergeBadgeStyle: React.CSSProperties = {
 
 function MergeBadge({ id }: { id: string }) {
   const incoming = useNodeConnections({ id, handleType: 'target' });
-  if (incoming.length < 2) return null;
-  return <div style={mergeBadgeStyle} title="Punto de unión (varias ramas llegan aquí)">{incoming.length}</div>;
+  // Only count edges into the flow-in "default" handle — a named data
+  // handle (url/body/value/search_term/...) feeding this node is an
+  // unrelated data wire, not a merging flow branch, and must not trip the
+  // "merge point" badge. Without this filter, any node that has both a
+  // flow-in edge AND a data edge wired to one of its field pins (e.g. an
+  // HTTP node with a plain flow-in plus its `url` field wired from another
+  // node) would incorrectly show as a 2-branch merge point.
+  const flowIncoming = incoming.filter(c => c.targetHandle === 'default');
+  if (flowIncoming.length < 2) return null;
+  return <div style={mergeBadgeStyle} title="Punto de unión (varias ramas llegan aquí)">{flowIncoming.length}</div>;
 }
 
 export function StartNode({ data }: NodeProps) {
