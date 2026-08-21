@@ -1,4 +1,5 @@
 """Tests for per-agent flow API endpoints under the agents router."""
+import json as _json
 from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -88,6 +89,54 @@ class TestCreateUpdateDeleteFlow:
             resp = await ac.delete("/api/agents/42/flows/7")
         assert resp.status_code == 200
         _mock_state.delete_flow.assert_awaited_once_with(7, agent_id=42)
+
+
+CYCLIC_GRAPH = _json.dumps({
+    "nodes": [{"id": "start", "type": "start", "config": {"parameters": []}},
+              {"id": "a", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
+              {"id": "b", "type": "http", "config": {"url": "https://example.com", "method": "GET"}}],
+    "edges": [{"from": "start", "to": "a", "fromHandle": "default"},
+              {"from": "a", "to": "b", "fromHandle": "default"},
+              {"from": "b", "to": "a", "fromHandle": "default"}],
+})
+
+VALID_MERGE_GRAPH = _json.dumps({
+    "nodes": [{"id": "start", "type": "start", "config": {"parameters": []}},
+              {"id": "cond1", "type": "conditional", "config": {"field": "x", "operator": "contains", "value": "x"}},
+              {"id": "merge1", "type": "end", "config": {"template": "done"}}],
+    "edges": [{"from": "start", "to": "cond1", "fromHandle": "default"},
+              {"from": "cond1", "to": "merge1", "fromHandle": "true"},
+              {"from": "cond1", "to": "merge1", "fromHandle": "false"}],
+})
+
+
+class TestCycleValidation:
+    async def test_saving_a_valid_merge_graph_succeeds(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": VALID_MERGE_GRAPH})
+        assert resp.status_code == 200
+
+    async def test_saving_a_cyclic_graph_is_rejected(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": CYCLIC_GRAPH})
+        assert resp.status_code == 400
+        assert "a" in resp.json()["detail"]
+        assert "b" in resp.json()["detail"]
+        _mock_state.update_flow.assert_not_awaited()
+
+    async def test_testing_a_cyclic_graph_override_is_rejected(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows/7/test",
+                json={"params": {}, "graph_json": CYCLIC_GRAPH},
+            )
+        assert resp.status_code == 400
+
+    async def test_testing_the_saved_graph_with_no_override_still_validates_it(self, app_client, _mock_state):
+        _mock_state.get_flow.return_value = {**FLOW_ROW, "graph_json": CYCLIC_GRAPH}
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
+        assert resp.status_code == 400
 
 
 class TestTestFlowEndpoint:

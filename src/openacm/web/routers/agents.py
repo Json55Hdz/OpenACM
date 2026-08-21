@@ -192,6 +192,14 @@ def register_routes(app: FastAPI) -> None:
         data = await request.json()
         allowed_fields = {"name", "description", "graph_json", "is_active"}
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
+
+        if "graph_json" in kwargs:
+            from openacm.core.flow_executor import detect_cycle
+            import json as _json
+            cycle = detect_cycle(_json.loads(kwargs["graph_json"]))
+            if cycle:
+                raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+
         ok = await _state.database.update_flow(flow_id, agent_id=agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Flow not found")
@@ -214,7 +222,7 @@ def register_routes(app: FastAPI) -> None:
         if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
 
-        from openacm.core.flow_executor import FlowExecutor
+        from openacm.core.flow_executor import FlowExecutor, detect_cycle
         import json as _json
 
         data = await request.json()
@@ -224,11 +232,16 @@ def register_routes(app: FastAPI) -> None:
         # require clicking "Guardar flujo" first every time.
         graph_json_override = data.get("graph_json")
 
+        graph = _json.loads(graph_json_override) if graph_json_override else _json.loads(flow["graph_json"])
+
+        cycle = detect_cycle(graph)
+        if cycle:
+            raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+
         async def get_connection(connection_id: int):
             return await _state.database.get_connection(connection_id)
 
         executor = FlowExecutor(get_connection=get_connection)
-        graph = _json.loads(graph_json_override) if graph_json_override else _json.loads(flow["graph_json"])
         result = await executor.run(graph, test_params)
         return {"result": result}
 

@@ -17,6 +17,50 @@ import httpx
 _TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}")
 
 
+def detect_cycle(graph: dict) -> list[str] | None:
+    """DFS cycle detection over the flow's directed edges (ignoring
+    fromHandle — both a Conditional's true and false edges are just
+    directed edges for this purpose). Returns the node ids forming a
+    cycle if one exists, else None.
+
+    A merge (two edges into the same target) is NOT a cycle: the first
+    path to reach a node finishes exploring it (turns it BLACK) before a
+    second path can reach it, so the second arrival sees BLACK, not GRAY,
+    and is correctly not treated as a cycle.
+    """
+    adjacency: dict[str, list[str]] = {}
+    for edge in graph.get("edges", []):
+        adjacency.setdefault(edge["from"], []).append(edge["to"])
+
+    node_ids = [n["id"] for n in graph.get("nodes", [])]
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {node_id: WHITE for node_id in node_ids}
+    stack: list[str] = []
+
+    def visit(node_id: str) -> list[str] | None:
+        color[node_id] = GRAY
+        stack.append(node_id)
+        for neighbor in adjacency.get(node_id, []):
+            neighbor_color = color.get(neighbor, WHITE)
+            if neighbor_color == GRAY:
+                cycle_start = stack.index(neighbor)
+                return stack[cycle_start:]
+            if neighbor_color == WHITE:
+                found = visit(neighbor)
+                if found:
+                    return found
+        stack.pop()
+        color[node_id] = BLACK
+        return None
+
+    for node_id in node_ids:
+        if color[node_id] == WHITE:
+            found = visit(node_id)
+            if found:
+                return found
+    return None
+
+
 def substitute_templates(template: str, params: dict[str, Any], outputs: dict[str, Any]) -> str:
     """Replace {{name}} / {{node_id.field}} references in template.
 

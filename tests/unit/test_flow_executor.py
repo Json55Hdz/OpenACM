@@ -6,6 +6,47 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from openacm.core.flow_executor import FlowExecutor, substitute_templates
 
 
+class TestDetectCycle:
+    def test_linear_flow_has_no_cycle(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "start"}, {"id": "http1"}, {"id": "end"}],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default"},
+                {"from": "http1", "to": "end", "fromHandle": "default"},
+            ],
+        }
+        assert detect_cycle(graph) is None
+
+    def test_a_valid_merge_is_not_a_cycle(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "start"}, {"id": "cond1"}, {"id": "merge1"}, {"id": "end"}],
+            "edges": [
+                {"from": "start", "to": "cond1", "fromHandle": "default"},
+                {"from": "cond1", "to": "merge1", "fromHandle": "true"},
+                {"from": "cond1", "to": "merge1", "fromHandle": "false"},
+                {"from": "merge1", "to": "end", "fromHandle": "default"},
+            ],
+        }
+        assert detect_cycle(graph) is None
+
+    def test_a_real_cycle_is_detected_and_names_its_nodes(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "start"}, {"id": "a"}, {"id": "b"}, {"id": "c"}],
+            "edges": [
+                {"from": "start", "to": "a", "fromHandle": "default"},
+                {"from": "a", "to": "b", "fromHandle": "default"},
+                {"from": "b", "to": "c", "fromHandle": "default"},
+                {"from": "c", "to": "a", "fromHandle": "default"},
+            ],
+        }
+        cycle = detect_cycle(graph)
+        assert cycle is not None
+        assert set(cycle) == {"a", "b", "c"}
+
+
 class TestSubstituteTemplates:
     def test_bare_param_name_substitutes_whole_value(self):
         result = substitute_templates("Hello {{name}}", params={"name": "Ana"}, outputs={})
