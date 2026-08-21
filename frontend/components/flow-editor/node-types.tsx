@@ -117,6 +117,13 @@ export function SetNode({ id, data }: NodeProps) {
   );
 }
 
+// Get is a pure data node — no flow-in/flow-out handles, matching Unreal
+// Blueprint's pure (non-exec) nodes. It's referenced directly by whatever
+// needs its value, wherever that node sits in the graph, via a data edge
+// (or the existing {{name}}/{{get_id}} template syntax) — never walked by
+// FlowExecutor.run()'s flow-edge traversal. See resolve_field's Get
+// special case in flow_executor.py (_resolve_pin_value) for how a
+// never-walked Get node's value still gets computed on demand.
 export function GetNode({ id, data }: NodeProps) {
   return (
     <div style={baseStyleFor('get')}>
