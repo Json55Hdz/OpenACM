@@ -151,6 +151,28 @@ class TestFlowExecutorStartToEnd:
 
         assert result.startswith("Error")
 
+    async def test_a_cycle_that_reaches_run_directly_is_capped_not_infinite(self):
+        """detect_cycle() (Task 2) guards the API layer, but run() itself
+        must not hang if a cyclic graph reaches it some other way (e.g. a
+        row edited directly in the database, bypassing the API)."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "a", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
+                {"id": "b", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "a", "fromHandle": "default"},
+                {"from": "a", "to": "b", "fromHandle": "default"},
+                {"from": "b", "to": "a", "fromHandle": "default"},
+            ],
+        }
+        executor = FlowExecutor()
+
+        result = await executor.run(graph, params={})
+
+        assert result == "Error: flow exceeded maximum node visits (possible cycle)"
+
 
 def _http_graph(url="https://example.com/api", method="GET", headers=None, body=None):
     return {

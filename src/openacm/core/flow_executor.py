@@ -94,6 +94,7 @@ class FlowExecutor:
     """Interprets and runs one flow's graph_json against a set of params."""
 
     _CONDITIONAL_OPERATORS = {"contains", "equals", "is_empty", "is_error"}
+    _MAX_NODE_VISITS = 50
 
     def __init__(self, get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None):
         self.get_connection = get_connection
@@ -204,8 +205,13 @@ class FlowExecutor:
         outputs: dict[str, Any] = {}
         current_id = edges_by_source.get(start_node["id"], {}).get("default")
         previous_id: str | None = None
+        visits = 0
 
         while current_id:
+            visits += 1
+            if visits > self._MAX_NODE_VISITS:
+                return "Error: flow exceeded maximum node visits (possible cycle)"
+
             node = nodes.get(current_id)
             if node is None:
                 return f"Error: flow references unknown node '{current_id}'"
