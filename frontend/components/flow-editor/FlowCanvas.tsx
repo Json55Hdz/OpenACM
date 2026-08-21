@@ -57,24 +57,32 @@ function maxNodeIdSuffix(nodes: Node[]): number {
 }
 
 function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: string): string[] {
-  // Every node has exactly one incoming edge (the graph is linear + one
-  // branch point at Conditional) — walking backward from a specific node
-  // through "target -> source" is a single, unambiguous path. It never
-  // needs to know which of a Conditional's branches is "taken" at
-  // runtime, because tracing backward from one node only ever follows
-  // the one path that actually leads to it.
-  const incomingBySource: Record<string, string> = {};
-  for (const e of edges) incomingBySource[e.target] = e.source;
+  // A node can have multiple incoming edges since merge points were added
+  // (a Conditional's true/false branches sharing a downstream node) — this
+  // collects every ancestor reachable via ANY incoming path, not just a
+  // single linear chain. A Set node reachable via only one branch still
+  // shows up as an insertable reference here; if the flow actually took
+  // the other branch at runtime, referencing it resolves to the existing
+  // "[missing: ...]" marker rather than being silently hidden from the
+  // picker.
+  const incomingBySource: Record<string, string[]> = {};
+  for (const e of edges) {
+    (incomingBySource[e.target] ||= []).push(e.source);
+  }
 
-  const names: string[] = [];
-  let currentId: string | undefined = incomingBySource[selectedNodeId];
-  while (currentId) {
+  const names = new Set<string>();
+  const visited = new Set<string>();
+  const queue: string[] = [...(incomingBySource[selectedNodeId] || [])];
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
     const node = nodes.find(n => n.id === currentId);
     const name = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
-    if (name) names.push(name);
-    currentId = incomingBySource[currentId];
+    if (name) names.add(name);
+    queue.push(...(incomingBySource[currentId] || []));
   }
-  return names;
+  return Array.from(names);
 }
 
 function VariablePicker({ names, targetRef, value, onInsert }: {

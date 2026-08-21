@@ -1,6 +1,6 @@
 'use client';
 
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, useNodeConnections, type NodeProps } from '@xyflow/react';
 
 export type NodeCategory = 'flow' | 'logic' | 'integration' | 'data';
 
@@ -38,6 +38,18 @@ const pinLabelStyle: React.CSSProperties = {
   fontSize: 9, color: 'var(--acm-fg-4)', marginTop: 2,
 };
 
+const mergeBadgeStyle: React.CSSProperties = {
+  position: 'absolute', top: -6, right: -6, width: 14, height: 14, borderRadius: '50%',
+  background: 'var(--acm-accent)', color: 'var(--acm-base)', fontSize: 9, fontWeight: 700,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+
+function MergeBadge({ id }: { id: string }) {
+  const incoming = useNodeConnections({ id, handleType: 'target' });
+  if (incoming.length < 2) return null;
+  return <div style={mergeBadgeStyle} title="Punto de unión (varias ramas llegan aquí)">{incoming.length}</div>;
+}
+
 export function StartNode({ data }: NodeProps) {
   return (
     <div style={baseStyleFor('start')}>
@@ -50,7 +62,8 @@ export function StartNode({ data }: NodeProps) {
 
 export function HttpNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('http')}>
+    <div style={{ ...baseStyleFor('http'), position: 'relative' }}>
+      <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🌐 HTTP Request</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.method || 'GET')} {String(data.url || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
@@ -63,7 +76,8 @@ export function HttpNode({ id, data }: NodeProps) {
 
 export function ConditionalNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('conditional')}>
+    <div style={{ ...baseStyleFor('conditional'), position: 'relative' }}>
+      <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.logic }}>◆ Condicional</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.field || '')} {String(data.operator || '')} {String(data.value || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
@@ -77,7 +91,8 @@ export function ConditionalNode({ id, data }: NodeProps) {
 
 export function WooCommerceNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('woocommerce')}>
+    <div style={{ ...baseStyleFor('woocommerce'), position: 'relative' }}>
+      <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🛒 WooCommerce</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.search_term || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
@@ -90,7 +105,8 @@ export function WooCommerceNode({ id, data }: NodeProps) {
 
 export function SetNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('set')}>
+    <div style={{ ...baseStyleFor('set'), position: 'relative' }}>
+      <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>💾 Guardar (Set)</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
@@ -113,9 +129,10 @@ export function GetNode({ id, data }: NodeProps) {
   );
 }
 
-export function EndNode({ data }: NodeProps) {
+export function EndNode({ id, data }: NodeProps) {
   return (
-    <div style={baseStyleFor('end')}>
+    <div style={{ ...baseStyleFor('end'), position: 'relative' }}>
+      <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.flow }}>■ Final</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.template || '')}</div>
       <Handle type="target" position={Position.Top} id="default" />
