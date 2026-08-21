@@ -2,11 +2,11 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  ReactFlow, ReactFlowProvider, useReactFlow, Background, Controls, MiniMap, addEdge, applyNodeChanges, applyEdgeChanges,
+  ReactFlow, ReactFlowProvider, useReactFlow, Background, Controls, MiniMap, Panel, addEdge, applyNodeChanges, applyEdgeChanges,
   type Node, type Edge, type Connection, type NodeChange, type EdgeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS } from './node-types';
+import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS, classifyPin } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
 import { useAgentFlowSkill, useSaveFlowSkill, useGenerateFlowSkill } from '@/hooks/use-agent-flow-skill';
@@ -90,49 +90,6 @@ function stringifyWholeValue(value: unknown): string {
     return String((value as Record<string, unknown>).result);
   }
   return String(value);
-}
-
-// Classifies a given (nodeType, handleId, handleKind) as a "flow" pin
-// (FlowExecutor.run()'s flow-walk steps through it — see flow_executor.py's
-// edges_by_source) or a "data" pin (a template-substitutable value, wired
-// through data_edges_by_target and never walked). Needed because, before
-// this, only the TARGET side of a connection was ever checked (via
-// `targetHandle !== 'default'`) — nothing distinguished a flow-out pin
-// from a data-out pin on the SOURCE side, which let a data-output pin (e.g.
-// WooCommerce's `result`) get wired as if it were a flow-out pin.
-//
-// The handle-id shape, cross-checked directly against node-types.tsx for
-// every node type (not assumed):
-//   start:        source "default"                                  -> flow
-//   end:          target "default"                                  -> flow
-//   http:         target "default" -> flow; target "url"/"body" -> data;
-//                 source "default"                                  -> flow
-//   conditional:  target "default" -> flow; target "field"/"value" -> data;
-//                 source "true"/"false"                             -> flow
-//   woocommerce:  target "default" -> flow; target "search_term"  -> data;
-//                 source "default" -> flow; source "result"/"count" -> data
-//   set:          target "default" -> flow; target "value"        -> data;
-//                 source "default"                                  -> flow
-//   get:          ONE handle only — source, id="default" — but Get is a
-//                 pure node (no flow-in/flow-out concept at all, see
-//                 node-types.tsx's GetNode comment) and that "default" id
-//                 carries its data output ("salida: value"), not a
-//                 flow-walk step. This is the one place id="default" does
-//                 NOT mean "flow pin" — every other node's source
-//                 "default" genuinely is its flow-out pin.
-//
-// For every target handle, "default" is the flow-in pin and every other
-// named target handle is a data pin. For every source handle (except
-// Get's, per above), "default" and Conditional's "true"/"false" are flow
-// pins and every other named source handle is a data pin.
-function classifyPin(nodeType: string | undefined, handleId: string | null | undefined, handleKind: 'source' | 'target'): 'flow' | 'data' {
-  const id = handleId || 'default';
-  if (nodeType === 'get') return 'data';
-  if (handleKind === 'target') {
-    return id === 'default' ? 'flow' : 'data';
-  }
-  if (nodeType === 'conditional' && (id === 'true' || id === 'false')) return 'flow';
-  return id === 'default' ? 'flow' : 'data';
 }
 
 // Local re-implementation of flow_executor.py's substitute_templates rule
@@ -673,7 +630,34 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
         >
           <Background />
           <Controls />
-          <MiniMap />
+          <MiniMap
+            bgColor="var(--acm-elev)"
+            maskColor="oklch(0.155 0.006 255 / 0.7)"
+            maskStrokeColor="var(--acm-accent)"
+            nodeColor={(n) => CATEGORY_COLORS[NODE_CATEGORY[n.type ?? ''] ?? 'flow']}
+            nodeStrokeColor="var(--acm-base)"
+            style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)', borderRadius: 8 }}
+          />
+          {/* Unreal-style pin legend — reuses the same CATEGORY_COLORS.flow /
+              CATEGORY_COLORS.data tokens the pins themselves are drawn in
+              (see node-types.tsx's pinProps), so the legend can never drift
+              out of sync with what a pin actually looks like. */}
+          <Panel position="top-right" style={{
+            background: 'var(--acm-elev)', border: '1px solid var(--acm-border)', borderRadius: 8,
+            padding: '6px 10px', display: 'flex', gap: 12, alignItems: 'center', fontSize: 11, color: 'var(--acm-fg-4)',
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{
+                width: 9, height: 9, background: CATEGORY_COLORS.flow, borderRadius: 2,
+                clipPath: 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)',
+              }} />
+              flujo
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <span style={{ width: 8, height: 8, background: CATEGORY_COLORS.data, borderRadius: '50%' }} />
+              dato
+            </span>
+          </Panel>
         </ReactFlow>
         {contextMenu && (
           <div
