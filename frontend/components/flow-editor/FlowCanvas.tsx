@@ -9,6 +9,7 @@ import '@xyflow/react/dist/style.css';
 import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
+import { useAgentFlowSkill, useSaveFlowSkill, useGenerateFlowSkill } from '@/hooks/use-agent-flow-skill';
 import { useAPI } from '@/hooks/use-api';
 import { Trash2 } from 'lucide-react';
 
@@ -156,6 +157,13 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       { onSuccess: () => { setShowNewConnectionForm(false); setNewConnName(''); setNewConnUrl(''); setNewConnKey(''); setNewConnSecret(''); } },
     );
   };
+
+  const { data: flowSkill } = useAgentFlowSkill(agentId, flow.id);
+  const saveFlowSkill = useSaveFlowSkill(agentId, flow.id);
+  const generateFlowSkill = useGenerateFlowSkill(agentId, flow.id);
+  const [showSkillPanel, setShowSkillPanel] = useState(false);
+  const [skillName, setSkillName] = useState(flowSkill?.name || flow.name);
+  const [skillContent, setSkillContent] = useState(flowSkill?.content || '');
 
   const [testParams, setTestParams] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -379,6 +387,9 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       <div className="flex flex-col gap-1 shrink-0" style={{ width: 120 }}>
         <div className="text-[10px]" style={{ color: 'var(--acm-fg-4)' }}>Clic derecho en el lienzo para agregar un nodo</div>
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
+        <button onClick={() => { setSkillName(flowSkill?.name || flow.name); setSkillContent(flowSkill?.content || ''); setShowSkillPanel(true); }} className="btn-secondary text-[11px] px-2 py-1 mt-1">
+          {flowSkill ? 'Editar skill' : '+ Skill'}
+        </button>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <div className="label text-[var(--acm-fg-4)] mb-1">Variables</div>
           {variableNames.length === 0 ? (
@@ -674,6 +685,35 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               />
             </>
           )}
+        </div>
+      )}
+      {showSkillPanel && (
+        <div className="shrink-0 p-2 text-[11px]" style={{ width: 260, border: '1px solid var(--acm-border)', borderRadius: 8, color: 'var(--acm-fg-2)' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Skill del flujo</div>
+          <label>Nombre</label>
+          <input className="acm-input w-full mb-2" value={skillName} onChange={e => setSkillName(e.target.value)} />
+          <label>Contenido (qué debe saber el LLM para usar este flujo)</label>
+          <textarea className="acm-input w-full mb-2" rows={8} value={skillContent} onChange={e => setSkillContent(e.target.value)} />
+          <div className="flex gap-1 flex-wrap">
+            <button
+              className="btn-secondary text-[11px] px-2 py-1"
+              disabled={generateFlowSkill.isPending}
+              onClick={() => generateFlowSkill.mutate(
+                { name: skillName, description: flow.description },
+                { onSuccess: (skill: any) => setSkillContent(skill.content) },
+              )}
+            >
+              {generateFlowSkill.isPending ? 'Generando...' : 'Generar con IA'}
+            </button>
+            <button
+              className="btn-primary text-[11px] px-2 py-1"
+              disabled={saveFlowSkill.isPending}
+              onClick={() => saveFlowSkill.mutate({ exists: !!flowSkill, data: { name: skillName, content: skillContent } })}
+            >
+              Guardar
+            </button>
+            <button className="btn-secondary text-[11px] px-2 py-1" onClick={() => setShowSkillPanel(false)}>Cerrar</button>
+          </div>
         </div>
       )}
     </div>
