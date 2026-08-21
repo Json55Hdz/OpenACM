@@ -196,7 +196,11 @@ def register_routes(app: FastAPI) -> None:
         if "graph_json" in kwargs:
             from openacm.core.flow_executor import detect_cycle
             import json as _json
-            cycle = detect_cycle(_json.loads(kwargs["graph_json"]))
+            try:
+                parsed_graph = _json.loads(kwargs["graph_json"])
+            except _json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid graph_json: not valid JSON")
+            cycle = detect_cycle(parsed_graph)
             if cycle:
                 raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
 

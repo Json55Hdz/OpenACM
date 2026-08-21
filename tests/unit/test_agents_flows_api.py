@@ -138,6 +138,12 @@ class TestCycleValidation:
             resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
         assert resp.status_code == 400
 
+    async def test_saving_malformed_graph_json_400s_not_500s(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": "not valid json"})
+        assert resp.status_code == 400
+        _mock_state.update_flow.assert_not_awaited()
+
 
 class TestTestFlowEndpoint:
     async def test_runs_the_flow_with_given_params(self, app_client, _mock_state):

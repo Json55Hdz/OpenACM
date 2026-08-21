@@ -46,6 +46,28 @@ class TestDetectCycle:
         assert cycle is not None
         assert set(cycle) == {"a", "b", "c"}
 
+    def test_a_self_loop_is_detected(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "a"}],
+            "edges": [{"from": "a", "to": "a", "fromHandle": "default"}],
+        }
+        assert detect_cycle(graph) == ["a"]
+
+    def test_a_cycle_in_a_disconnected_component_is_detected(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "start"}, {"id": "end"}, {"id": "x"}, {"id": "y"}],
+            "edges": [
+                {"from": "start", "to": "end", "fromHandle": "default"},
+                {"from": "x", "to": "y", "fromHandle": "default"},
+                {"from": "y", "to": "x", "fromHandle": "default"},
+            ],
+        }
+        cycle = detect_cycle(graph)
+        assert cycle is not None
+        assert set(cycle) == {"x", "y"}
+
 
 class TestSubstituteTemplates:
     def test_bare_param_name_substitutes_whole_value(self):
