@@ -189,6 +189,51 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     return `${prefix}_${nodeIdCounterRef.current}`;
   };
 
+  const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
+
+  const onCanvasCopy = useCallback(() => {
+    // Start/End are singleton per flow, so they're silently excluded from
+    // the copy rather than blocking the whole selection or duplicating them.
+    const selectedNodes = nodes.filter(n => n.selected && n.type !== 'start' && n.type !== 'end');
+    if (selectedNodes.length === 0) return;
+    const selectedIds = new Set(selectedNodes.map(n => n.id));
+    // Only edges between two copied nodes survive — an edge to a node
+    // outside the selection would dangle once pasted as a fresh copy.
+    const internalEdges = edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target));
+    clipboardRef.current = { nodes: selectedNodes, edges: internalEdges };
+  }, [nodes, edges]);
+
+  const onCanvasPaste = useCallback(() => {
+    const clip = clipboardRef.current;
+    if (!clip || clip.nodes.length === 0) return;
+
+    const idMap: Record<string, string> = {};
+    const pastedNodes: Node[] = clip.nodes.map(n => {
+      const newId = nextNodeId((n.type || 'http') as string);
+      idMap[n.id] = newId;
+      return { ...n, id: newId, selected: false, position: { x: n.position.x + 40, y: n.position.y + 40 } };
+    });
+    const pastedEdges: Edge[] = clip.edges.map(e => ({
+      id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}`,
+      source: idMap[e.source],
+      target: idMap[e.target],
+      sourceHandle: e.sourceHandle,
+    }));
+
+    setNodes(nds => [...nds, ...pastedNodes]);
+    setEdges(eds => [...eds, ...pastedEdges]);
+  }, [nodeIdCounterRef]);
+
+  const onCanvasKeyDown = useCallback((event: React.KeyboardEvent) => {
+    const isMeta = event.ctrlKey || event.metaKey;
+    if (!isMeta) return;
+    if (event.key === 'c' || event.key === 'C') {
+      onCanvasCopy();
+    } else if (event.key === 'v' || event.key === 'V') {
+      onCanvasPaste();
+    }
+  }, [onCanvasCopy, onCanvasPaste]);
+
   const variableNames = useMemo(() => {
     const names = new Set<string>();
     for (const n of nodes) {
@@ -366,6 +411,8 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
         style={{ border: '1px solid var(--acm-border)', borderRadius: 8 }}
         onDragOver={onCanvasDragOver}
         onDrop={onCanvasDrop}
+        onKeyDown={onCanvasKeyDown}
+        tabIndex={0}
       >
         <ReactFlow
           nodes={nodes}
