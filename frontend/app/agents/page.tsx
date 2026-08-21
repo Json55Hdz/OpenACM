@@ -1799,7 +1799,10 @@ function FlowsTab({ agentId }: { agentId: number }) {
           agentId={agentId}
           flow={editingFlow}
           onSave={(graphJson) => {
-            update.mutate({ id: editingFlow.id, data: { graph_json: graphJson } });
+            update.mutate(
+              { id: editingFlow.id, data: { graph_json: graphJson } },
+              { onError: (err: Error) => toast.error(err.message || 'Error al guardar el flujo') }
+            );
           }}
         />
       </div>

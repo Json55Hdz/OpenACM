@@ -37,7 +37,16 @@ export function useAPI() {
           // Don't clear auth here to avoid loops - let the component handle it
           console.error('401 Unauthorized - token invalid');
         }
-        throw new Error(`HTTP ${response.status}`);
+        let detailMessage: string | undefined;
+        try {
+          const errorBody = await response.json();
+          if (errorBody && typeof errorBody.detail === 'string') {
+            detailMessage = errorBody.detail;
+          }
+        } catch {
+          // response body wasn't JSON (or was empty) - fall back below
+        }
+        throw new Error(detailMessage || `HTTP ${response.status}`);
       }
 
       return options.raw ? await response.text() : await response.json();
