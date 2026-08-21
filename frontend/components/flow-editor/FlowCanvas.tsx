@@ -30,16 +30,32 @@ function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
   return {
     nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.config })),
     edges: graph.edges.map(e => ({
-      id: `${e.from}-${e.to}-${e.fromHandle}-${e.toHandle || 'flow'}`,
+      id: `${e.from}-${e.to}-${e.fromHandle}-${e.toHandle || 'default'}`,
       source: e.from,
       target: e.to,
       sourceHandle: e.fromHandle,
-      targetHandle: e.toHandle || 'flow',
+      // `targetHandle` must be a real DOM Handle id that exists on the
+      // target node. Every node's flow-in target handle is `id="default"`
+      // (see node-types.tsx — Start/HTTP/Conditional/WooCommerce/End/Set
+      // all use "default" for their flow-in pin; none has an id="flow"
+      // handle anywhere). An edge saved before this task shipped has no
+      // `toHandle` key at all, so it must fall back to "default" here, not
+      // to the string "flow" — "flow" is only a `kind` value (this
+      // graph_json shape's edge-category label), never a handle id. Getting
+      // this wrong makes React Flow's handle-position lookup fail and the
+      // edge silently render as nothing, even though the underlying
+      // to/from data is intact.
+      targetHandle: e.toHandle || 'default',
       // React Flow's Edge type has no first-class "kind" field — stash it
       // in `data` so it survives every state update (applyEdgeChanges,
       // copy/paste, etc.) and toGraphJson can read it back out on save.
       // An edge with no kind saved before this shipped defaults to "flow",
-      // matching the backend's identical backward-compat rule.
+      // matching flow_executor.py's `edge.get("kind", "flow") == "data"`
+      // check. (Backend has no equivalent default for toHandle on flow
+      // edges — it never reads `toHandle` at all for a non-data edge, see
+      // flow_executor.py's `run()`, so there is nothing to "match" there;
+      // "default" above is purely a frontend concern, driven by React
+      // Flow's own Handle ids.)
       data: { kind: (e.kind || 'flow') as 'flow' | 'data' },
     })),
   };
@@ -52,7 +68,13 @@ function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
       from: e.source,
       to: e.target,
       fromHandle: e.sourceHandle || 'default',
-      toHandle: e.targetHandle || 'flow',
+      // Mirrors toReactFlow's fallback: "default" is the real DOM handle
+      // id every node's flow-in pin uses, so that's what gets written back
+      // out when `targetHandle` is somehow unset. The backend ignores
+      // `toHandle` entirely for flow-kind edges either way (flow_executor.py
+      // only reads it when kind == "data"), so this value is inert to
+      // execution — it just needs to stay truthful to what's on screen.
+      toHandle: e.targetHandle || 'default',
       kind: ((e.data as { kind?: 'flow' | 'data' } | undefined)?.kind) || 'flow',
     })),
   };
@@ -281,7 +303,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       return { ...n, id: newId, selected: false, position: { x: n.position.x + offset, y: n.position.y + offset } };
     });
     const pastedEdges: Edge[] = clip.edges.map(e => ({
-      id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}-${e.targetHandle || 'flow'}`,
+      id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}-${e.targetHandle || 'default'}`,
       source: idMap[e.source],
       target: idMap[e.target],
       sourceHandle: e.sourceHandle,
