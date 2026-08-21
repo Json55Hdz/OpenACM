@@ -103,6 +103,12 @@ export function ConditionalNode({ id, data }: NodeProps) {
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: result</div>
       <Handle type="target" position={Position.Top} id="default" />
+      {/* Data-input pins for Conditional's wire-or-literal "field"/"value"
+          fields — independent of the flow-in "default" handle above.
+          operator stays dropdown-only, no pin, per the spec's explicit
+          boundary. */}
+      <Handle type="target" position={Position.Left} id="field" style={{ top: '55%' }} />
+      <Handle type="target" position={Position.Left} id="value" style={{ top: '75%' }} />
       <Handle type="source" position={Position.Bottom} id="true" style={{ left: '30%' }} />
       <Handle type="source" position={Position.Bottom} id="false" style={{ left: '70%' }} />
     </div>

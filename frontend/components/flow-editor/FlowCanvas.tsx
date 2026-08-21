@@ -734,8 +734,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 value={String(selectedNode.data.field || '')}
                 onInsert={v => updateSelectedNodeData({ field: v })}
               />
-              <input ref={conditionalFieldRef} className="acm-input w-full mb-2" value={String(selectedNode.data.field || '')} onChange={e => updateSelectedNodeData({ field: e.target.value })} />
-              <TemplatePreview value={String(selectedNode.data.field || '')} params={testParams} outputs={testOutputs} />
+              <ConnectableField nodeId={selectedNode.id} fieldName="field" edges={edges} setEdges={setEdges}>
+                <input ref={conditionalFieldRef} className="acm-input w-full mb-2" value={String(selectedNode.data.field || '')} onChange={e => updateSelectedNodeData({ field: e.target.value })} />
+                <TemplatePreview value={String(selectedNode.data.field || '')} params={testParams} outputs={testOutputs} />
+              </ConnectableField>
               <label>Operador</label>
               <select className="acm-input w-full mb-2" value={String(selectedNode.data.operator || 'contains')} onChange={e => updateSelectedNodeData({ operator: e.target.value })}>
                 <option value="contains">contiene</option>
@@ -744,7 +746,9 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 <option value="is_error">es un error</option>
               </select>
               <label>Valor</label>
-              <input className="acm-input w-full" value={String(selectedNode.data.value || '')} onChange={e => updateSelectedNodeData({ value: e.target.value })} />
+              <ConnectableField nodeId={selectedNode.id} fieldName="value" edges={edges} setEdges={setEdges}>
+                <input className="acm-input w-full" value={String(selectedNode.data.value || '')} onChange={e => updateSelectedNodeData({ value: e.target.value })} />
+              </ConnectableField>
             </>
           )}
           {selectedNode.type === 'woocommerce' && (
