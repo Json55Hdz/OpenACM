@@ -260,3 +260,49 @@ class TestConnectionCRUD:
         conn = await db.get_connection(conn_id)
         assert "new" in conn["config"]
         await db.close()
+
+
+class TestFlowSkill:
+    async def test_create_and_get_flow_skill(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+
+        skill_id = await db.create_skill(
+            name="cuando-usar-f1", description="d", content="c", flow_id=flow_id,
+        )
+        skill = await db.get_flow_skill(flow_id)
+
+        assert skill is not None
+        assert skill["id"] == skill_id
+        assert skill["flow_id"] == flow_id
+        await db.close()
+
+    async def test_flow_with_no_skill_returns_none(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+
+        assert await db.get_flow_skill(flow_id) is None
+        await db.close()
+
+    async def test_skill_name_unique_per_flow(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+        await db.create_skill(name="dup", description="d", content="c", flow_id=flow_id)
+
+        with pytest.raises(Exception):
+            await db.create_skill(name="dup", description="d2", content="c2", flow_id=flow_id)
+        await db.close()
+
+    async def test_deleting_flow_cascades_to_its_skill(self):
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+        await db.create_skill(name="s1", description="d", content="c", flow_id=flow_id)
+
+        await db.delete_flow(flow_id)
+
+        assert await db.get_flow_skill(flow_id) is None
+        await db.close()

@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 34
+    _SCHEMA_VERSION = 35
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1041,6 +1041,27 @@ class Database:
             await self._db.commit()
             log.info("Migration 34: agent node flows (flows, connections)")
 
+        # ── Migration 35: per-flow skill scoping ──────────────────────────
+        # Adds skills.flow_id (NULL = not flow-scoped, unchanged; set =
+        # private to that one flow). Unlike worker_id/agent_id, a flow-skill
+        # is singular by design (zero or one skill per flow, enforced at the
+        # API layer in Task 7) — no flow_skills join table, since there is
+        # no "flow opts into a global skill" concept to track.
+        if current < 35:
+            await self._db.execute(
+                "ALTER TABLE skills ADD COLUMN flow_id INTEGER REFERENCES flows(id) ON DELETE CASCADE"
+            )
+            await self._db.executescript("""
+                DROP INDEX IF EXISTS idx_skills_name_global;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_global
+                    ON skills(name) WHERE worker_id IS NULL AND agent_id IS NULL AND flow_id IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_name_per_flow
+                    ON skills(name, flow_id) WHERE flow_id IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS idx_skills_flow ON skills(flow_id);
+            """)
+            await self._db.commit()
+            log.info("Migration 35: per-flow skill scoping (skills.flow_id)")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1410,16 +1431,17 @@ class Database:
         is_builtin: bool = False,
         worker_id: int | None = None,
         agent_id: int | None = None,
+        flow_id: int | None = None,
     ) -> int:
-        """Create a new skill. worker_id=None + agent_id=None makes it a global system skill;
-        worker_id=set makes it private to that one swarm worker;
-        agent_id=set makes it private to that one agent."""
+        """Create a new skill. worker_id=None + agent_id=None + flow_id=None
+        makes it a global system skill; setting exactly one of the three
+        scopes it privately to that worker/agent/flow."""
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id, agent_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, description, content, category, int(is_builtin), worker_id, agent_id),
+            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id, agent_id, flow_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description, content, category, int(is_builtin), worker_id, agent_id, flow_id),
         )
         await self._db.commit()
         return cursor.lastrowid
@@ -1598,6 +1620,15 @@ class Database:
             (agent_id, skill_id),
         )
         await self._db.commit()
+
+    async def get_flow_skill(self, flow_id: int) -> dict[str, Any] | None:
+        """A flow has zero or one skill (singular by design, unlike the
+        many-global-skills-per-agent/worker pattern)."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM skills WHERE flow_id = ?", (flow_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
 
     # ─── Agent Node Flows ───────────────────────────────────
 
