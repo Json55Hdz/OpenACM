@@ -67,6 +67,99 @@ def detect_cycle(graph: dict) -> list[str] | None:
     return None
 
 
+# Mirrors classifyPin() in frontend/components/flow-editor/node-types.tsx —
+# keep both in sync when either changes. Target = a node's flow-in/data-in
+# handle ids; source = its flow-out/data-out handle ids.
+KNOWN_NODE_TYPES = {"start", "http", "conditional", "woocommerce", "set", "get", "end"}
+
+NODE_TARGET_HANDLES: dict[str, set[str]] = {
+    "start": set(),
+    "http": {"default", "url", "body"},
+    "conditional": {"default", "field", "value"},
+    "woocommerce": {"default", "search_term"},
+    "set": {"default", "value"},
+    "get": set(),
+    "end": {"default"},
+}
+
+NODE_SOURCE_HANDLES: dict[str, set[str]] = {
+    "start": {"default"},
+    "http": {"default"},
+    "conditional": {"true", "false"},
+    "woocommerce": {"default", "result", "count"},
+    "set": {"default"},
+    "get": {"default"},
+    "end": set(),
+}
+
+
+def validate_graph(graph: dict) -> list[str]:
+    """Structural validation of a flow's graph_json, beyond just "is this
+    valid JSON" and "does it have a cycle" (detect_cycle, above). Collects
+    every problem found rather than stopping at the first, so an AI (or a
+    human) fixing a bad graph sees everything wrong in one round-trip.
+    Returns an empty list when the graph is valid.
+    """
+    errors: list[str] = []
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+
+    if not isinstance(nodes, list):
+        return ["graph_json.nodes must be a list"]
+    if not isinstance(edges, list):
+        return ["graph_json.edges must be a list"]
+
+    node_ids_seen: set[str] = set()
+    node_types: dict[str, str] = {}
+    for node in nodes:
+        node_id = node.get("id")
+        if not node_id:
+            errors.append("A node is missing its 'id'")
+            continue
+        if node_id in node_ids_seen:
+            errors.append(f"Duplicate node id: '{node_id}' — node ids must be unique")
+        node_ids_seen.add(node_id)
+
+        node_type = node.get("type")
+        if node_type not in KNOWN_NODE_TYPES:
+            errors.append(f"Node '{node_id}' has unknown type '{node_type}' — must be one of {sorted(KNOWN_NODE_TYPES)}")
+        else:
+            node_types[node_id] = node_type
+
+    start_count = sum(1 for n in nodes if n.get("type") == "start")
+    if start_count != 1:
+        errors.append(f"A flow must have exactly one 'start' node (found {start_count})")
+
+    end_count = sum(1 for n in nodes if n.get("type") == "end")
+    if end_count == 0:
+        errors.append("A flow must have at least one 'end' node")
+
+    for edge in edges:
+        from_id, to_id = edge.get("from"), edge.get("to")
+        from_ok = from_id in node_types
+        to_ok = to_id in node_types
+        if not from_ok:
+            errors.append(f"Edge references unknown source node '{from_id}'")
+        if not to_ok:
+            errors.append(f"Edge references unknown target node '{to_id}'")
+        if not (from_ok and to_ok):
+            continue  # handle-id checks below would just cascade confusingly
+
+        from_handle = edge.get("fromHandle", "default")
+        if from_handle not in NODE_SOURCE_HANDLES.get(node_types[from_id], set()):
+            errors.append(f"'{from_handle}' is not a valid output pin on node '{from_id}' (type '{node_types[from_id]}')")
+
+        to_handle = edge.get("toHandle", "default")
+        if to_handle not in NODE_TARGET_HANDLES.get(node_types[to_id], set()):
+            errors.append(f"'{to_handle}' is not a valid input pin on node '{to_id}' (type '{node_types[to_id]}')")
+
+    cycle = detect_cycle(graph)
+    if cycle:
+        errors.append(f"Flow has a cycle: {' -> '.join(cycle)}")
+
+    return errors
+
+
 def _stringify_whole_value(value: Any) -> str:
     """Stringify a whole (non-narrowed) value for template/text substitution.
 

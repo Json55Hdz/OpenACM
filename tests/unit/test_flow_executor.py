@@ -1108,3 +1108,100 @@ class TestGetNode:
         executor = FlowExecutor()
         result, _ = await executor.run(graph, params={})
         assert result == "[missing: get1]"
+
+
+class TestValidateGraph:
+    def _valid_graph(self):
+        return {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://x", "method": "GET"}},
+                {"id": "end", "type": "end", "config": {"template": "{{http1}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "toHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "end", "fromHandle": "default", "toHandle": "default", "kind": "flow"},
+            ],
+        }
+
+    def test_valid_graph_has_no_errors(self):
+        from openacm.core.flow_executor import validate_graph
+        assert validate_graph(self._valid_graph()) == []
+
+    def test_unknown_node_type_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["nodes"][1]["type"] = "not_a_real_type"
+        errors = validate_graph(graph)
+        assert any("not_a_real_type" in e for e in errors)
+
+    def test_zero_start_nodes_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["nodes"] = [n for n in graph["nodes"] if n["type"] != "start"]
+        graph["edges"] = []
+        errors = validate_graph(graph)
+        assert any("start" in e.lower() for e in errors)
+
+    def test_two_start_nodes_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["nodes"].append({"id": "start2", "type": "start", "config": {"parameters": []}})
+        errors = validate_graph(graph)
+        assert any("start" in e.lower() for e in errors)
+
+    def test_zero_end_nodes_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["nodes"] = [n for n in graph["nodes"] if n["type"] != "end"]
+        graph["edges"] = [e for e in graph["edges"] if e["to"] != "end"]
+        errors = validate_graph(graph)
+        assert any("end" in e.lower() for e in errors)
+
+    def test_duplicate_node_ids_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["nodes"][1]["id"] = "start"
+        errors = validate_graph(graph)
+        assert any("duplicate" in e.lower() or "unique" in e.lower() for e in errors)
+
+    def test_edge_to_missing_node_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        graph["edges"].append({"from": "http1", "to": "nonexistent", "fromHandle": "default", "toHandle": "default", "kind": "flow"})
+        errors = validate_graph(graph)
+        assert any("nonexistent" in e for e in errors)
+
+    def test_invalid_handle_for_node_type_is_rejected(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = self._valid_graph()
+        # "count" is a valid SOURCE handle on woocommerce, not on http.
+        graph["edges"][1]["fromHandle"] = "count"
+        errors = validate_graph(graph)
+        assert any("count" in e for e in errors)
+
+    def test_cycle_is_still_reported(self):
+        from openacm.core.flow_executor import validate_graph
+        # A minimal cyclic graph: conditional's "false" branch loops back to
+        # itself instead of reaching an exit — a real cycle, unrelated to
+        # any other validation rule.
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "cond", "type": "conditional", "config": {"field": "x", "operator": "equals", "value": "y"}},
+                {"id": "end", "type": "end", "config": {"template": "done"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "cond", "fromHandle": "default", "toHandle": "default", "kind": "flow"},
+                {"from": "cond", "to": "end", "fromHandle": "true", "toHandle": "default", "kind": "flow"},
+                {"from": "cond", "to": "cond", "fromHandle": "false", "toHandle": "default", "kind": "flow"},
+            ],
+        }
+        errors = validate_graph(graph)
+        assert any("cycle" in e.lower() for e in errors)
+
+    def test_multiple_problems_are_all_reported_together(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = {"nodes": [{"id": "a", "type": "bogus", "config": {}}], "edges": []}
+        errors = validate_graph(graph)
+        assert len(errors) >= 2  # unknown type AND missing start AND missing end
