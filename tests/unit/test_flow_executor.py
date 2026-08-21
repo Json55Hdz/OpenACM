@@ -454,6 +454,76 @@ class TestConditionalNode:
         assert result == "YES: zapatos"
 
 
+class TestConditionalNodeDataEdges:
+    async def test_field_is_resolved_from_a_data_edge_when_one_targets_it(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http0", "type": "http", "config": {"url": "https://source.example.com", "method": "GET"}},
+                {"id": "cond1", "type": "conditional", "config": {"field": "{{ignored}}", "operator": "equals", "value": "zapatos"}},
+                {"id": "end_true", "type": "end", "config": {"template": "YES"}},
+                {"id": "end_false", "type": "end", "config": {"template": "NO"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http0", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "cond1", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "end_true", "fromHandle": "true", "kind": "flow"},
+                {"from": "cond1", "to": "end_false", "fromHandle": "false", "kind": "flow"},
+                {"from": "http0", "to": "cond1", "fromHandle": "default", "toHandle": "field", "kind": "data"},
+            ],
+        }
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "zapatos"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        # field's literal is "{{ignored}}" (resolves to "[missing: ignored]")
+        # — if the data edge weren't winning, equals would evaluate False.
+        assert result == "YES"
+
+    async def test_value_is_resolved_from_a_data_edge_when_one_targets_it(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": [{"name": "start_value", "type": "string", "required": True}]}},
+                {"id": "http0", "type": "http", "config": {"url": "https://source.example.com", "method": "GET"}},
+                {"id": "cond1", "type": "conditional", "config": {"field": "{{start_value}}", "operator": "equals", "value": "wrong-literal"}},
+                {"id": "end_true", "type": "end", "config": {"template": "YES"}},
+                {"id": "end_false", "type": "end", "config": {"template": "NO"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http0", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "cond1", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "end_true", "fromHandle": "true", "kind": "flow"},
+                {"from": "cond1", "to": "end_false", "fromHandle": "false", "kind": "flow"},
+                {"from": "http0", "to": "cond1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "zapatos"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={"start_value": "zapatos"})
+
+        assert result == "YES"
+
+
 import json as _json
 
 

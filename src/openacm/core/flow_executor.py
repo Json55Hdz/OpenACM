@@ -205,8 +205,15 @@ class FlowExecutor:
         if operator not in self._CONDITIONAL_OPERATORS:
             raise ValueError(f"Unknown conditional operator: {operator}")
 
-        resolved = substitute_templates(cfg["field"], params, outputs)
-        compare_value = cfg.get("value", "")
+        resolved = resolve_field("field", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
+        # value has no history of template substitution (it's a raw
+        # comparison literal) — only route it through resolve_field when a
+        # data edge actually targets it, so a flow saved before this task
+        # shipped keeps its literal "value" exactly as-is, never templated.
+        if (node["id"], "value") in data_edges_by_target:
+            compare_value = resolve_field("value", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
+        else:
+            compare_value = cfg.get("value", "")
 
         if operator == "contains":
             branch = compare_value in resolved
