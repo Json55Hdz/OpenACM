@@ -28,7 +28,7 @@
 - Consumes: the existing `run()` loop, `edges_by_target`/`edges_by_source` (already built).
 - Produces: the `"variable"` loop-level case is renamed to `"set"` (identical logic, only the type string changes). A new `"get"` loop-level case: no incoming-edge lookup needed — reads `outputs.get(node["config"]["name"])` and, if a value was found, also stores it under `outputs[node["id"]]` (so `{{get_node_id}}` resolves the same way `{{set_node_id}}` already does for the renamed `set` case). If the name was never set, nothing is written for this node's own id either — falls through to the exact same missing-marker behavior `substitute_templates` already provides for any absent key.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 First, update the EXISTING `TestVariableNode` test class in `tests/unit/test_flow_executor.py` (from the prior plan) to use `"set"` instead of `"variable"` as the node type in all four of its test graphs — find `_variable_graph` and the three inline graphs inside `TestVariableNode`'s methods, and change every `"type": "variable"` to `"type": "set"`. Rename the class from `TestVariableNode` to `TestSetNode` and the helper function from `_variable_graph` to `_set_graph`.
 
@@ -108,7 +108,7 @@ class TestGetNode:
         assert result == "[missing: get1]"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py::TestGetNode -v`
 Expected: FAIL — `"get"` isn't handled by `run()` yet.
@@ -116,7 +116,7 @@ Expected: FAIL — `"get"` isn't handled by `run()` yet.
 Also run: `pytest tests/unit/test_flow_executor.py::TestSetNode -v`
 Expected: FAIL — `"set"` isn't handled by `run()` yet (still says `"variable"` in the executor).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/core/flow_executor.py`, find the existing `variable` case:
 
@@ -155,17 +155,17 @@ Add a `get` case right after it:
                 continue
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (all tests, including the renamed `TestSetNode` and new `TestGetNode`)
 
-- [ ] **Step 5: Run the full backend test suite**
+- [x] **Step 5: Run the full backend test suite**
 
 Run: `pytest -q`
 Expected: no new failures beyond the known pre-existing baseline (7 errors in `gmail_classifier`, plus possibly 5 date-dependent failures in `test_gmail_summary.py` if the wall-clock date has rolled over — both unrelated, do not fix).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -186,7 +186,7 @@ git commit -m "feat(flows): rename Variable node to Set, add Get node"
 
 This is the largest task in this plan — it touches two files together as one atomic replacement (there is no working intermediate state where `variable` is half-removed). It requires manual browser verification before being marked complete.
 
-- [ ] **Step 1: Replace `node-types.tsx`'s `VariableNode` with `SetNode`/`GetNode`, add pin labels to every type**
+- [x] **Step 1: Replace `node-types.tsx`'s `VariableNode` with `SetNode`/`GetNode`, add pin labels to every type**
 
 Replace the entire contents of `frontend/components/flow-editor/node-types.tsx`:
 
@@ -329,7 +329,7 @@ export const NODE_TYPES = {
 
 Note `GetNode` has only a `source` Handle (no `target`) — it never receives an incoming data wire, matching the spec ("no input handle").
 
-- [ ] **Step 2: Update `FlowCanvas.tsx`'s `availableVariableNames` to look for `set` nodes**
+- [x] **Step 2: Update `FlowCanvas.tsx`'s `availableVariableNames` to look for `set` nodes**
 
 Find:
 
@@ -362,7 +362,7 @@ Change the one line that checks the node type — everything else (the backward-
     const name = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
 ```
 
-- [ ] **Step 3: Update `NODE_CATEGORIES` and `NODE_LABELS`**
+- [x] **Step 3: Update `NODE_CATEGORIES` and `NODE_LABELS`**
 
 Find:
 
@@ -396,7 +396,7 @@ const NODE_LABELS: Record<keyof typeof NODE_TYPES, string> = {
 };
 ```
 
-- [ ] **Step 4: Update `addNodeAt`'s defaults**
+- [x] **Step 4: Update `addNodeAt`'s defaults**
 
 Find:
 
@@ -431,7 +431,7 @@ Replace the `defaults` object's `variable` entry:
   };
 ```
 
-- [ ] **Step 5: Replace the Inspector's `variable` panel section with `set`/`get` sections**
+- [x] **Step 5: Replace the Inspector's `variable` panel section with `set`/`get` sections**
 
 Find:
 
@@ -479,16 +479,16 @@ Replace it with two sections, one per type:
           )}
 ```
 
-- [ ] **Step 6: Verify with `tsc`**
+- [x] **Step 6: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 7: Manual browser verification (required for this task)**
+- [x] **Step 7: Manual browser verification (required for this task)**
 
 Using a fresh dev server instance you're sure isn't someone else's active session: open an agent's Flujos tab, open a flow, right-click and confirm the "DATOS" category now shows "💾 Guardar (Set)" and "📤 Obtener (Get)" instead of the old "📦 Variable" entry. Create one of each and confirm they render with the cyan Datos-category color, their own `{{id}}` reference, and a "salida: value" label. Confirm HTTP/Conditional/WooCommerce nodes now show their new "salida: response"/"salida: result" labels. Select a Set node and confirm its Inspector panel shows a "Nombre de la variable" field; same for Get. Wire an HTTP node into a Set node, name it, then wire a Get node with the same name into an End node referencing `{{get_node_id}}` (or the friendly name) in its template, save, and use "Probar flujo" to confirm the value round-trips through Set → Get correctly.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add frontend/components/flow-editor/node-types.tsx frontend/components/flow-editor/FlowCanvas.tsx
@@ -508,7 +508,7 @@ git commit -m "feat(agents): replace inline Variable node with Set/Get nodes, ad
 
 This task requires an actual manual browser verification before being marked complete.
 
-- [ ] **Step 1: Add the derived variable-name list and a name-counter ref**
+- [x] **Step 1: Add the derived variable-name list and a name-counter ref**
 
 Inside `FlowCanvasInner`, alongside the other `useRef`/state declarations near the top, add:
 
@@ -526,7 +526,7 @@ Inside `FlowCanvasInner`, alongside the other `useRef`/state declarations near t
   }, [nodes]);
 ```
 
-- [ ] **Step 2: Add the "create new variable" handler**
+- [x] **Step 2: Add the "create new variable" handler**
 
 Add this function near `addNodeAt` (which it reuses):
 
@@ -540,7 +540,7 @@ Add this function near `addNodeAt` (which it reuses):
   };
 ```
 
-- [ ] **Step 3: Render the Variables panel**
+- [x] **Step 3: Render the Variables panel**
 
 In the return block's left column, find the existing structure (right after the "Guardar flujo" button, before the "Probar flujo" section):
 
@@ -579,16 +579,16 @@ Insert a new Variables section between "Guardar flujo" and "Probar flujo":
 
 (The `cursor: 'grab'` style anticipates Task 4's drag behavior — this task only renders the list, dragging is wired in the next task.)
 
-- [ ] **Step 4: Verify with `tsc`**
+- [x] **Step 4: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Manual browser verification (required for this task)**
+- [x] **Step 5: Manual browser verification (required for this task)**
 
 Open a flow, confirm the new "Variables" section appears between "Guardar flujo" and "Probar flujo" showing "Ninguna todavía". Click "+ Nueva variable" and confirm a new `set` node named `variable_1` appears on the canvas AND the panel's list now shows `variable_1`. Click "+ Nueva variable" again and confirm it's `variable_2` (the counter increments) and both names are listed. Rename one via its Inspector panel and confirm the panel list updates to reflect the new name.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx
@@ -608,7 +608,7 @@ git commit -m "feat(agents): Variables panel — derived list of Set/Get names +
 
 This task requires an actual manual browser verification before being marked complete.
 
-- [ ] **Step 1: Make the variable list items draggable**
+- [x] **Step 1: Make the variable list items draggable**
 
 In the Variables panel block from Task 3, update the per-name `<div>` to be draggable, storing the name being dragged via the standard HTML5 drag-and-drop data transfer:
 
@@ -624,7 +624,7 @@ In the Variables panel block from Task 3, update the per-name `<div>` to be drag
               </div>
 ```
 
-- [ ] **Step 2: Add drop-target state and handlers on the canvas wrapper**
+- [x] **Step 2: Add drop-target state and handlers on the canvas wrapper**
 
 Add new state alongside `contextMenu`/`contextMenuSearch`:
 
@@ -658,7 +658,7 @@ Add these two handlers near `onPaneContextMenu`:
   }, [screenToFlowPosition]);
 ```
 
-- [ ] **Step 3: Wire the handlers onto the canvas wrapper div and render the choice menu**
+- [x] **Step 3: Wire the handlers onto the canvas wrapper div and render the choice menu**
 
 Find the canvas wrapper div:
 
@@ -721,16 +721,16 @@ Add the choice-menu rendering as a sibling of the existing `{contextMenu && (...
         )}
 ```
 
-- [ ] **Step 4: Verify with `tsc`**
+- [x] **Step 4: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Manual browser verification (required for this task)**
+- [x] **Step 5: Manual browser verification (required for this task)**
 
 Create a variable via "+ Nueva variable" (or reuse one from an existing Set node). Drag its entry from the Variables panel onto empty canvas space. Confirm a small menu appears at the drop position offering "Obtener (Get)" / "Guardar (Set)". Click "Obtener (Get)" and confirm a new Get node appears at that position with the dragged variable's name already filled in. Repeat, choosing "Guardar (Set)" this time, and confirm a Set node appears instead. Confirm dragging and dropping elsewhere on the canvas (not on the Variables panel) doesn't interfere with normal node-dragging/panning.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx
@@ -752,7 +752,7 @@ git commit -m "feat(agents): drag a variable from the panel onto the canvas to c
 
 This task requires an actual manual browser verification before being marked complete.
 
-- [ ] **Step 1: Add the `onConnectEnd` handler**
+- [x] **Step 1: Add the `onConnectEnd` handler**
 
 Add this inside `FlowCanvasInner`, near `onPaneContextMenu`:
 
@@ -778,7 +778,7 @@ Add this inside `FlowCanvasInner`, near `onPaneContextMenu`:
   }, [screenToFlowPosition]);
 ```
 
-- [ ] **Step 2: Wire `onConnectEnd` onto `<ReactFlow>`**
+- [x] **Step 2: Wire `onConnectEnd` onto `<ReactFlow>`**
 
 Find:
 
@@ -795,16 +795,16 @@ Add the new prop:
           onNodeClick={(_e, node) => setSelectedId(node.id)}
 ```
 
-- [ ] **Step 3: Verify with `tsc`**
+- [x] **Step 3: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors. If the `connectionState` parameter type doesn't match what `@xyflow/react` actually exports, `tsc` will report a type mismatch on the `onConnectEnd` prop or inside the handler — adjust the inline type annotation to match the installed package's actual exported type (check `ConnectionState`/`FinalConnectionState` in the package's type definitions) rather than casting past the error.
 
-- [ ] **Step 4: Manual browser verification (required for this task)**
+- [x] **Step 4: Manual browser verification (required for this task)**
 
 Using a fresh dev server instance: add an HTTP node, start dragging a connection from its output handle, and release the drag on empty canvas space (not on another node). Confirm a new Set node appears at the release position, already wired (a visible edge) from the HTTP node, with an auto-generated `variable_N` name. Confirm the new variable also now appears in the Variables panel (Task 3's derived list). Confirm dragging a connection and releasing it ON a valid node's input handle still behaves as a normal connection (does NOT also create a spurious Set node) — this is the `connectionState.isValid` guard's job, verify it actually works.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx

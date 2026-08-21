@@ -30,7 +30,7 @@
 - Consumes: the existing `run()` loop, `edges_by_source` (already built at the top of `run()`).
 - Produces: a new `edges_by_target: dict[str, str]` lookup (built alongside `edges_by_source`, mapping each node id to the id of the ONE node whose edge points at it — safe because the graph is linear + one branch, so every node has exactly one incoming edge). A new `if node["type"] == "variable":` branch in the main loop, handled the same way `"end"` already is (a direct loop-level case, not a `_HANDLERS` entry) — because a Variable node needs the *edge* pointing at it (to know which node's value to alias), not just its own `config`, and `_HANDLERS` entries only ever receive `(self, node, params, outputs)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_flow_executor.py`:
 
@@ -152,12 +152,12 @@ class TestVariableNode:
 
 Read the top of `tests/unit/test_flow_executor.py` to confirm `AsyncMock`, `MagicMock`, `patch` are already imported (they are, used by `TestHttpNode`) before running — don't re-import.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py::TestVariableNode -v`
 Expected: FAIL — `"variable"` isn't handled by `run()` yet, so the graph walk hits `Error: unknown node type 'variable'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/core/flow_executor.py`, modify `run()`. Find this block (currently the first thing inside `run()`):
 
@@ -209,17 +209,17 @@ Add a `variable` case right after the `end` case, before the `_HANDLERS` dispatc
             handler = self._HANDLERS.get(node["type"])
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (all tests, including the 4 new `TestVariableNode` tests)
 
-- [ ] **Step 5: Run the full backend test suite**
+- [x] **Step 5: Run the full backend test suite**
 
 Run: `pytest -q`
 Expected: no new failures beyond the known pre-existing baseline (7 errors in `gmail_classifier`, plus possibly 5 date-dependent failures in `test_gmail_summary.py` if the wall-clock date has rolled over since this plan was written — both are unrelated to this change; do not attempt to fix either).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -239,7 +239,7 @@ git commit -m "feat(flows): add Variable node — aliases an earlier node's outp
 - Consumes: existing `--acm-accent`/`--acm-info` CSS vars.
 - Produces: two new CSS vars (`--acm-node-logic`, `--acm-node-data`); exported `NODE_CATEGORY: Record<string, 'flow'|'logic'|'integration'|'data'>` and `CATEGORY_COLORS: Record<'flow'|'logic'|'integration'|'data', string>` from `node-types.tsx` (later tasks' right-click menu and Inspector header need these); a new `VariableNode` component and `variable` entry in `NODE_TYPES`; `FlowCanvas.tsx`'s `addNode` defaults gain a `variable: { name: '' }` entry so the (still-present-until-Task-3) palette button for it doesn't crash.
 
-- [ ] **Step 1: Add the two new CSS variables**
+- [x] **Step 1: Add the two new CSS variables**
 
 In `frontend/app/globals.css`, find the existing color block (search for `--acm-info:`):
 
@@ -263,7 +263,7 @@ Find the corresponding `--color-acm-info` mapping (search for `--color-acm-info:
   --color-acm-node-data:     var(--acm-node-data);
 ```
 
-- [ ] **Step 2: Restyle `node-types.tsx` with category colors and add `VariableNode`**
+- [x] **Step 2: Restyle `node-types.tsx` with category colors and add `VariableNode`**
 
 Replace the entire contents of `frontend/components/flow-editor/node-types.tsx`:
 
@@ -382,7 +382,7 @@ export const NODE_TYPES = {
 };
 ```
 
-- [ ] **Step 3: Add the `variable` default to `FlowCanvas.tsx`'s `addNode`**
+- [x] **Step 3: Add the `variable` default to `FlowCanvas.tsx`'s `addNode`**
 
 In `frontend/components/flow-editor/FlowCanvas.tsx`, find `addNode`'s `defaults` object:
 
@@ -409,16 +409,16 @@ Add a `variable` entry:
     };
 ```
 
-- [ ] **Step 4: Verify with `tsc`**
+- [x] **Step 4: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Manual browser verification (required for this task)**
+- [x] **Step 5: Manual browser verification (required for this task)**
 
 Start a dev server on a port you're sure isn't already in use by anyone else's session (check first, don't assume). Open an agent's Flujos tab, create/open a flow, and confirm: the 5 existing node types now render with a colored border matching their category (gold for Start/End, blue for HTTP/WooCommerce, and — once you click "+ variable" in the still-present palette — the new Variable node renders in cyan with a `📦 Variable` label and its own `{{id}}` reference).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/app/globals.css frontend/components/flow-editor/node-types.tsx frontend/components/flow-editor/FlowCanvas.tsx
@@ -438,7 +438,7 @@ git commit -m "feat(agents): category-colored flow nodes + new Variable node typ
 
 This task requires an actual manual browser verification before being marked complete — per this plan's Global Constraints, `tsc --noEmit` passing is not sufficient evidence.
 
-- [ ] **Step 1: Wrap `FlowCanvas` in a `ReactFlowProvider`, rename the current body to `FlowCanvasInner`**
+- [x] **Step 1: Wrap `FlowCanvas` in a `ReactFlowProvider`, rename the current body to `FlowCanvasInner`**
 
 In `frontend/components/flow-editor/FlowCanvas.tsx`, update the import line:
 
@@ -473,7 +473,7 @@ export function FlowCanvas(props: { agentId: number; flow: AgentFlow; onSave: (g
 }
 ```
 
-- [ ] **Step 2: Add the context-menu state and node-category/label lookups**
+- [x] **Step 2: Add the context-menu state and node-category/label lookups**
 
 Inside `FlowCanvasInner`, near the top (right after the existing `const nodeIdCounterRef = useRef(...)` line), add:
 
@@ -506,7 +506,7 @@ Add the import for `NODE_CATEGORY`/`CATEGORY_COLORS` alongside the existing `NOD
 import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS } from './node-types';
 ```
 
-- [ ] **Step 3: Replace `addNode` with `addNodeAt`, remove the palette**
+- [x] **Step 3: Replace `addNode` with `addNodeAt`, remove the palette**
 
 Find the existing `addNode` function:
 
@@ -554,7 +554,7 @@ Replace it with a position-taking version:
   }, [screenToFlowPosition]);
 ```
 
-- [ ] **Step 4: Replace the palette column + wire the context menu into the render**
+- [x] **Step 4: Replace the palette column + wire the context menu into the render**
 
 Find the return block's left column (the static palette):
 
@@ -653,16 +653,16 @@ Replace it with a `position: relative` wrapper carrying the ref, `onPaneContextM
       </div>
 ```
 
-- [ ] **Step 5: Verify with `tsc`**
+- [x] **Step 5: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 6: Manual browser verification (required for this task)**
+- [x] **Step 6: Manual browser verification (required for this task)**
 
 Using a fresh dev server instance (don't reuse a process you didn't start, and check first whether anything is already running on the port you pick): open an agent's Flujos tab, open a flow, right-click on empty canvas space — confirm a menu appears at the click position with a search box and 4 category headers (FLUJO, LÓGICA, INTEGRACIONES, DATOS). Type part of a node name (e.g. "http") and confirm the list filters live, hiding empty categories. Click a node type and confirm it's created exactly where you right-clicked (not at a fixed offset). Right-click again, press Escape, and confirm the menu closes without creating anything. Click elsewhere on the canvas (not right-click) and confirm any open menu also closes. Confirm the old "+ type" palette buttons are gone and "Guardar flujo"/"Probar flujo" still work as before.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx
@@ -682,7 +682,7 @@ git commit -m "feat(agents): right-click node search menu replacing the static a
 
 This task requires an actual manual browser verification before being marked complete — per this plan's Global Constraints.
 
-- [ ] **Step 1: Add `availableVariableNames` and the `VariablePicker` component**
+- [x] **Step 1: Add `availableVariableNames` and the `VariablePicker` component**
 
 Add these at module scope in `frontend/components/flow-editor/FlowCanvas.tsx`, near the top alongside the other module-level helpers (`toReactFlow`/`toGraphJson`/`maxNodeIdSuffix`):
 
@@ -736,7 +736,7 @@ function VariablePicker({ names, targetRef, value, onInsert }: {
 }
 ```
 
-- [ ] **Step 2: Add refs for the 5 variable-picker target fields**
+- [x] **Step 2: Add refs for the 5 variable-picker target fields**
 
 Inside `FlowCanvasInner`, alongside the other `useRef` declarations, add:
 
@@ -748,7 +748,7 @@ Inside `FlowCanvasInner`, alongside the other `useRef` declarations, add:
   const templateRef = useRef<HTMLTextAreaElement>(null);
 ```
 
-- [ ] **Step 3: Restyle the Inspector header and wire in the variable pickers**
+- [x] **Step 3: Restyle the Inspector header and wire in the variable pickers**
 
 Find the Inspector panel's header:
 
@@ -919,16 +919,16 @@ Add a `variable` panel section (there wasn't one before — Task 2 added the nod
 
 Also add a section header (`<div className="label text-[var(--acm-fg-4)] mb-1">Parámetros</div>` style) as the first line of the existing `start` block, matching the same convention — find `{selectedNode.type === 'start' && (` and confirm its existing `<label>Parámetros que el LLM puede enviar</label>` line already serves this purpose; leave the `start` and existing `woocommerce`-internal-connection-form styling as-is otherwise, this task only adds section headers and variable pickers, it does not redesign those two sections' internals further.
 
-- [ ] **Step 4: Verify with `tsc`**
+- [x] **Step 4: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Manual browser verification (required for this task)**
+- [x] **Step 5: Manual browser verification (required for this task)**
 
 Using a fresh dev server instance: build a flow with an HTTP node, wire its output into a Variable node named `resultado`, and confirm: the HTTP node's Inspector panel now shows a "Cuerpo (para POST/PUT)" textarea in addition to URL/Método. Select the End node, confirm an "Insertar variable" dropdown appears above its template textarea listing `resultado`. Select it and confirm `{{resultado}}` is inserted at the current cursor position in the template (not always appended to the end — click into the middle of existing text first, then insert, to verify cursor-position insertion specifically). Confirm a node with NO Variable node anywhere before it in the chain shows no dropdown at all (the `names.length === 0` case). Confirm the Variable node itself has a working "Nombre" field in its own Inspector panel. Save, reload, and confirm everything round-trips correctly.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx

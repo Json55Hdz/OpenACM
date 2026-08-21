@@ -38,7 +38,7 @@
 **Interfaces:**
 - Produces: `flows(id, agent_id, name, description, graph_json, is_active, created_at, updated_at)` table; `connections(id, agent_id, name, type, config, created_at)` table; both with `agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE` and an index on `agent_id`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 """Tests for migration 34 — flows + connections tables."""
@@ -121,12 +121,12 @@ class TestMigration34Schema:
 
 Read `Database.create_agent`'s actual current signature (`src/openacm/storage/database.py`, search `async def create_agent`) before running this — adjust `_make_agent` if it differs.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_database_flows.py -v`
 Expected: FAIL — `flows`/`connections` tables don't exist yet.
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 In `src/openacm/storage/database.py`, change line 171:
 
@@ -171,17 +171,17 @@ Add this block right after the Migration 33 block (search for `log.info("Migrati
             log.info("Migration 34: agent node flows (flows, connections)")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_database_flows.py -v`
 Expected: PASS (5/5)
 
-- [ ] **Step 5: Run the existing database tests to confirm no regression**
+- [x] **Step 5: Run the existing database tests to confirm no regression**
 
 Run: `pytest tests/unit/test_database.py tests/unit/test_database_agent_skills.py -q`
 Expected: all still pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/openacm/storage/database.py tests/unit/test_database_flows.py
@@ -210,7 +210,7 @@ git commit -m "feat(db): add migration 34 — flows + connections tables for age
   - `Database.update_connection(connection_id: int, **kwargs) -> bool` (allowed keys: `name`, `config`)
   - `Database.delete_connection(connection_id: int) -> bool`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_database_flows.py`:
 
@@ -327,12 +327,12 @@ class TestConnectionCRUD:
         await db.close()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_database_flows.py::TestFlowCRUD tests/unit/test_database_flows.py::TestConnectionCRUD -v`
 Expected: FAIL — none of these methods exist on `Database` yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add these methods to `src/openacm/storage/database.py`, in a new section after the Skills section (search for the end of `disable_agent_skill`, or any convenient point before `# ─── Settings ─────`):
 
@@ -457,12 +457,12 @@ Add these methods to `src/openacm/storage/database.py`, in a new section after t
         return cursor.rowcount > 0
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_database_flows.py -v`
 Expected: PASS (all tests from Task 1 and Task 2)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/storage/database.py tests/unit/test_database_flows.py
@@ -484,7 +484,7 @@ git commit -m "feat(db): flow + connection CRUD methods"
   - `FlowExecutor._HANDLERS: dict[str, Callable]` — a dispatch table, populated with only `{}` in this task (Start/End are handled directly by the main loop, not via `_HANDLERS`, since they're structural, not "processing" nodes). Later tasks (4, 5, 6) each add one entry: `"http"`, `"conditional"`, `"woocommerce"`.
 - This task's `run()` must correctly execute a flow with ONLY a Start and an End node (no processing nodes in between) — this is the minimal, fully-working slice; later tasks add real node types on top without changing this task's code paths.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Tests for FlowExecutor's core mechanics: template substitution and the
@@ -576,12 +576,12 @@ class TestFlowExecutorStartToEnd:
         assert result.startswith("Error")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: FAIL — `openacm.core.flow_executor` doesn't exist yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/openacm/core/flow_executor.py`:
 
@@ -683,12 +683,12 @@ class FlowExecutor:
         return "Error: flow ended without reaching an End node"
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (11/11)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -707,7 +707,7 @@ git commit -m "feat(flows): FlowExecutor core — template substitution + Start/
 - Consumes: `FlowExecutor` core from Task 3.
 - Produces: `FlowExecutor._run_http_node(self, node: dict, params: dict, outputs: dict) -> Any` registered in `_HANDLERS["http"]`. Output: parsed JSON (`dict`/`list`) if the response is JSON, else raw text (`str`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_flow_executor.py`:
 
@@ -800,12 +800,12 @@ class TestHttpNode:
         assert "zapatos" in call_kwargs.args[1] or "zapatos" in str(call_kwargs)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py::TestHttpNode -v`
 Expected: FAIL — `"http"` isn't a registered handler, and `httpx` isn't imported in `flow_executor.py` yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/core/flow_executor.py`, add `import httpx` at the top (alongside the existing `import re`), and add this method to `FlowExecutor`, then register it in `__init__`:
 
@@ -836,12 +836,12 @@ Update `__init__` to register it:
         self._HANDLERS: dict[str, Callable] = {"http": FlowExecutor._run_http_node}
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (all tests, Task 3 + Task 4)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -860,7 +860,7 @@ git commit -m "feat(flows): FlowExecutor HTTP Request node"
 - Consumes: `FlowExecutor` core + branching logic already in Task 3's `run()` (the `if node["type"] == "conditional":` branch-routing code already exists — this task only needs to add the handler that PRODUCES the `{"branch": bool, "passthrough": Any}` shape that code expects).
 - Produces: `FlowExecutor._run_conditional_node(self, node, params, outputs) -> dict` returning `{"branch": bool, "passthrough": Any}`, registered in `_HANDLERS["conditional"]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_flow_executor.py`:
 
@@ -931,12 +931,12 @@ class TestConditionalNode:
         assert result == "YES: zapatos"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py::TestConditionalNode -v`
 Expected: FAIL — `"conditional"` isn't a registered handler yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add this method to `FlowExecutor` in `src/openacm/core/flow_executor.py`:
 
@@ -973,12 +973,12 @@ Update `__init__`'s `_HANDLERS` dict:
         }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (all tests, Tasks 3-5)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -997,7 +997,7 @@ git commit -m "feat(flows): FlowExecutor Conditional node + branching"
 - Consumes: `FlowExecutor` core from Task 3, `get_connection: Callable[[int], Awaitable[dict | None]]` constructor param (already present, unused until now).
 - Produces: `FlowExecutor._run_woocommerce_node(self, node, params, outputs) -> str`, registered in `_HANDLERS["woocommerce"]`. Response-formatting logic is a direct port of the reference implementation (`git show 0dffcbf -- src/openacm/tools/woocommerce.py` on this repo's already-fetched `Cristian/woocommerce` ref) — same top-5-results, name/price/stock/truncated-300-char-description/permalink format.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/unit/test_flow_executor.py`:
 
@@ -1102,12 +1102,12 @@ class TestWooCommerceNode:
         assert call_kwargs["auth"] == ("my_key", "my_secret")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_flow_executor.py::TestWooCommerceNode -v`
 Expected: FAIL — `"woocommerce"` isn't a registered handler yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `import re` is already present; add this method to `FlowExecutor` in `src/openacm/core/flow_executor.py` — response-formatting logic ported directly from the reference `woocommerce_search` implementation:
 
@@ -1171,12 +1171,12 @@ Update `__init__`'s `_HANDLERS` dict:
         }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_flow_executor.py -v`
 Expected: PASS (all tests, Tasks 3-6)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/core/flow_executor.py tests/unit/test_flow_executor.py
@@ -1197,7 +1197,7 @@ git commit -m "feat(flows): FlowExecutor WooCommerce Query node"
 
 Read `src/openacm/web/routers/agents.py`'s existing skill endpoints (`get_agent_skills`, `enable_agent_skill`, etc. — added in the prior sub-project's Task 4) first, for this file's exact conventions. Route ordering matters: register `/flows/{flow_id}/test` (or ensure FastAPI's routing correctly resolves it) — since `test` isn't purely static text but part of a nested path under an already-`int`-typed `{flow_id}`, there's no static-vs-dynamic collision risk here the way `/skills/generate` vs `/skills/{skill_id}` had, but register routes in the order shown below regardless, for consistency with this file's established layout.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Tests for per-agent flow API endpoints under the agents router."""
@@ -1299,12 +1299,12 @@ class TestTestFlowEndpoint:
         assert resp.status_code == 404
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_agents_flows_api.py -v`
 Expected: FAIL — 404s, the endpoints don't exist yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/web/routers/agents.py`, add a new section after the existing Skills endpoints (search for `disable_agent_skill`/`generate_agent_skill_endpoint`, add immediately after that section):
 
@@ -1384,12 +1384,12 @@ In `src/openacm/web/routers/agents.py`, add a new section after the existing Ski
 
 Confirm `Request`/`HTTPException` are already imported at the top of `agents.py` (they are, used extensively already).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_agents_flows_api.py -v`
 Expected: PASS (all tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/web/routers/agents.py tests/unit/test_agents_flows_api.py
@@ -1408,7 +1408,7 @@ git commit -m "feat(api): agent flow endpoints — CRUD + test execution"
 - Consumes: `Database` connection methods from Task 2.
 - Produces: `GET /api/agents/{agent_id}/connections`, `POST /api/agents/{agent_id}/connections`, `PUT /api/agents/{agent_id}/connections/{id}`, `DELETE /api/agents/{agent_id}/connections/{id}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Tests for per-agent connection API endpoints — credentials must never
@@ -1482,12 +1482,12 @@ class TestCreateUpdateDeleteConnection:
         _mock_state.delete_connection.assert_awaited_once_with(1)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_agents_connections_api.py -v`
 Expected: FAIL — endpoints don't exist yet.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/web/routers/agents.py`, add right after the Flows section from Task 7:
 
@@ -1549,12 +1549,12 @@ In `src/openacm/web/routers/agents.py`, add right after the Flows section from T
 
 Note `update_agent_connection`'s partial-config-overwrite behavior: if the caller sends ANY of `url`/`consumer_key`/`consumer_secret`, all three are re-written together (defaulting missing ones to `""`) rather than merged with the existing stored config — this matches the spec's "update = overwrite credentials" wording. The frontend task (Task 12) must always send the full credential set when editing, not a partial one, to avoid silently blanking fields.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_agents_connections_api.py -v`
 Expected: PASS (all tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/openacm/web/routers/agents.py tests/unit/test_agents_connections_api.py
@@ -1577,7 +1577,7 @@ This is the most architecturally delicate task in this plan — read the "Import
 
 **Important background:** `ToolRegistry.execute()` (`src/openacm/tools/registry.py:340`) is only reached from `Brain`'s agentic loop (`src/openacm/core/brain_loop.py:231`) if `tool_name in self.tool_registry.tools` passes FIRST — this is a plain dict-membership check on the `.tools` attribute, done BEFORE `execute()` is ever called. The existing `_FilteredRegistry` class (being replaced by this task) does NOT define its own `.tools` — it relies on `__getattr__` to delegate to the real registry, meaning `.tools` today always resolves to the REAL, unfiltered global registry's tool dict. This task's new wrapper MUST expose an explicit `.tools` dict that includes the flow tools by name, or `brain_loop.py`'s gate check will reject any flow-tool call before it ever reaches this wrapper's `execute()` override.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 """Test that AgentRunner.run() exposes the agent's active flows as callable
@@ -1764,12 +1764,12 @@ class TestFlowToolsExposedToAgent:
 
 Read `AgentRunner.run()`'s exact current body (`src/openacm/core/agent_runner.py:69-149`, already reproduced in this brief's background section above) before writing this test — confirm exactly how `Brain(...)` is constructed and adjust `_FakeBrain`'s signature to match precisely if it's drifted since this plan was written.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/unit/test_agent_runner_flows.py -v`
 Expected: FAIL — flow tools aren't wired in yet, `flow_7` isn't in any schema or `.tools` dict.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/openacm/core/agent_runner.py`, add imports at the top:
 
@@ -1909,17 +1909,17 @@ Replace it with:
 
 Add `from openacm.tools.base import ToolDefinition` to the imports at the top of `agent_runner.py`, alongside `import json`. This is safe: `tools/base.py` imports only `dataclasses`/`typing`, nothing from `core/`, so there is no import cycle. Use this top-level import for the `flow_tools: dict[str, ToolDefinition]` type annotation — the `import` inside `_build_flow_tool`'s body shown in the snippet above is then redundant and can be removed from that function (keep `ToolDefinition` imported once, at module level, not duplicated inside the function).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pytest tests/unit/test_agent_runner_flows.py -v`
 Expected: PASS (all 6 tests)
 
-- [ ] **Step 5: Run the full backend test suite**
+- [x] **Step 5: Run the full backend test suite**
 
 Run: `pytest -q`
 Expected: no new failures beyond the known pre-existing 7 `gmail_classifier` errors. Pay special attention to `tests/unit/test_agent_runner_skills.py` (from the prior sub-project) — those tests must still pass unchanged, since this task rewrites the same method they cover.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/openacm/core/agent_runner.py tests/unit/test_agent_runner_flows.py
@@ -1938,13 +1938,13 @@ git commit -m "feat(agents): expose each agent's active flows as dynamically-reg
 **Interfaces:**
 - Produces: `@xyflow/react` added as a frontend dependency. `AgentFlow` interface, `useAgentFlows(agentId)`, `useCreateFlow(agentId)`, `useUpdateFlow(agentId)`, `useDeleteFlow(agentId)` hooks in `use-agent-flows.ts`. A 6th "Flujos" tab in `AgentDetailView`'s tab bar, rendering a `FlowsTab({ agentId }: { agentId: number })` component that lists flows (name, description, active toggle, Edit/Delete) — **no node canvas yet**, "Edit"/"+ New Flow" just create a blank flow row and show a placeholder ("Editor de nodos — Task 11") for now, replaced by the real canvas in Task 11.
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 ```bash
 cd frontend && npm install @xyflow/react
 ```
 
-- [ ] **Step 2: Create the flows hooks file**
+- [x] **Step 2: Create the flows hooks file**
 
 Create `frontend/hooks/use-agent-flows.ts`:
 
@@ -2025,7 +2025,7 @@ export function useDeleteFlow(agentId: number) {
 
 Confirm `useAPI`/`useIsAuthenticated` are exported from `@/hooks/use-api` (they already are, used by every other hooks file this session touched) before finalizing this import line.
 
-- [ ] **Step 3: Add the "Flujos" tab to `AgentDetailView`**
+- [x] **Step 3: Add the "Flujos" tab to `AgentDetailView`**
 
 In `frontend/app/agents/page.tsx`, update the `activeTab` union type (search for `useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills'>`):
 
@@ -2047,7 +2047,7 @@ Add a rendering branch (search for `activeTab === 'skills' ? (`, note its struct
         ) : (
 ```
 
-- [ ] **Step 4: Implement `FlowsTab` (list + CRUD, no canvas yet)**
+- [x] **Step 4: Implement `FlowsTab` (list + CRUD, no canvas yet)**
 
 Add this component to `frontend/app/agents/page.tsx`, near the other Tab components (`AgentToolsTab`/`AgentSkillsTab`):
 
@@ -2118,12 +2118,12 @@ Add the new import line for the flows hooks near the existing `use-agents`/`use-
 import { useAgentFlows, useCreateFlow, useUpdateFlow, useDeleteFlow } from '@/hooks/use-agent-flows';
 ```
 
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/package.json frontend/package-lock.json frontend/hooks/use-agent-flows.ts frontend/app/agents/page.tsx
@@ -2145,7 +2145,7 @@ git commit -m "feat(agents): Flujos tab scaffold — flow list CRUD, React Flow 
 
 This task requires an actual manual browser verification before being marked complete — per this plan's Global Constraints, `tsc --noEmit` passing is not sufficient evidence for this specific task.
 
-- [ ] **Step 1: Define the node type components**
+- [x] **Step 1: Define the node type components**
 
 Create `frontend/components/flow-editor/node-types.tsx` — one visual node component per node type, using `@xyflow/react`'s `Handle`/`Position` for connection points:
 
@@ -2223,7 +2223,7 @@ export const NODE_TYPES = {
 };
 ```
 
-- [ ] **Step 2: Build the canvas + config side panel**
+- [x] **Step 2: Build the canvas + config side panel**
 
 Create `frontend/components/flow-editor/FlowCanvas.tsx`:
 
@@ -2369,7 +2369,7 @@ export function FlowCanvas({ flow, onSave }: { flow: AgentFlow; onSave: (graphJs
 
 Note: the WooCommerce node's Connection dropdown (selecting a saved `connection_id`) and the Start node's parameter-list editor are intentionally minimal placeholders in this task (a plain text/number field is acceptable here) — Task 12 wires the real Connection dropdown once the Connections management UI exists. If a reviewer flags the Start node having no parameter-editing UI at all, note it as a gap for a follow-up — this task's primary deliverable is the canvas/connection-drawing/node-placement mechanics working correctly, not every field being polished.
 
-- [ ] **Step 3: Wire `FlowCanvas` into `FlowsTab`**
+- [x] **Step 3: Wire `FlowCanvas` into `FlowsTab`**
 
 In `frontend/app/agents/page.tsx`, replace `FlowsTab`'s placeholder editing branch (from Task 10):
 
@@ -2399,16 +2399,16 @@ Add the import at the top of `page.tsx`:
 import { FlowCanvas } from '@/components/flow-editor/FlowCanvas';
 ```
 
-- [ ] **Step 4: Verify with `tsc`**
+- [x] **Step 4: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Manual browser verification (required for this task)**
+- [x] **Step 5: Manual browser verification (required for this task)**
 
 Start the dev server, open an agent's Flujos tab, click "+ Nuevo flujo", click "Editar", confirm the canvas renders. Add a Start node, an HTTP node, and an End node from the palette. Drag a connection from Start's bottom handle to the HTTP node's top handle, then from the HTTP node to the End node. Click the HTTP node and confirm the side panel shows URL/Method fields and editing them updates the node. Click "Guardar flujo" and confirm no console errors. Reload the page, re-open the same flow, and confirm the nodes/edges you placed are still there (proves `graph_json` round-trips correctly through save/load). If a live process is already running on a port you didn't start, do not reuse someone else's session without checking first — start a fresh dev server instance for this verification instead.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/components/flow-editor/ frontend/app/agents/page.tsx
@@ -2428,7 +2428,7 @@ git commit -m "feat(agents): visual node canvas for flow editing (React Flow)"
 - Consumes: Connections API from Task 8.
 - Produces: `AgentConnection` interface, `useAgentConnections(agentId)`, `useCreateConnection(agentId)`, `useDeleteConnection(agentId)` hooks. The WooCommerce node's side panel (in `FlowCanvas`) gains a real Connection dropdown + "+ Nueva conexión" inline form, replacing Task 11's placeholder text field.
 
-- [ ] **Step 1: Create the connections hooks file**
+- [x] **Step 1: Create the connections hooks file**
 
 Create `frontend/hooks/use-agent-connections.ts`:
 
@@ -2479,7 +2479,7 @@ export function useDeleteConnection(agentId: number) {
 }
 ```
 
-- [ ] **Step 2: Wire the Connection dropdown into `FlowCanvas`'s WooCommerce panel**
+- [x] **Step 2: Wire the Connection dropdown into `FlowCanvas`'s WooCommerce panel**
 
 In `frontend/components/flow-editor/FlowCanvas.tsx`, add `agentId` as a required prop and use it to fetch connections:
 
@@ -2542,7 +2542,7 @@ Replace the WooCommerce panel's placeholder (from Task 11 — the block starting
           )}
 ```
 
-- [ ] **Step 3: Pass `agentId` through from `FlowsTab`**
+- [x] **Step 3: Pass `agentId` through from `FlowsTab`**
 
 In `frontend/app/agents/page.tsx`, update the `<FlowCanvas>` call site (from Task 11):
 
@@ -2556,12 +2556,12 @@ In `frontend/app/agents/page.tsx`, update the `<FlowCanvas>` call site (from Tas
         />
 ```
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/hooks/use-agent-connections.ts frontend/components/flow-editor/FlowCanvas.tsx frontend/app/agents/page.tsx
@@ -2581,7 +2581,7 @@ git commit -m "feat(agents): Connections management — dropdown + inline creati
 
 This task requires an actual manual browser verification before being marked complete, exercising a REAL end-to-end flow (not just the canvas mechanics from Task 11) — per this plan's Global Constraints.
 
-- [ ] **Step 1: Add the test-run UI to `FlowCanvas`**
+- [x] **Step 1: Add the test-run UI to `FlowCanvas`**
 
 In `frontend/components/flow-editor/FlowCanvas.tsx`, add state and a handler:
 
@@ -2641,16 +2641,16 @@ Add the UI, right below the "Guardar flujo" button in the left palette column:
 
 Note: "Probar flujo" runs the endpoint against the flow's **currently saved** `graph_json`, not unsaved canvas edits — if a reviewer flags that clicking "Probar flujo" without first clicking "Guardar flujo" tests stale content, that's expected v1 behavior (the spec's `/test` endpoint reads the flow row from the database, it doesn't accept an inline graph override) — not a bug to fix in this task; note it as a possible future UX improvement instead.
 
-- [ ] **Step 2: Verify with `tsc`**
+- [x] **Step 2: Verify with `tsc`**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: zero errors.
 
-- [ ] **Step 3: Manual browser verification (required, end-to-end)**
+- [x] **Step 3: Manual browser verification (required, end-to-end)**
 
 Using a fresh dev server (do not reuse a process you didn't start, per Task 11's same caution): build a real flow — Start (one required parameter, e.g. `producto`) → HTTP Request node pointed at any public test API (e.g. `https://httpbin.org/get?q={{producto}}`) → End node with template `{{http1.args.q}}` — wait, `httpbin.org/get`'s response shape nests the query string under `args`, so this specific template requires two-level access which this plan's `.field` lookup does NOT support (only one level) — instead use an End template of `{{http1}}` (whole-output passthrough) and just confirm the raw JSON appears in the test result, since exercising true two-level JSON access is out of scope for v1. Click "Guardar flujo", enter a test value for `producto`, click "Probar flujo", and confirm a real HTTP response appears in the result panel — this proves the full path (canvas → save → `graph_json` → `/test` endpoint → `FlowExecutor` → real network call → formatted result) works end to end, not just each piece in isolation.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/components/flow-editor/FlowCanvas.tsx
