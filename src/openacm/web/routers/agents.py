@@ -29,16 +29,16 @@ log = structlog.get_logger()
 
 
 def _parse_and_validate_graph(graph_json: str) -> dict:
-    """Parse graph_json and reject it if malformed or cyclic. Raises HTTPException."""
-    from openacm.core.flow_executor import detect_cycle
+    """Parse graph_json and reject it if malformed or structurally invalid. Raises HTTPException."""
+    from openacm.core.flow_executor import validate_graph
 
     try:
         graph = json.loads(graph_json)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid graph_json: not valid JSON")
-    cycle = detect_cycle(graph)
-    if cycle:
-        raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+    errors = validate_graph(graph)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
     return graph
 
 
@@ -192,11 +192,15 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
-        flow_id = await _state.database.create_flow(
-            agent_id=agent_id,
-            name=data.get("name", "Untitled flow"),
-            description=data.get("description", ""),
-        )
+        create_kwargs: dict[str, Any] = {
+            "agent_id": agent_id,
+            "name": data.get("name", "Untitled flow"),
+            "description": data.get("description", ""),
+        }
+        if "graph_json" in data:
+            _parse_and_validate_graph(data["graph_json"])  # raises on invalid, discards the parsed dict — DB stores the string
+            create_kwargs["graph_json"] = data["graph_json"]
+        flow_id = await _state.database.create_flow(**create_kwargs)
         return await _state.database.get_flow(flow_id)
 
     @app.put("/api/agents/{agent_id}/flows/{flow_id}")

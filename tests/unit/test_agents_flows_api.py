@@ -73,8 +73,13 @@ class TestCreateUpdateDeleteFlow:
         _mock_state.create_flow.assert_awaited_once()
 
     async def test_update_flow(self, app_client, _mock_state):
+        valid_graph = (
+            '{"nodes":[{"id":"start","type":"start","config":{"parameters":[]}},'
+            '{"id":"end","type":"end","config":{"template":"done"}}],'
+            '"edges":[{"from":"start","to":"end","fromHandle":"default"}]}'
+        )
         async with app_client as ac:
-            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": '{"nodes":[],"edges":[]}'})
+            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": valid_graph})
         assert resp.status_code == 200
         _mock_state.update_flow.assert_awaited_once()
 
@@ -89,6 +94,46 @@ class TestCreateUpdateDeleteFlow:
             resp = await ac.delete("/api/agents/42/flows/7")
         assert resp.status_code == 200
         _mock_state.delete_flow.assert_awaited_once_with(7, agent_id=42)
+
+    async def test_create_flow_with_graph_json_passes_it_through(self, app_client, _mock_state):
+        valid_graph = (
+            '{"nodes":[{"id":"start","type":"start","config":{"parameters":[]}},'
+            '{"id":"end","type":"end","config":{"template":"done"}}],'
+            '"edges":[{"from":"start","to":"end","fromHandle":"default","toHandle":"default","kind":"flow"}]}'
+        )
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows",
+                json={"name": "imported", "description": "d", "graph_json": valid_graph},
+            )
+        assert resp.status_code == 200
+        _mock_state.create_flow.assert_awaited_once()
+        assert _mock_state.create_flow.await_args.kwargs["graph_json"] == valid_graph
+
+    async def test_create_flow_with_invalid_graph_json_is_rejected(self, app_client, _mock_state):
+        bad_graph = '{"nodes":[{"id":"a","type":"bogus","config":{}}],"edges":[]}'
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows",
+                json={"name": "imported", "graph_json": bad_graph},
+            )
+        assert resp.status_code == 400
+        _mock_state.create_flow.assert_not_awaited()
+
+    async def test_create_flow_without_graph_json_is_unchanged(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows", json={"name": "new-flow"})
+        assert resp.status_code == 200
+        assert "graph_json" not in _mock_state.create_flow.await_args.kwargs
+
+
+class TestParseAndValidateGraphNowUsesFullValidation:
+    async def test_update_with_unknown_node_type_is_rejected_with_specific_message(self, app_client, _mock_state):
+        bad_graph = '{"nodes":[{"id":"a","type":"bogus","config":{}}],"edges":[]}'
+        async with app_client as ac:
+            resp = await ac.put("/api/agents/42/flows/7", json={"graph_json": bad_graph})
+        assert resp.status_code == 400
+        assert "bogus" in resp.json()["detail"]
 
 
 CYCLIC_GRAPH = _json.dumps({
