@@ -557,11 +557,30 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
 
   const handleSave = () => onSave(JSON.stringify(toGraphJson(nodes, edges)));
 
+  const handleExport = () => {
+    const payload = {
+      kind: 'openacm-flow',
+      version: 1,
+      name: flow.name,
+      description: flow.description,
+      graph_json: toGraphJson(nodes, edges),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const slug = flow.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'flujo';
+    a.href = url;
+    a.download = `${slug}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex gap-2" style={{ height: 500 }}>
       <div className="flex flex-col gap-1 shrink-0" style={{ width: 120 }}>
         <div className="text-[10px]" style={{ color: 'var(--acm-fg-4)' }}>Clic derecho en el lienzo para agregar un nodo</div>
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
+        <button onClick={handleExport} className="btn-secondary text-[11px] px-2 py-1 mt-1">Exportar</button>
         <button onClick={() => { setSkillName(flowSkill?.name || flow.name); setSkillContent(flowSkill?.content || ''); setSkillError(null); setShowSkillPanel(true); }} className="btn-secondary text-[11px] px-2 py-1 mt-1">
           {flowSkill ? 'Editar skill' : '+ Skill'}
         </button>
