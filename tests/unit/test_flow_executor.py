@@ -158,13 +158,13 @@ class TestFlowExecutorStartToEnd:
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
-                {"id": "a", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
-                {"id": "b", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
+                {"id": "a", "type": "conditional", "config": {"field": "x", "operator": "equals", "value": "x"}},
+                {"id": "b", "type": "conditional", "config": {"field": "x", "operator": "equals", "value": "x"}},
             ],
             "edges": [
                 {"from": "start", "to": "a", "fromHandle": "default"},
-                {"from": "a", "to": "b", "fromHandle": "default"},
-                {"from": "b", "to": "a", "fromHandle": "default"},
+                {"from": "a", "to": "b", "fromHandle": "true"},
+                {"from": "b", "to": "a", "fromHandle": "true"},
             ],
         }
         executor = FlowExecutor()
