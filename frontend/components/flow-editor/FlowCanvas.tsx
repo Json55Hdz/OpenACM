@@ -175,6 +175,12 @@ function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: st
   // the other branch at runtime, referencing it resolves to the existing
   // "[missing: ...]" marker rather than being silently hidden from the
   // picker.
+  //
+  // This walk deliberately does NOT filter by edge kind — `edges` now
+  // contains both flow AND data edges (see toReactFlow/toGraphJson), so a
+  // node fed by a data edge from several hops back is discovered as an
+  // ancestor exactly the same way a flow-edge ancestor always was. No
+  // separate data-edge traversal is needed.
   const incomingBySource: Record<string, string[]> = {};
   for (const e of edges) {
     (incomingBySource[e.target] ||= []).push(e.source);
