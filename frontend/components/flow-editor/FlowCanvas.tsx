@@ -23,14 +23,24 @@ interface StartParam {
 
 interface GraphJson {
   nodes: Array<{ id: string; type: string; config: Record<string, unknown>; position: { x: number; y: number } }>;
-  edges: Array<{ from: string; to: string; fromHandle: string }>;
+  edges: Array<{ from: string; to: string; fromHandle: string; toHandle: string; kind: 'flow' | 'data' }>;
 }
 
 function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
   return {
     nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.config })),
     edges: graph.edges.map(e => ({
-      id: `${e.from}-${e.to}-${e.fromHandle}`, source: e.from, target: e.to, sourceHandle: e.fromHandle,
+      id: `${e.from}-${e.to}-${e.fromHandle}-${e.toHandle || 'flow'}`,
+      source: e.from,
+      target: e.to,
+      sourceHandle: e.fromHandle,
+      targetHandle: e.toHandle || 'flow',
+      // React Flow's Edge type has no first-class "kind" field — stash it
+      // in `data` so it survives every state update (applyEdgeChanges,
+      // copy/paste, etc.) and toGraphJson can read it back out on save.
+      // An edge with no kind saved before this shipped defaults to "flow",
+      // matching the backend's identical backward-compat rule.
+      data: { kind: (e.kind || 'flow') as 'flow' | 'data' },
     })),
   };
 }
@@ -38,7 +48,13 @@ function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
 function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
   return {
     nodes: nodes.map(n => ({ id: n.id, type: n.type || 'http', config: n.data as Record<string, unknown>, position: n.position })),
-    edges: edges.map(e => ({ from: e.source, to: e.target, fromHandle: e.sourceHandle || 'default' })),
+    edges: edges.map(e => ({
+      from: e.source,
+      to: e.target,
+      fromHandle: e.sourceHandle || 'default',
+      toHandle: e.targetHandle || 'flow',
+      kind: ((e.data as { kind?: 'flow' | 'data' } | undefined)?.kind) || 'flow',
+    })),
   };
 }
 
@@ -265,10 +281,12 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       return { ...n, id: newId, selected: false, position: { x: n.position.x + offset, y: n.position.y + offset } };
     });
     const pastedEdges: Edge[] = clip.edges.map(e => ({
-      id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}`,
+      id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}-${e.targetHandle || 'flow'}`,
       source: idMap[e.source],
       target: idMap[e.target],
       sourceHandle: e.sourceHandle,
+      targetHandle: e.targetHandle,
+      data: e.data,
     }));
 
     setNodes(nds => [...nds, ...pastedNodes]);
@@ -303,7 +321,14 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
 
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes(nds => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges(eds => applyEdgeChanges(changes, eds)), []);
-  const onConnect = useCallback((connection: Connection) => setEdges(eds => addEdge(connection, eds)), []);
+  const onConnect = useCallback((connection: Connection) => {
+    // A data edge always targets a NAMED field/value handle (e.g. "url",
+    // "value", "search_term") — every node's flow-in handle is always id
+    // "default", so that's the one signal available at connect-time to
+    // tell a flow edge from a data edge without a node-type lookup here.
+    const kind: 'flow' | 'data' = connection.targetHandle && connection.targetHandle !== 'default' ? 'data' : 'flow';
+    setEdges(eds => addEdge({ ...connection, data: { kind } }, eds));
+  }, []);
 
   const addNodeAt = (type: keyof typeof NODE_TYPES, x: number, y: number) => {
     const defaults: Record<string, Record<string, unknown>> = {
@@ -345,10 +370,15 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
 
     setNodes(nds => [...nds, { id: newId, type: 'set', position: flowPosition, data: { name } }]);
     setEdges(eds => [...eds, {
-      id: `${connectionState.fromNode!.id}-${newId}-${connectionState.fromHandle?.id || 'default'}`,
+      id: `${connectionState.fromNode!.id}-${newId}-${connectionState.fromHandle?.id || 'default'}-flow`,
       source: connectionState.fromNode!.id,
       target: newId,
       sourceHandle: connectionState.fromHandle?.id || 'default',
+      // Always a flow edge — dragging a flow-out handle to empty canvas
+      // promotes a new Set node into the CHAIN (its flow-in "default"
+      // handle), never wires a data pin.
+      targetHandle: 'default',
+      data: { kind: 'flow' },
     }]);
   }, [screenToFlowPosition]);
 

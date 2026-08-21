@@ -110,8 +110,15 @@ export function SetNode({ id, data }: NodeProps) {
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>💾 Guardar (Set)</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <div style={pinLabelStyle}>entrada: valor (opcional — sin conexión usa el nodo anterior)</div>
       <div style={pinLabelStyle}>salida: value</div>
       <Handle type="target" position={Position.Top} id="default" />
+      {/* Second, independent target handle for Set's data-input pin
+          (toHandle="value", matching flow_executor.py's Set-node branch) —
+          can be wired from ANY node's output, not just the flow-immediate
+          predecessor. Falls back to the old previous_id behavior when
+          nothing is wired here. */}
+      <Handle type="target" position={Position.Left} id="value" />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
   );
