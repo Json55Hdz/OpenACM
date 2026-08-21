@@ -993,6 +993,49 @@ class TestSetNodeDataEdge:
 
         assert result == "Valor: hola mundo"
 
+    async def test_set_value_handle_sourced_from_a_get_node_resolves_via_variable_name(self):
+        """A Get node has no flow handles (it's a "pure" node — see
+        _resolve_pin_value's docstring), so run()'s flow-walk never visits
+        it and outputs[get_node_id] is never populated. When a Set node's
+        "value" data edge is sourced from a Get node, resolution must go
+        through the Get's configured variable name instead — exercised
+        here through the real run()/Set-branch code path end-to-end, not
+        just resolve_field()'s own isolated unit tests."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http_a", "type": "http", "config": {"url": "https://a.example.com", "method": "GET"}},
+                {"id": "set_a", "type": "set", "config": {"name": "some_var"}},
+                {"id": "get1", "type": "get", "config": {"name": "some_var"}},
+                {"id": "set2", "type": "set", "config": {"name": "final"}},
+                {"id": "end", "type": "end", "config": {"template": "Final: {{final}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http_a", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_a", "to": "set_a", "fromHandle": "default", "kind": "flow"},
+                {"from": "set_a", "to": "set2", "fromHandle": "default", "kind": "flow"},
+                {"from": "set2", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "get1", "to": "set2", "fromHandle": "default", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "from A"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, outputs = await executor.run(graph, params={})
+
+        assert result == "Final: from A"
+        assert outputs["final"] == outputs["some_var"]
+        assert "get1" not in outputs
+
 
 def _get_graph(get_name="mi_variable"):
     """Start -> HTTP -> Set(name=get_name) -> Get(name=get_name) -> End(references the Get node's own id)."""
