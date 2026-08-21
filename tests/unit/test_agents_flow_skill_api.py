@@ -123,3 +123,15 @@ class TestGenerateFlowSkill:
             resp = await ac.post("/api/agents/42/flows/7/skill/generate", json={"name": "n", "description": "d"})
         assert resp.status_code == 200
         _state.brain.skill_manager.generate_flow_skill.assert_awaited_once()
+
+    async def test_generate_when_one_already_exists_is_rejected(self, app_client, _mock_state):
+        """generate_flow_skill_endpoint inserts a new skill row just like
+        create_flow_skill_endpoint, so it must carry the same existing-skill
+        guard — otherwise clicking "Generar con IA" on a flow that already
+        has a skill hits idx_skills_one_per_flow and surfaces as a bare 500
+        instead of the clean 409 the create path already returns."""
+        _mock_state.get_flow_skill.return_value = SKILL_ROW
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/skill/generate", json={"name": "n", "description": "d"})
+        assert resp.status_code == 409
+        _state.brain.skill_manager.generate_flow_skill.assert_not_awaited()

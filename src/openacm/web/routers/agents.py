@@ -326,6 +326,13 @@ def register_routes(app: FastAPI) -> None:
         flow = await _state.database.get_flow(flow_id)
         if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
+        # Same guard as create_flow_skill_endpoint above: generation also
+        # inserts a new skill row, so it must be rejected once one already
+        # exists rather than hitting idx_skills_one_per_flow and surfacing
+        # as an opaque 500. Callers that want to regenerate content for an
+        # existing skill go through PUT instead.
+        if await _state.database.get_flow_skill(flow_id) is not None:
+            raise HTTPException(status_code=409, detail="Flow already has a skill — use PUT to update it")
         data = await request.json()
         try:
             return await _state.brain.skill_manager.generate_flow_skill(

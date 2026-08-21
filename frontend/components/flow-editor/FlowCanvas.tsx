@@ -164,6 +164,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const [showSkillPanel, setShowSkillPanel] = useState(false);
   const [skillName, setSkillName] = useState(flowSkill?.name || flow.name);
   const [skillContent, setSkillContent] = useState(flowSkill?.content || '');
+  const [skillError, setSkillError] = useState<string | null>(null);
 
   const [testParams, setTestParams] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -387,7 +388,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       <div className="flex flex-col gap-1 shrink-0" style={{ width: 120 }}>
         <div className="text-[10px]" style={{ color: 'var(--acm-fg-4)' }}>Clic derecho en el lienzo para agregar un nodo</div>
         <button onClick={handleSave} className="btn-primary text-[11px] px-2 py-1 mt-2">Guardar flujo</button>
-        <button onClick={() => { setSkillName(flowSkill?.name || flow.name); setSkillContent(flowSkill?.content || ''); setShowSkillPanel(true); }} className="btn-secondary text-[11px] px-2 py-1 mt-1">
+        <button onClick={() => { setSkillName(flowSkill?.name || flow.name); setSkillContent(flowSkill?.content || ''); setSkillError(null); setShowSkillPanel(true); }} className="btn-secondary text-[11px] px-2 py-1 mt-1">
           {flowSkill ? 'Editar skill' : '+ Skill'}
         </button>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
@@ -690,30 +691,54 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       {showSkillPanel && (
         <div className="shrink-0 p-2 text-[11px]" style={{ width: 260, border: '1px solid var(--acm-border)', borderRadius: 8, color: 'var(--acm-fg-2)' }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Skill del flujo</div>
-          <label>Nombre</label>
-          <input className="acm-input w-full mb-2" value={skillName} onChange={e => setSkillName(e.target.value)} />
+          <label>Nombre{flowSkill ? ' (no editable tras crear)' : ''}</label>
+          <input
+            className="acm-input w-full mb-2"
+            value={skillName}
+            disabled={!!flowSkill}
+            onChange={e => setSkillName(e.target.value)}
+          />
           <label>Contenido (qué debe saber el LLM para usar este flujo)</label>
           <textarea className="acm-input w-full mb-2" rows={8} value={skillContent} onChange={e => setSkillContent(e.target.value)} />
           <div className="flex gap-1 flex-wrap">
-            <button
-              className="btn-secondary text-[11px] px-2 py-1"
-              disabled={generateFlowSkill.isPending}
-              onClick={() => generateFlowSkill.mutate(
-                { name: skillName, description: flow.description },
-                { onSuccess: (skill: any) => setSkillContent(skill.content) },
-              )}
-            >
-              {generateFlowSkill.isPending ? 'Generando...' : 'Generar con IA'}
-            </button>
+            {!flowSkill && (
+              <button
+                className="btn-secondary text-[11px] px-2 py-1"
+                disabled={generateFlowSkill.isPending}
+                onClick={() => {
+                  setSkillError(null);
+                  generateFlowSkill.mutate(
+                    { name: skillName, description: flow.description },
+                    {
+                      onSuccess: (skill: any) => setSkillContent(skill.content),
+                      onError: () => setSkillError('Error al generar el skill con IA.'),
+                    },
+                  );
+                }}
+              >
+                {generateFlowSkill.isPending ? 'Generando...' : 'Generar con IA'}
+              </button>
+            )}
             <button
               className="btn-primary text-[11px] px-2 py-1"
               disabled={saveFlowSkill.isPending}
-              onClick={() => saveFlowSkill.mutate({ exists: !!flowSkill, data: { name: skillName, content: skillContent } })}
+              onClick={() => {
+                setSkillError(null);
+                saveFlowSkill.mutate(
+                  { exists: !!flowSkill, data: { name: skillName, content: skillContent } },
+                  { onError: () => setSkillError('Error al guardar el skill.') },
+                );
+              }}
             >
-              Guardar
+              {saveFlowSkill.isPending ? 'Guardando...' : 'Guardar'}
             </button>
             <button className="btn-secondary text-[11px] px-2 py-1" onClick={() => setShowSkillPanel(false)}>Cerrar</button>
           </div>
+          {skillError && (
+            <div className="mt-1 p-1 text-[10px]" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-err)', borderRadius: 4, color: 'var(--acm-err)' }}>
+              {skillError}
+            </div>
+          )}
         </div>
       )}
     </div>
