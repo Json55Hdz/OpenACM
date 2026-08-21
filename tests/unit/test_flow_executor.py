@@ -454,6 +454,35 @@ class TestSetNode:
 
         assert result == "segundo valor"
 
+    async def test_set_node_downstream_of_a_merge_uses_the_branch_actually_taken(self):
+        """Two edges point at the same Set node — one from each of a
+        Conditional's branches. Only one branch executes per run, so the
+        Set node must alias whichever branch's output actually reached it,
+        not whichever edge happens to be last in the graph's edge list."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": [{"name": "x", "type": "string", "required": True}]}},
+                {"id": "cond1", "type": "conditional", "config": {"field": "{{x}}", "operator": "equals", "value": "yes"}},
+                {"id": "merge1", "type": "set", "config": {"name": "picked"}},
+                {"id": "end", "type": "end", "config": {"template": "{{picked}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "cond1", "fromHandle": "default"},
+                {"from": "cond1", "to": "merge1", "fromHandle": "true"},
+                {"from": "cond1", "to": "merge1", "fromHandle": "false"},
+                {"from": "merge1", "to": "end", "fromHandle": "default"},
+            ],
+        }
+        executor = FlowExecutor()
+
+        result_true = await executor.run(graph, params={"x": "yes"})
+        result_false = await executor.run(graph, params={"x": "no"})
+
+        # cond1's passthrough output is the resolved field value itself
+        # (per TestConditionalNode.test_passthrough_output_is_the_evaluated_value_not_the_boolean)
+        assert result_true == "yes"
+        assert result_false == "no"
+
 
 def _get_graph(get_name="mi_variable"):
     """Start -> HTTP -> Set(name=get_name) -> Get(name=get_name) -> End(references the Get node's own id)."""

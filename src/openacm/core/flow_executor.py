@@ -146,10 +146,8 @@ class FlowExecutor:
     async def run(self, graph: dict, params: dict) -> str:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
         edges_by_source: dict[str, dict[str, str]] = {}
-        edges_by_target: dict[str, str] = {}
         for edge in graph.get("edges", []):
             edges_by_source.setdefault(edge["from"], {})[edge.get("fromHandle", "default")] = edge["to"]
-            edges_by_target[edge["to"]] = edge["from"]
 
         start_node = next((n for n in nodes.values() if n["type"] == "start"), None)
         if not start_node:
@@ -161,6 +159,7 @@ class FlowExecutor:
 
         outputs: dict[str, Any] = {}
         current_id = edges_by_source.get(start_node["id"], {}).get("default")
+        previous_id: str | None = None
 
         while current_id:
             node = nodes.get(current_id)
@@ -172,11 +171,16 @@ class FlowExecutor:
                 return substitute_templates(template, params, outputs)
 
             if node["type"] == "set":
-                source_id = edges_by_target.get(node["id"])
-                if source_id and source_id in outputs:
-                    value = outputs[source_id]
+                # previous_id is the node actually visited just before this
+                # one IN THIS RUN — correct even when this node has multiple
+                # incoming edges in the graph (a merge point after a
+                # Conditional's two branches), since only one of those
+                # edges is ever the real predecessor on any given run.
+                if previous_id and previous_id in outputs:
+                    value = outputs[previous_id]
                     outputs[node["id"]] = value
                     outputs[node["config"]["name"]] = value
+                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
                 continue
 
@@ -184,6 +188,7 @@ class FlowExecutor:
                 name = node["config"]["name"]
                 if name in outputs:
                     outputs[node["id"]] = outputs[name]
+                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
                 continue
 
@@ -198,9 +203,11 @@ class FlowExecutor:
 
             if node["type"] == "conditional":
                 outputs[node["id"]] = result["passthrough"]
+                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("true" if result["branch"] else "false")
             else:
                 outputs[node["id"]] = result
+                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
 
         return "Error: flow ended without reaching an End node"
