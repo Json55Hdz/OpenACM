@@ -27,8 +27,17 @@ class TestResolveAgentId:
     def test_falls_back_to_channel_id(self):
         assert _resolve_agent_id(None, "agent_9") == 9
 
+    def test_falls_back_to_channel_id_with_flow_suffix(self):
+        assert _resolve_agent_id(None, "agent_5_flow_12") == 5
+
     def test_non_agent_channel_id_returns_none(self):
         assert _resolve_agent_id(None, "swarm_abc") is None
+
+    def test_agent_prefix_without_separator_returns_none(self):
+        # The suffix-tolerant regex must not start matching things that only
+        # *look* like an agent channel.
+        assert _resolve_agent_id(None, "agent_5x") is None
+        assert _resolve_agent_id(None, "agentx_5") is None
 
     def test_no_agent_id_no_channel_id_returns_none(self):
         assert _resolve_agent_id(None, None) is None

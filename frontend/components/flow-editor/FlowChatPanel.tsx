@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, Send } from 'lucide-react';
 import { useAgentMutations } from '@/hooks/use-agents';
@@ -9,7 +9,9 @@ import type { AgentFlow } from '@/hooks/use-agent-flows';
 
 interface HistoryItem {
   role: string;
-  content: string;
+  // Nullable on purpose: a persisted tool-call-only assistant turn carries no
+  // user-facing text, and older rows can come back with a null content.
+  content: string | null;
   timestamp: string;
 }
 
@@ -26,16 +28,25 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [hydrated, setHydrated] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (hydrated || !history) return;
     setMessages(
       (history as HistoryItem[])
-        .filter(h => h.role === 'user' || h.role === 'assistant')
-        .map(h => ({ role: h.role as 'user' | 'assistant', text: h.content }))
+        // Mirrors memory.py's _load_from_db filter: an assistant turn that
+        // only planned a tool call is persisted with content="" (see
+        // brain_loop.py), and rendering it would put one blank padded bubble
+        // per tool-call turn into the reopened conversation.
+        .filter(h => (h.role === 'user' || h.role === 'assistant') && h.content?.trim())
+        .map(h => ({ role: h.role as 'user' | 'assistant', text: h.content as string }))
     );
     setHydrated(true);
   }, [history, hydrated]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages]);
 
   const send = async () => {
     const msg = input.trim();
@@ -43,9 +54,9 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
     setInput('');
     setMessages(m => [...m, { role: 'user', text: msg }]);
     const extraSystemContext =
-      `Estás editando el flujo "${flow.name}" (id=${flow.id}) del agente. Si el usuario te pide crear ` +
-      `o modificar este flujo, llama a create_or_update_agent_flow con flow_id=${flow.id} para EDITARLO ` +
-      `directamente — no crees un flujo nuevo salvo que el usuario lo pida explícitamente.`;
+      `Estás editando el flujo "${flow.name}" (id=${flow.id}) del agente ${agentId}. Si el usuario te pide ` +
+      `crear o modificar este flujo, llama a create_or_update_agent_flow con flow_id=${flow.id} y ` +
+      `agent_id=${agentId} para EDITARLO directamente — no crees un flujo nuevo salvo que el usuario lo pida explícitamente.`;
     try {
       const res = await test.mutateAsync({
         id: agentId, message: msg, channel_id: channelId, extra_system_context: extraSystemContext,
@@ -53,8 +64,11 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
       setMessages(m => [...m, { role: 'assistant', text: res.response }]);
       qc.invalidateQueries({ queryKey: ['agent-flow', flow.id] });
       qc.invalidateQueries({ queryKey: ['agent-flows', agentId] });
-    } catch {
-      setMessages(m => [...m, { role: 'assistant', text: '⚠️ Error al obtener respuesta.' }]);
+    } catch (e) {
+      // fetchAPI already unwraps the backend's error detail into the Error's
+      // message, so surface it instead of a generic string.
+      const detail = e instanceof Error ? e.message : 'Error al obtener respuesta.';
+      setMessages(m => [...m, { role: 'assistant', text: `⚠️ ${detail}` }]);
     }
   };
 
@@ -86,6 +100,7 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
               <Loader2 size={11} className="animate-spin" /> Pensando...
             </div>
           )}
+          <div ref={messagesEndRef} />
         </div>
       )}
       <div className="flex gap-2">

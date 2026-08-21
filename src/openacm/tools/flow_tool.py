@@ -9,7 +9,11 @@ import re
 from openacm.core.flow_executor import validate_graph
 from openacm.tools.base import tool
 
-_CHANNEL_AGENT_RE = re.compile(r"^agent_(\d+)$")
+# Matches a bare agent channel ("agent_5") AND any suffixed variant the UI
+# sends — notably FlowChatPanel's "agent_5_flow_12", which keeps each flow's
+# chat history in its own channel. The trailing (?:_|$) is what keeps this
+# from over-matching: "agent_5x" and "swarm_5" still resolve to None.
+_CHANNEL_AGENT_RE = re.compile(r"^agent_(\d+)(?:_|$)")
 
 _FLOW_TOOL_DESCRIPTION = """Crea o actualiza un flujo visual de un agente generando su grafo (graph_json) directamente, sin usar el editor visual. Usa esto cuando el usuario te pida construir, armar o modificar un flujo/automatización.
 

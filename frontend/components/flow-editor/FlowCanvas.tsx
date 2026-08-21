@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow, ReactFlowProvider, useReactFlow, Background, Controls, MiniMap, Panel, addEdge, applyNodeChanges, applyEdgeChanges,
   type Node, type Edge, type Connection, type NodeChange, type EdgeChange,
@@ -257,6 +257,25 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const initial = useMemo(() => toReactFlow(JSON.parse(flow.graph_json || '{"nodes":[],"edges":[]}')), [flow.id]);
   const [nodes, setNodes] = useState<Node[]>(initial.nodes);
   const [edges, setEdges] = useState<Edge[]>(initial.edges);
+
+  // Re-sync nodes/edges when the flow's server-side content changes out from
+  // under this mounted instance (e.g. the AI edits it via FlowChatPanel, or a
+  // normal "Guardar flujo" save round-trips through react-query) — without
+  // remounting the whole component, which would also discard unrelated local
+  // UI state (the open chat panel, the ReactFlow viewport, the selected
+  // node's Inspector, "Probar flujo" results, an in-progress "+ Skill" edit).
+  // Keyed on the actual graph content, not a timestamp, so it's immune to
+  // same-second update collisions and fires exactly when there's a real
+  // change to show.
+  const lastSyncedGraphJson = useRef(flow.graph_json);
+  useEffect(() => {
+    if (flow.graph_json === lastSyncedGraphJson.current) return;
+    lastSyncedGraphJson.current = flow.graph_json;
+    const fresh = toReactFlow(JSON.parse(flow.graph_json || '{"nodes":[],"edges":[]}'));
+    setNodes(fresh.nodes);
+    setEdges(fresh.edges);
+  }, [flow.graph_json]);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const nodeIdCounterRef = useRef(maxNodeIdSuffix(initial.nodes));
   const variableNameCounterRef = useRef(0);
