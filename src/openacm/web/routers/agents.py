@@ -5,6 +5,7 @@ import datetime
 import json
 import os
 import re
+import sqlite3
 import uuid
 from pathlib import Path
 from typing import Any
@@ -268,12 +269,21 @@ def register_routes(app: FastAPI) -> None:
         if await _state.database.get_flow_skill(flow_id) is not None:
             raise HTTPException(status_code=409, detail="Flow already has a skill — use PUT to update it")
         data = await request.json()
-        return await _state.brain.skill_manager.create_flow_skill(
-            flow_id=flow_id,
-            name=data["name"],
-            description=data.get("description", ""),
-            content=data.get("content", ""),
-        )
+        try:
+            return await _state.brain.skill_manager.create_flow_skill(
+                flow_id=flow_id,
+                name=data["name"],
+                description=data.get("description", ""),
+                content=data.get("content", ""),
+            )
+        except sqlite3.IntegrityError:
+            # Defense-in-depth against the TOCTOU race between the
+            # get_flow_skill() pre-check above and this insert: two
+            # near-simultaneous POSTs can both pass the check above before
+            # either has committed. idx_skills_one_per_flow (migration 36)
+            # rejects the second insert at the DB layer; surface it as the
+            # same clean 409 the pre-check returns rather than a 500.
+            raise HTTPException(status_code=409, detail="Flow already has a skill — use PUT to update it")
 
     @app.put("/api/agents/{agent_id}/flows/{flow_id}/skill")
     async def update_flow_skill_endpoint(agent_id: int, flow_id: int, request: Request):

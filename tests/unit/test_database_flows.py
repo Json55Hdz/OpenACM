@@ -296,6 +296,24 @@ class TestFlowSkill:
             await db.create_skill(name="dup", description="d2", content="c2", flow_id=flow_id)
         await db.close()
 
+    async def test_second_skill_for_same_flow_is_rejected_even_with_a_different_name(self):
+        """Migration 35's unique index is (name, flow_id) — it does NOT stop
+        two skills with different names from being inserted for the same
+        flow_id. Migration 36 adds a flow_id-only partial unique index
+        (idx_skills_one_per_flow) specifically to close that gap, since a
+        flow may have at most one skill regardless of its name. This is the
+        DB-layer half of the TOCTOU race fix — the API-layer pre-check in
+        agents.py can't fully prevent two near-simultaneous POSTs, so the DB
+        must reject the second insert outright."""
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+        await db.create_skill(name="first-name", description="d", content="c", flow_id=flow_id)
+
+        with pytest.raises(Exception):
+            await db.create_skill(name="totally-different-name", description="d2", content="c2", flow_id=flow_id)
+        await db.close()
+
     async def test_deleting_flow_cascades_to_its_skill(self):
         db = await _make_db()
         agent_id = await _make_agent(db)

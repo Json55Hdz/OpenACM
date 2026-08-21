@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 35
+    _SCHEMA_VERSION = 36
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1061,6 +1061,25 @@ class Database:
             """)
             await self._db.commit()
             log.info("Migration 35: per-flow skill scoping (skills.flow_id)")
+
+        # ── Migration 36: close the flow-skill singularity TOCTOU race ────
+        # Migration 35's idx_skills_name_per_flow is (name, flow_id), not
+        # flow_id alone — it does nothing to stop two skills with *different*
+        # names being inserted for the same flow_id. The API layer's
+        # get_flow_skill() check-then-create_skill() insert in Task 7 has a
+        # suspension point between the two awaits, so two near-simultaneous
+        # POSTs can both observe "no skill yet" and both insert. This partial
+        # unique index closes that race at the data layer as defense-in-depth
+        # — the API-layer pre-check stays as the fast/clean path, and the DB
+        # now rejects the loser of a race with a genuine constraint error
+        # that the router translates into a 409.
+        if current < 36:
+            await self._db.executescript("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_one_per_flow
+                    ON skills(flow_id) WHERE flow_id IS NOT NULL;
+            """)
+            await self._db.commit()
+            log.info("Migration 36: one-skill-per-flow unique index (race-condition guard)")
 
         # Save new version
         await self._db.execute(

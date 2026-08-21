@@ -80,6 +80,21 @@ class TestCreateFlowSkill:
             resp = await ac.post("/api/agents/42/flows/7/skill", json={"name": "n", "description": "d", "content": "c"})
         assert resp.status_code == 409
 
+    async def test_toctou_race_is_rejected_as_409(self, app_client, _mock_state):
+        """Two near-simultaneous POSTs can both pass the get_flow_skill()
+        pre-check (both see None) before either insert commits. The DB-layer
+        partial unique index (idx_skills_one_per_flow, migration 36) rejects
+        the loser with sqlite3.IntegrityError — the endpoint must translate
+        that into the same clean 409 the pre-check already returns, not a
+        500."""
+        import sqlite3
+        _state.brain.skill_manager.create_flow_skill.side_effect = sqlite3.IntegrityError(
+            "UNIQUE constraint failed: skills.flow_id"
+        )
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/skill", json={"name": "n", "description": "d", "content": "c"})
+        assert resp.status_code == 409
+
 
 class TestUpdateDeleteFlowSkill:
     async def test_update_existing_skill(self, app_client, _mock_state):
