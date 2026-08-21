@@ -188,7 +188,7 @@ class FlowExecutor:
 
         return "\n".join(output)
 
-    async def run(self, graph: dict, params: dict) -> str:
+    async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
         edges_by_source: dict[str, dict[str, str]] = {}
         for edge in graph.get("edges", []):
@@ -196,11 +196,11 @@ class FlowExecutor:
 
         start_node = next((n for n in nodes.values() if n["type"] == "start"), None)
         if not start_node:
-            return "Error: flow has no Start node"
+            return "Error: flow has no Start node", {}
 
         for param_def in start_node["config"].get("parameters", []):
             if param_def.get("required") and param_def["name"] not in params:
-                return f"Error: missing required parameter '{param_def['name']}'"
+                return f"Error: missing required parameter '{param_def['name']}'", {}
 
         outputs: dict[str, Any] = {}
         current_id = edges_by_source.get(start_node["id"], {}).get("default")
@@ -210,15 +210,15 @@ class FlowExecutor:
         while current_id:
             visits += 1
             if visits > self._MAX_NODE_VISITS:
-                return "Error: flow exceeded maximum node visits (possible cycle)"
+                return "Error: flow exceeded maximum node visits (possible cycle)", outputs
 
             node = nodes.get(current_id)
             if node is None:
-                return f"Error: flow references unknown node '{current_id}'"
+                return f"Error: flow references unknown node '{current_id}'", outputs
 
             if node["type"] == "end":
                 template = node["config"].get("template", "")
-                return substitute_templates(template, params, outputs)
+                return substitute_templates(template, params, outputs), outputs
 
             if node["type"] == "set":
                 # previous_id is the node actually visited just before this
@@ -244,12 +244,12 @@ class FlowExecutor:
 
             handler = self._HANDLERS.get(node["type"])
             if handler is None:
-                return f"Error: unknown node type '{node['type']}'"
+                return f"Error: unknown node type '{node['type']}'", outputs
 
             try:
                 result = await handler(self, node, params, outputs)
             except Exception as exc:
-                return f"Error in node '{node['id']}' ({node['type']}): {exc}"
+                return f"Error in node '{node['id']}' ({node['type']}): {exc}", outputs
 
             if node["type"] == "conditional":
                 outputs[node["id"]] = result["passthrough"]
@@ -260,4 +260,4 @@ class FlowExecutor:
                 previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
 
-        return "Error: flow ended without reaching an End node"
+        return "Error: flow ended without reaching an End node", outputs

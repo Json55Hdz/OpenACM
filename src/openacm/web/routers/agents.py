@@ -247,8 +247,8 @@ def register_routes(app: FastAPI) -> None:
             return await _state.database.get_connection(connection_id)
 
         executor = FlowExecutor(get_connection=get_connection)
-        result = await executor.run(graph, test_params)
-        return {"result": result}
+        result, outputs = await executor.run(graph, test_params)
+        return {"result": result, "outputs": outputs}
 
     @app.get("/api/agents/{agent_id}/flows/{flow_id}/skill")
     async def get_flow_skill(agent_id: int, flow_id: int):

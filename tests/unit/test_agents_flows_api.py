@@ -188,3 +188,9 @@ class TestTestFlowEndpoint:
             resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
         assert resp.status_code == 200
         assert resp.json()["result"] == "done"
+
+    async def test_response_includes_per_node_outputs(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
+        assert resp.status_code == 200
+        assert "outputs" in resp.json()

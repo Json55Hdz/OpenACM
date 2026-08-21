@@ -124,7 +124,7 @@ class TestFlowExecutorStartToEnd:
         }
         executor = FlowExecutor()
 
-        result = await executor.run(graph, params={"producto": "zapatos"})
+        result, _ = await executor.run(graph, params={"producto": "zapatos"})
 
         assert result == "You asked about zapatos"
 
@@ -138,7 +138,7 @@ class TestFlowExecutorStartToEnd:
         }
         executor = FlowExecutor()
 
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
 
         assert "producto" in result
         assert result.startswith("Error")
@@ -147,7 +147,7 @@ class TestFlowExecutorStartToEnd:
         graph = {"nodes": [{"id": "end", "type": "end", "config": {"template": "x"}}], "edges": []}
         executor = FlowExecutor()
 
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
 
         assert result.startswith("Error")
 
@@ -169,9 +169,27 @@ class TestFlowExecutorStartToEnd:
         }
         executor = FlowExecutor()
 
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
 
         assert result == "Error: flow exceeded maximum node visits (possible cycle)"
+
+    async def test_run_returns_outputs_dict_alongside_the_result_string(self):
+        graph = _http_graph()
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"status": "ok"}
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, outputs = await executor.run(graph, params={})
+
+        assert result == "ok"
+        assert outputs["http1"] == {"status": "ok"}
 
 
 def _http_graph(url="https://example.com/api", method="GET", headers=None, body=None):
@@ -202,7 +220,7 @@ class TestHttpNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result == "ok"
 
@@ -221,7 +239,7 @@ class TestHttpNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result == "plain body"
 
@@ -234,7 +252,7 @@ class TestHttpNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result.startswith("Error in node 'http1'")
         assert "connection refused" in result
@@ -278,27 +296,27 @@ def _conditional_graph(operator, value, field="{{start_value}}"):
 class TestConditionalNode:
     async def test_contains_operator_true_branch(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
+        result, _ = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
         assert result == "YES: zapatos"
 
     async def test_contains_operator_false_branch(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("contains", "camisa"), params={"start_value": "zapatos"})
+        result, _ = await executor.run(_conditional_graph("contains", "camisa"), params={"start_value": "zapatos"})
         assert result == "NO: zapatos"
 
     async def test_equals_operator(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("equals", "zapatos"), params={"start_value": "zapatos"})
+        result, _ = await executor.run(_conditional_graph("equals", "zapatos"), params={"start_value": "zapatos"})
         assert result == "YES: zapatos"
 
     async def test_is_empty_operator_true(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": ""})
+        result, _ = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": ""})
         assert result == "YES: "
 
     async def test_is_empty_operator_false(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": "zapatos"})
+        result, _ = await executor.run(_conditional_graph("is_empty", ""), params={"start_value": "zapatos"})
         assert result == "NO: zapatos"
 
     async def test_is_error_operator(self):
@@ -306,7 +324,7 @@ class TestConditionalNode:
         graph["nodes"][0]["config"]["parameters"] = []
         graph["nodes"][1]["config"]["field"] = "{{missing_node}}"
         executor = FlowExecutor()
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
         # "{{missing_node}}" resolves to "[missing: missing_node]" which starts with neither
         # "error" — this exercises is_error's false path using the missing-marker text itself.
         assert result == "NO: [missing: missing_node]"
@@ -314,12 +332,12 @@ class TestConditionalNode:
     async def test_unknown_operator_is_an_error(self):
         graph = _conditional_graph("bogus_operator", "x")
         executor = FlowExecutor()
-        result = await executor.run(graph, params={"start_value": "zapatos"})
+        result, _ = await executor.run(graph, params={"start_value": "zapatos"})
         assert result.startswith("Error in node 'cond1'")
 
     async def test_passthrough_output_is_the_evaluated_value_not_the_boolean(self):
         executor = FlowExecutor()
-        result = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
+        result, _ = await executor.run(_conditional_graph("contains", "zap"), params={"start_value": "zapatos"})
         # end_true's template is "YES: {{cond1}}" — if the stored output were the
         # boolean True/False instead of the passthrough string, this would read "YES: True".
         assert result == "YES: zapatos"
@@ -365,7 +383,7 @@ class TestWooCommerceNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor(get_connection=get_connection)
-            result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+            result, _ = await executor.run(_woo_graph(), params={"producto": "zapatos"})
 
         assert "Zapatos rojos" in result
         assert "$49.99" in result
@@ -386,7 +404,7 @@ class TestWooCommerceNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor(get_connection=get_connection)
-            result = await executor.run(_woo_graph(), params={"producto": "inexistente"})
+            result, _ = await executor.run(_woo_graph(), params={"producto": "inexistente"})
 
         assert "No products found" in result
 
@@ -395,13 +413,13 @@ class TestWooCommerceNode:
             return None
 
         executor = FlowExecutor(get_connection=get_connection)
-        result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+        result, _ = await executor.run(_woo_graph(), params={"producto": "zapatos"})
 
         assert result.startswith("Error in node 'woo1'")
 
     async def test_no_get_connection_configured_is_an_error(self):
         executor = FlowExecutor()  # get_connection defaults to None
-        result = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+        result, _ = await executor.run(_woo_graph(), params={"producto": "zapatos"})
 
         assert result.startswith("Error in node 'woo1'")
 
@@ -459,7 +477,7 @@ class TestSetNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(_set_graph(), params={})
+            result, _ = await executor.run(_set_graph(), params={})
 
         assert result == "Valor: hola mundo"
 
@@ -480,7 +498,7 @@ class TestSetNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result == "Por id: hola mundo"
 
@@ -503,7 +521,7 @@ class TestSetNode:
             ],
         }
         executor = FlowExecutor()
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
         assert result == "[missing: huerfana]"
 
     async def test_two_variables_with_the_same_name_last_one_wins(self):
@@ -535,7 +553,7 @@ class TestSetNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result == "segundo valor"
 
@@ -560,8 +578,8 @@ class TestSetNode:
         }
         executor = FlowExecutor()
 
-        result_true = await executor.run(graph, params={"x": "yes"})
-        result_false = await executor.run(graph, params={"x": "no"})
+        result_true, _ = await executor.run(graph, params={"x": "yes"})
+        result_false, _ = await executor.run(graph, params={"x": "no"})
 
         # cond1's passthrough output is the resolved field value itself
         # (per TestConditionalNode.test_passthrough_output_is_the_evaluated_value_not_the_boolean)
@@ -602,7 +620,7 @@ class TestGetNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(_get_graph(), params={})
+            result, _ = await executor.run(_get_graph(), params={})
 
         assert result == "Por id del Get: hola desde get"
 
@@ -621,7 +639,7 @@ class TestGetNode:
 
         with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
             executor = FlowExecutor()
-            result = await executor.run(graph, params={})
+            result, _ = await executor.run(graph, params={})
 
         assert result == "Por nombre: hola desde get"
 
@@ -638,5 +656,5 @@ class TestGetNode:
             ],
         }
         executor = FlowExecutor()
-        result = await executor.run(graph, params={})
+        result, _ = await executor.run(graph, params={})
         assert result == "[missing: get1]"

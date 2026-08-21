@@ -33,7 +33,8 @@ def _build_flow_tool(flow: dict, executor) -> ToolDefinition:
 
     async def handler(_brain=None, **kwargs) -> str:
         call_params = {k: v for k, v in kwargs.items() if not k.startswith("_")}
-        return await executor.run(graph, call_params)
+        result, _outputs = await executor.run(graph, call_params)
+        return result
 
     return ToolDefinition(
         name=f"flow_{flow['id']}",
