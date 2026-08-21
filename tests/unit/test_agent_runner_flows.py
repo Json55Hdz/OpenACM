@@ -289,7 +289,14 @@ class TestFlowSkillInjection:
             await runner.run(agent=AGENT, message="qué clima hace hoy?")
 
         assert "Usa esto para disponibilidad." not in captured["config"].system_prompt
-        skill_manager.get_flow_skill.assert_not_awaited()
+        # The flow HAS a skill, so the cheap DB lookup runs regardless of
+        # relevance (existence is checked before the expensive relevance
+        # check, not the other way around) — it's is_relevant's False
+        # result that keeps the skill out of the system prompt.
+        skill_manager.get_flow_skill.assert_awaited_once_with(7)
+        base_registry.is_relevant.assert_called_once_with(
+            "qué clima hace hoy?", "check-availability Checks product availability"
+        )
 
     async def test_no_flows_means_is_relevant_is_never_called(self):
         db = MagicMock()

@@ -200,16 +200,17 @@ class AgentRunner:
             # here — no changes to Brain's shared agentic loop.
             if flow_tools and self.tool_registry:
                 for flow in active_flows:
+                    flow_skill = await self.skill_manager.get_flow_skill(flow["id"])
+                    if not flow_skill:
+                        continue
                     relevance_text = f"{flow['name']} {flow['description']}"
                     if not self.tool_registry.is_relevant(message, relevance_text):
                         continue
-                    flow_skill = await self.skill_manager.get_flow_skill(flow["id"])
-                    if flow_skill:
-                        system_prompt = (
-                            f"{system_prompt}\n\n{MSG_SKILL_CONTEXT_HEADER}"
-                            f"\n\n## {flow_skill['name']}\n\n{flow_skill['content']}"
-                            f"{MSG_SKILL_CONTEXT_FOOTER}"
-                        )
+                    system_prompt = (
+                        f"{system_prompt}\n\n{MSG_SKILL_CONTEXT_HEADER}"
+                        f"\n\n## {flow_skill['name']}\n\n{flow_skill['content']}"
+                        f"{MSG_SKILL_CONTEXT_FOOTER}"
+                    )
 
         config = AssistantConfig(
             name=agent["name"],

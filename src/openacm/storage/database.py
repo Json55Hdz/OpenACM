@@ -1491,7 +1491,7 @@ class Database:
         """Get all GLOBAL skills (never includes a worker- or agent-private skill)."""
         if not self._db:
             return []
-        query = "SELECT * FROM skills WHERE worker_id IS NULL AND agent_id IS NULL"
+        query = "SELECT * FROM skills WHERE worker_id IS NULL AND agent_id IS NULL AND flow_id IS NULL"
         if active_only:
             query += " AND is_active = 1"
         query += " ORDER BY category, name"

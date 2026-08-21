@@ -324,3 +324,23 @@ class TestFlowSkill:
 
         assert await db.get_flow_skill(flow_id) is None
         await db.close()
+
+    async def test_flow_skill_is_excluded_from_get_all_skills(self):
+        """A flow-scoped skill is private to its flow — it must never appear
+        in get_all_skills(), the "global skills" surface, the same way
+        worker- and agent-private skills are already excluded. Regression
+        test for a query that Migration 35 forgot to update when it added
+        flow_id to the skills table."""
+        db = await _make_db()
+        agent_id = await _make_agent(db)
+        flow_id = await db.create_flow(agent_id=agent_id, name="f1")
+        await db.create_skill(name="cuando-usar-f1", description="d", content="c", flow_id=flow_id)
+
+        all_skills = await db.get_all_skills()
+        assert "cuando-usar-f1" not in {s["name"] for s in all_skills}
+
+        # is_active defaults to 1, so the flow skill must also be absent
+        # even when filtering to active-only skills.
+        active_skills = await db.get_all_skills(active_only=True)
+        assert "cuando-usar-f1" not in {s["name"] for s in active_skills}
+        await db.close()

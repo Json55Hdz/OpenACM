@@ -28,6 +28,19 @@ from openacm.utils.text import truncate
 log = structlog.get_logger()
 
 
+def _parse_and_validate_graph(graph_json: str) -> dict:
+    """Parse graph_json and reject it if malformed or cyclic. Raises HTTPException."""
+    from openacm.core.flow_executor import detect_cycle
+
+    try:
+        graph = json.loads(graph_json)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid graph_json: not valid JSON")
+    cycle = detect_cycle(graph)
+    if cycle:
+        raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+    return graph
+
 
 def register_routes(app: FastAPI) -> None:
     # ─── API: Agents ──────────────────────────────────────────
@@ -195,15 +208,7 @@ def register_routes(app: FastAPI) -> None:
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
 
         if "graph_json" in kwargs:
-            from openacm.core.flow_executor import detect_cycle
-            import json as _json
-            try:
-                parsed_graph = _json.loads(kwargs["graph_json"])
-            except _json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid graph_json: not valid JSON")
-            cycle = detect_cycle(parsed_graph)
-            if cycle:
-                raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+            _parse_and_validate_graph(kwargs["graph_json"])
 
         ok = await _state.database.update_flow(flow_id, agent_id=agent_id, **kwargs)
         if not ok:
@@ -227,8 +232,7 @@ def register_routes(app: FastAPI) -> None:
         if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
 
-        from openacm.core.flow_executor import FlowExecutor, detect_cycle
-        import json as _json
+        from openacm.core.flow_executor import FlowExecutor
 
         data = await request.json()
         test_params = data.get("params", {})
@@ -237,11 +241,7 @@ def register_routes(app: FastAPI) -> None:
         # require clicking "Guardar flujo" first every time.
         graph_json_override = data.get("graph_json")
 
-        graph = _json.loads(graph_json_override) if graph_json_override else _json.loads(flow["graph_json"])
-
-        cycle = detect_cycle(graph)
-        if cycle:
-            raise HTTPException(status_code=400, detail=f"Flow has a cycle: {' -> '.join(cycle)}")
+        graph = _parse_and_validate_graph(graph_json_override if graph_json_override else flow["graph_json"])
 
         async def get_connection(connection_id: int):
             return await _state.database.get_connection(connection_id)

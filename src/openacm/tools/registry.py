@@ -168,7 +168,7 @@ class ToolRegistry:
         if self._semantic_model is None:
             words = {w for w in re.findall(r"[a-zA-Z0-9áéíóúñÁÉÍÓÚÑ]{3,}", text.lower())}
             msg_lower = message.lower()
-            return any(w in msg_lower for w in words)
+            return any(self._kw_match(msg_lower, w) for w in words)
 
         embeddings = self._semantic_model.encode(
             [message, text], convert_to_numpy=True, show_progress_bar=False

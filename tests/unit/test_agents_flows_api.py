@@ -144,6 +144,17 @@ class TestCycleValidation:
         assert resp.status_code == 400
         _mock_state.update_flow.assert_not_awaited()
 
+    async def test_testing_malformed_graph_json_override_400s_not_500s(self, app_client, _mock_state):
+        """Mirrors test_saving_malformed_graph_json_400s_not_500s for the
+        /test endpoint — a malformed graph_json override must not crash
+        with an unhandled 500, same as the save (PUT) path."""
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows/7/test",
+                json={"params": {}, "graph_json": "not valid json"},
+            )
+        assert resp.status_code == 400
+
 
 class TestTestFlowEndpoint:
     async def test_runs_the_flow_with_given_params(self, app_client, _mock_state):
