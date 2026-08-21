@@ -86,7 +86,18 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
             if name in params:
                 return str(params[name])
             if name in outputs:
-                return str(outputs[name])
+                value = outputs[name]
+                # A dict-shaped output that exposes a "result" key (today,
+                # only WooCommerce's structured output) resolves its bare
+                # {{node_id}} reference to that key specifically — this
+                # keeps every {{woo1}} reference saved before this task
+                # reading exactly as it always has (the human-formatted
+                # listing), instead of stringifying the whole dict. This is
+                # a narrow, explicit special case, not a general change to
+                # whole-value substitution for every dict-shaped output.
+                if isinstance(value, dict) and "result" in value:
+                    return str(value["result"])
+                return str(value)
             return f"[missing: {name}]"
         value = outputs.get(name)
         if isinstance(value, dict) and field in value:
@@ -229,9 +240,9 @@ class FlowExecutor:
     async def _run_woocommerce_node(
         self, node: dict, params: dict, outputs: dict,
         data_edges_by_target: dict[tuple[str, str], tuple[str, str]], nodes: dict[str, dict],
-    ) -> str:
+    ) -> dict:
         cfg = node["config"]
-        search_term = substitute_templates(cfg["search_term"], params, outputs)
+        search_term = resolve_field("search_term", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
 
         if not self.get_connection:
             raise RuntimeError("No connection lookup configured for this flow executor")
@@ -255,7 +266,7 @@ class FlowExecutor:
             products = response.json()
 
         if not products:
-            return f"No products found for query: '{search_term}'."
+            return {"result": f"No products found for query: '{search_term}'.", "count": 0}
 
         output = [f"Search results for '{search_term}':"]
         for p in products[:5]:
@@ -274,7 +285,7 @@ class FlowExecutor:
                 output.append(f"  Description: {shortened}")
             output.append(f"  Link: {p.get('permalink')}")
 
-        return "\n".join(output)
+        return {"result": "\n".join(output), "count": len(products[:5])}
 
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}

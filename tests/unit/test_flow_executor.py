@@ -127,6 +127,20 @@ class TestSubstituteTemplates:
         )
         assert result == "Ana bought Widget"
 
+    def test_bare_reference_to_a_dict_with_a_result_key_resolves_to_that_key(self):
+        result = substitute_templates(
+            "{{woo1}}", params={}, outputs={"woo1": {"result": "formatted text", "count": 3}}
+        )
+        assert result == "formatted text"
+
+    def test_bare_reference_to_a_dict_without_a_result_key_stringifies_the_whole_dict_unchanged(self):
+        # Proves the special case is narrow: a dict-shaped output with no
+        # "result" key still stringifies exactly as it always has.
+        result = substitute_templates(
+            "{{http1}}", params={}, outputs={"http1": {"status": "ok"}}
+        )
+        assert result == "{'status': 'ok'}"
+
 
 class TestResolveField:
     def test_no_data_edge_falls_back_to_literal_and_template(self):
@@ -622,6 +636,152 @@ class TestWooCommerceNode:
 
         _, call_kwargs = mock_client.get.call_args
         assert call_kwargs["auth"] == ("my_key", "my_secret")
+
+
+class TestWooCommerceStructuredOutput:
+    async def test_returns_a_dict_with_result_and_count(self):
+        products = [
+            {"name": "A", "price": "1", "stock_quantity": 1, "manage_stock": True, "short_description": "", "permalink": "https://x"},
+            {"name": "B", "price": "2", "stock_quantity": 1, "manage_stock": True, "short_description": "", "permalink": "https://x"},
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        graph = _woo_graph()
+        graph["nodes"][2]["config"]["template"] = "{{woo1.count}}"
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, outputs = await executor.run(graph, params={"producto": "zapatos"})
+
+        assert result == "2"
+        assert outputs["woo1"]["count"] == 2
+        assert isinstance(outputs["woo1"]["result"], str)
+
+    async def test_count_reflects_the_top_5_slice_not_the_full_result_set(self):
+        products = [
+            {"name": f"P{i}", "price": "1", "stock_quantity": 1, "manage_stock": True, "short_description": "", "permalink": "https://x"}
+            for i in range(8)
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        graph = _woo_graph()
+        graph["nodes"][2]["config"]["template"] = "{{woo1.count}}"
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(graph, params={"producto": "zapatos"})
+
+        assert result == "5"
+
+    async def test_bare_reference_still_resolves_to_the_formatted_result_text(self):
+        """{{woo1}} (no dot) must keep behaving exactly as it did before
+        this task — the human-formatted listing — even though
+        outputs['woo1'] is now a dict, via the new whole-value
+        dict-with-result-key special case in substitute_templates."""
+        products = [
+            {"name": "Zapatos rojos", "price": "49.99", "stock_quantity": 3, "manage_stock": True,
+             "short_description": "Comodos", "permalink": "https://tienda.example.com/zapatos-rojos"},
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        assert "Zapatos rojos" in result
+        assert "$49.99" in result
+
+    async def test_no_products_found_is_also_a_result_count_dict(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        graph = _woo_graph()
+        graph["nodes"][2]["config"]["template"] = "{{woo1.count}}"
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, outputs = await executor.run(graph, params={"producto": "inexistente"})
+
+        assert result == "0"
+        assert "No products found" in outputs["woo1"]["result"]
+
+    async def test_search_term_is_resolved_from_a_data_edge_when_one_targets_it(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http0", "type": "http", "config": {"url": "https://source.example.com", "method": "GET"}},
+                {"id": "woo1", "type": "woocommerce", "config": {"connection_id": 1, "search_term": "ignored-literal"}},
+                {"id": "end", "type": "end", "config": {"template": "{{woo1}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http0", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "woo1", "fromHandle": "default", "kind": "flow"},
+                {"from": "woo1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "woo1", "fromHandle": "default", "toHandle": "search_term", "kind": "data"},
+            ],
+        }
+        source_response = MagicMock()
+        source_response.headers = {"content-type": "text/plain"}
+        source_response.text = "zapatos"
+        source_response.json.side_effect = ValueError("not json")
+        source_response.raise_for_status = MagicMock()
+        mock_http_client = AsyncMock()
+        mock_http_client.request.return_value = source_response
+        mock_http_client.__aenter__.return_value = mock_http_client
+        mock_http_client.__aexit__.return_value = False
+
+        products_response = MagicMock()
+        products_response.json.return_value = []
+        products_response.raise_for_status = MagicMock()
+        mock_woo_client = AsyncMock()
+        mock_woo_client.get.return_value = products_response
+        mock_woo_client.__aenter__.return_value = mock_woo_client
+        mock_woo_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient") as mock_cls:
+            mock_cls.side_effect = [mock_http_client, mock_woo_client]
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(graph, params={})
+
+        assert "zapatos" in result
 
 
 def _set_graph(source_type="http", var_name="mi_variable"):
