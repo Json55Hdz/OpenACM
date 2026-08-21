@@ -652,7 +652,7 @@ class TestCreateOrUpdateAgentFlow:
             name="x", graph_json=_valid_graph(), agent_id=7, flow_id=5, _brain=_fake_brain(db),
         )
         db.update_flow.assert_awaited_once()
-        db.create_flow.assert_not_awaited() if hasattr(db, "create_flow") else None
+        db.create_flow.assert_not_awaited()
         assert "5" in result
 
     async def test_flow_id_belonging_to_other_agent_is_rejected(self):
