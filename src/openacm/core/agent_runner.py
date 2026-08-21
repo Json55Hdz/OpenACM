@@ -229,6 +229,7 @@ class AgentRunner:
             memory=self.memory,
             event_bus=self.event_bus,
             tool_registry=agent_tool_registry,
+            skill_manager=self.skill_manager,
         )
 
         try:

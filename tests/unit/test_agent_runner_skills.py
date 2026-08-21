@@ -56,3 +56,47 @@ class TestRunIncludesAgentSkillsPrompt:
             await runner.run(agent=AGENT, message="hi")
 
         assert captured["system_prompt"] == "Base agent prompt."
+
+
+class TestRunPassesSkillManagerToBrain:
+    """The agentic-loop Brain that AgentRunner.run() builds for the agent's
+    own tool calls must receive the SAME skill_manager AgentRunner was
+    constructed with — tools like create_or_update_agent_flow and cron_tool
+    reach the database via _brain.skill_manager.database, so a Brain built
+    without it silently has no database for the agent's own tool calls."""
+
+    async def test_brain_receives_the_runners_skill_manager(self):
+        skill_manager = MagicMock()
+        skill_manager.get_active_skills_prompt_for_agent = AsyncMock(return_value="")
+        runner = _make_runner(skill_manager=skill_manager)
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, **kwargs):
+                captured["kwargs"] = kwargs
+
+            async def process_message(self, **kwargs):
+                return "ok"
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=AGENT, message="hi")
+
+        assert captured["kwargs"]["skill_manager"] is skill_manager
+
+    async def test_brain_receives_none_when_runner_has_no_skill_manager(self):
+        runner = _make_runner(skill_manager=None)
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, **kwargs):
+                captured["kwargs"] = kwargs
+
+            async def process_message(self, **kwargs):
+                return "ok"
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=AGENT, message="hi")
+
+        assert captured["kwargs"]["skill_manager"] is None
