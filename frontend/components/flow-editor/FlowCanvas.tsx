@@ -80,6 +80,61 @@ function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
   };
 }
 
+// Mirrors flow_executor.py's _stringify_whole_value: a dict-shaped value
+// that exposes a "result" key (today, only WooCommerce's structured
+// output) stringifies to that key's value specifically, instead of
+// "[object Object]" — a narrow, explicit special case, not a general
+// change to whole-value stringification for every dict-shaped value.
+function stringifyWholeValue(value: unknown): string {
+  if (value && typeof value === 'object' && 'result' in (value as Record<string, unknown>)) {
+    return String((value as Record<string, unknown>).result);
+  }
+  return String(value);
+}
+
+// Classifies a given (nodeType, handleId, handleKind) as a "flow" pin
+// (FlowExecutor.run()'s flow-walk steps through it — see flow_executor.py's
+// edges_by_source) or a "data" pin (a template-substitutable value, wired
+// through data_edges_by_target and never walked). Needed because, before
+// this, only the TARGET side of a connection was ever checked (via
+// `targetHandle !== 'default'`) — nothing distinguished a flow-out pin
+// from a data-out pin on the SOURCE side, which let a data-output pin (e.g.
+// WooCommerce's `result`) get wired as if it were a flow-out pin.
+//
+// The handle-id shape, cross-checked directly against node-types.tsx for
+// every node type (not assumed):
+//   start:        source "default"                                  -> flow
+//   end:          target "default"                                  -> flow
+//   http:         target "default" -> flow; target "url"/"body" -> data;
+//                 source "default"                                  -> flow
+//   conditional:  target "default" -> flow; target "field"/"value" -> data;
+//                 source "true"/"false"                             -> flow
+//   woocommerce:  target "default" -> flow; target "search_term"  -> data;
+//                 source "default" -> flow; source "result"/"count" -> data
+//   set:          target "default" -> flow; target "value"        -> data;
+//                 source "default"                                  -> flow
+//   get:          ONE handle only — source, id="default" — but Get is a
+//                 pure node (no flow-in/flow-out concept at all, see
+//                 node-types.tsx's GetNode comment) and that "default" id
+//                 carries its data output ("salida: value"), not a
+//                 flow-walk step. This is the one place id="default" does
+//                 NOT mean "flow pin" — every other node's source
+//                 "default" genuinely is its flow-out pin.
+//
+// For every target handle, "default" is the flow-in pin and every other
+// named target handle is a data pin. For every source handle (except
+// Get's, per above), "default" and Conditional's "true"/"false" are flow
+// pins and every other named source handle is a data pin.
+function classifyPin(nodeType: string | undefined, handleId: string | null | undefined, handleKind: 'source' | 'target'): 'flow' | 'data' {
+  const id = handleId || 'default';
+  if (nodeType === 'get') return 'data';
+  if (handleKind === 'target') {
+    return id === 'default' ? 'flow' : 'data';
+  }
+  if (nodeType === 'conditional' && (id === 'true' || id === 'false')) return 'flow';
+  return id === 'default' ? 'flow' : 'data';
+}
+
 // Local re-implementation of flow_executor.py's substitute_templates rule
 // (bare {{name}} whole-value — params checked BEFORE outputs, matching
 // substitute_templates(template, params, outputs) in flow_executor.py:79-84,
@@ -92,7 +147,7 @@ function previewTemplate(template: string, params: Record<string, string>, outpu
   return template.replace(/\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}/g, (_match, name, field) => {
     if (field === undefined) {
       if (name in params) return String(params[name]);
-      if (name in outputs) return String(outputs[name]);
+      if (name in outputs) return stringifyWholeValue(outputs[name]);
       return `[missing: ${name}]`;
     }
     const value = outputs[name];
@@ -434,20 +489,51 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     variableNameCounterRef.current += 1;
     const name = `variable_${variableNameCounterRef.current}`;
     const newId = nextNodeId('set');
+    const fromNodeId = connectionState.fromNode!.id;
+    const fromHandleId = connectionState.fromHandle?.id || 'default';
+    // The drag might have started from a data-out pin (WooCommerce's
+    // `result`/`count`, or a Get node's only handle) rather than a flow-out
+    // pin — classify it so the promoted edge matches what was actually
+    // dragged, instead of always assuming a flow-out drag.
+    const pinKind = classifyPin(connectionState.fromNode!.type, fromHandleId, 'source');
 
     setNodes(nds => [...nds, { id: newId, type: 'set', position: flowPosition, data: { name } }]);
-    setEdges(eds => [...eds, {
-      id: `${connectionState.fromNode!.id}-${newId}-${connectionState.fromHandle?.id || 'default'}-flow`,
-      source: connectionState.fromNode!.id,
+    setEdges(eds => [...eds, pinKind === 'data' ? {
+      id: `${fromNodeId}-${newId}-${fromHandleId}-data`,
+      source: fromNodeId,
       target: newId,
-      sourceHandle: connectionState.fromHandle?.id || 'default',
-      // Always a flow edge — dragging a flow-out handle to empty canvas
-      // promotes a new Set node into the CHAIN (its flow-in "default"
-      // handle), never wires a data pin.
+      sourceHandle: fromHandleId,
+      // Dragging a data pin to empty canvas means "save this value" — wire
+      // it into the new Set node's data-input "value" handle, not its
+      // flow-in "default" handle.
+      targetHandle: 'value',
+      data: { kind: 'data' },
+    } : {
+      id: `${fromNodeId}-${newId}-${fromHandleId}-flow`,
+      source: fromNodeId,
+      target: newId,
+      sourceHandle: fromHandleId,
+      // A flow edge — dragging a flow-out handle to empty canvas promotes a
+      // new Set node into the CHAIN (its flow-in "default" handle).
       targetHandle: 'default',
       data: { kind: 'flow' },
     }]);
   }, [screenToFlowPosition]);
+
+  // Rejects a connection wiring a data-output pin (e.g. WooCommerce's
+  // `result`) directly into a flow-in handle (`targetHandle === 'default'`)
+  // — that edge would look like a normal connection on the canvas but
+  // FlowExecutor.run()'s flow-walk never follows it (it only walks a
+  // node's 'default' source-side flow-out edge), so the flow would
+  // silently end early with "flow ended without reaching an End node".
+  const isValidConnection = useCallback((connection: Edge | Connection) => {
+    const targetHandle = connection.targetHandle || 'default';
+    if (targetHandle !== 'default') return true;
+    const sourceNode = nodes.find(n => n.id === connection.source);
+    if (!sourceNode) return true;
+    const sourcePinKind = classifyPin(sourceNode.type, connection.sourceHandle, 'source');
+    return sourcePinKind !== 'data';
+  }, [nodes]);
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
     event.preventDefault();
@@ -578,6 +664,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onConnectEnd={onConnectEnd}
+          isValidConnection={isValidConnection}
           onNodeClick={(_e, node) => setSelectedId(node.id)}
           onPaneClick={() => { setSelectedId(null); setContextMenu(null); setVariableDropMenu(null); }}
           onPaneContextMenu={onPaneContextMenu}

@@ -67,6 +67,30 @@ def detect_cycle(graph: dict) -> list[str] | None:
     return None
 
 
+def _stringify_whole_value(value: Any) -> str:
+    """Stringify a whole (non-narrowed) value for template/text substitution.
+
+    A dict-shaped value that exposes a "result" key (today, only
+    WooCommerce's structured output) stringifies to that key's value
+    specifically — this keeps every {{woo1}} reference, and every data
+    edge wired from WooCommerce's flow-out/default pin, reading as the
+    human-formatted listing instead of the dict's Python repr (e.g.
+    "{'result': '...', 'count': 2}"). This is a narrow, explicit special
+    case, not a general change to whole-value stringification for every
+    dict-shaped value.
+
+    Shared by substitute_templates()'s bare {{name}} branch and
+    resolve_field()'s data-edge whole-value fallback so a {{woo1}}
+    template reference and a data edge wired from the same node's default
+    pin agree on the same resolved text — see the FINAL whole-branch
+    review finding this fixes: resolve_field() used to call str(value)
+    directly here, diverging from substitute_templates.
+    """
+    if isinstance(value, dict) and "result" in value:
+        return str(value["result"])
+    return str(value)
+
+
 def substitute_templates(template: str, params: dict[str, Any], outputs: dict[str, Any]) -> str:
     """Replace {{name}} / {{node_id.field}} references in template.
 
@@ -86,18 +110,7 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
             if name in params:
                 return str(params[name])
             if name in outputs:
-                value = outputs[name]
-                # A dict-shaped output that exposes a "result" key (today,
-                # only WooCommerce's structured output) resolves its bare
-                # {{node_id}} reference to that key specifically — this
-                # keeps every {{woo1}} reference saved before this task
-                # reading exactly as it always has (the human-formatted
-                # listing), instead of stringifying the whole dict. This is
-                # a narrow, explicit special case, not a general change to
-                # whole-value substitution for every dict-shaped output.
-                if isinstance(value, dict) and "result" in value:
-                    return str(value["result"])
-                return str(value)
+                return _stringify_whole_value(outputs[name])
             return f"[missing: {name}]"
         value = outputs.get(name)
         if isinstance(value, dict) and field in value:
@@ -164,7 +177,7 @@ def resolve_field(
     if not found:
         marker = source_id if source_handle == "default" else f"{source_id}.{source_handle}"
         return f"[missing: {marker}]"
-    return str(value)
+    return _stringify_whole_value(value)
 
 
 class FlowExecutor:
