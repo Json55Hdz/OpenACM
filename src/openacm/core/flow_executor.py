@@ -330,12 +330,24 @@ class FlowExecutor:
                 return substitute_templates(template, params, outputs), outputs
 
             if node["type"] == "set":
+                # A data edge targeting Set's "value" handle wins if one
+                # exists — it can alias ANY earlier node's output, not just
+                # the immediate flow-predecessor. If none exists (every Set
+                # node saved before this task shipped), fall back to the
+                # old previous_id behavior exactly as it worked before:
                 # previous_id is the node actually visited just before this
                 # one IN THIS RUN — correct even when this node has multiple
                 # incoming edges in the graph (a merge point after a
                 # Conditional's two branches), since only one of those
                 # edges is ever the real predecessor on any given run.
-                if previous_id and previous_id in outputs:
+                value_edge = data_edges_by_target.get((node["id"], "value"))
+                if value_edge is not None:
+                    source_id, source_handle = value_edge
+                    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
+                    if found:
+                        outputs[node["id"]] = value
+                        outputs[node["config"]["name"]] = value
+                elif previous_id and previous_id in outputs:
                     value = outputs[previous_id]
                     outputs[node["id"]] = value
                     outputs[node["config"]["name"]] = value

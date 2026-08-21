@@ -928,6 +928,72 @@ class TestSetNode:
         assert result_false == "no"
 
 
+class TestSetNodeDataEdge:
+    async def test_set_value_handle_wired_to_a_far_back_node_aliases_it_correctly(self):
+        """Old previous_id-only logic could only ever alias the node
+        immediately before Set in the chain. A data edge on Set's "value"
+        handle can reach back further — here Set sits after http_b (its
+        immediate flow-predecessor) but is wired to alias http_a's output,
+        several steps earlier."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http_a", "type": "http", "config": {"url": "https://a.example.com", "method": "GET"}},
+                {"id": "http_b", "type": "http", "config": {"url": "https://b.example.com", "method": "GET"}},
+                {"id": "set1", "type": "set", "config": {"name": "picked"}},
+                {"id": "end", "type": "end", "config": {"template": "{{picked}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http_a", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_a", "to": "http_b", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_b", "to": "set1", "fromHandle": "default", "kind": "flow"},
+                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_a", "to": "set1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        response_a = MagicMock()
+        response_a.headers = {"content-type": "text/plain"}
+        response_a.text = "from A"
+        response_a.json.side_effect = ValueError("not json")
+        response_a.raise_for_status = MagicMock()
+        response_b = MagicMock()
+        response_b.headers = {"content-type": "text/plain"}
+        response_b.text = "from B"
+        response_b.json.side_effect = ValueError("not json")
+        response_b.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.request.side_effect = [response_a, response_b]
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "from A"
+
+    async def test_no_data_edge_on_value_handle_falls_back_to_previous_id_unchanged(self):
+        # Byte-identical to pre-this-task behavior for every flow saved
+        # before this shipped: no data edges at all, Set aliases its
+        # immediate flow-predecessor via previous_id exactly as before.
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = "hola mundo"
+        mock_response.json.side_effect = ValueError("not json")
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(_set_graph(), params={})
+
+        assert result == "Valor: hola mundo"
+
+
 def _get_graph(get_name="mi_variable"):
     """Start -> HTTP -> Set(name=get_name) -> Get(name=get_name) -> End(references the Get node's own id)."""
     return {
