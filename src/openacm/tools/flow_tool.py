@@ -130,8 +130,10 @@ def _get_db(brain):
 
 def _auto_layout(nodes: list[dict], edges: list[dict]) -> None:
     """Fills in `position` for any node missing one, via BFS depth over
-    flow-kind edges from the start node. Mutates `nodes` in place. Never
-    touches a node that already has a position."""
+    flow-kind edges from the start node — depth drives the vertical
+    position (each step in the flow moves down), nodes sharing a depth
+    (a merge or branch point) spread out horizontally. Mutates `nodes`
+    in place. Never touches a node that already has a position."""
     start_id = next((n["id"] for n in nodes if n.get("type") == "start"), None)
 
     flow_adjacency: dict[str, list[str]] = {}
@@ -150,14 +152,14 @@ def _auto_layout(nodes: list[dict], edges: list[dict]) -> None:
                     depth[neighbor] = depth[current] + 1
                     queue.append(neighbor)
 
-    column_counts: dict[int, int] = {}
+    row_counts: dict[int, int] = {}
     for node in nodes:
         if node.get("position"):
             continue
         node_depth = depth.get(node["id"], 0)
-        index_in_column = column_counts.get(node_depth, 0)
-        column_counts[node_depth] = index_in_column + 1
-        node["position"] = {"x": node_depth * 260, "y": index_in_column * 140}
+        index_in_row = row_counts.get(node_depth, 0)
+        row_counts[node_depth] = index_in_row + 1
+        node["position"] = {"x": index_in_row * 260, "y": node_depth * 140}
 
 
 @tool(

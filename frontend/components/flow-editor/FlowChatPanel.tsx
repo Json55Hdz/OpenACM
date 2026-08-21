@@ -2,10 +2,32 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Loader2, Send } from 'lucide-react';
 import { useAgentMutations } from '@/hooks/use-agents';
 import { useConversationHistory } from '@/hooks/use-api';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
+
+// Lightweight markdown rendering for this panel's short bot replies — reuses
+// the same react-markdown/remark-gfm libraries the main /chat page uses, but
+// with a smaller set of element overrides (no media-link parsing, no
+// attachments) since replies here are brief build confirmations, not rich
+// chat messages.
+const MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>,
+  strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold" style={{ color: 'var(--acm-fg)' }}>{children}</strong>,
+  em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc list-inside space-y-0.5 my-1.5 pl-1">{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal list-inside space-y-0.5 my-1.5 pl-1">{children}</ol>,
+  li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded-[4px] px-1 py-0.5 text-[11px] mono" style={{ background: 'var(--acm-elev)', color: 'var(--acm-accent)' }}>{children}</code>
+  ),
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'var(--acm-accent)' }}>{children}</a>
+  ),
+};
 
 interface HistoryItem {
   role: string;
@@ -53,10 +75,18 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
     if (!msg) return;
     setInput('');
     setMessages(m => [...m, { role: 'user', text: msg }]);
+    // Includes the flow's CURRENT graph_json (re-read from the `flow` prop at
+    // send time, not cached from when the panel opened) so the model always
+    // sees the real current structure — not just its own memory of what it
+    // built in earlier turns of this conversation, which goes stale the
+    // moment the flow was built or edited any other way (by hand on the
+    // canvas, by a different chat session, etc.).
     const extraSystemContext =
       `Estás editando el flujo "${flow.name}" (id=${flow.id}) del agente ${agentId}. Si el usuario te pide ` +
       `crear o modificar este flujo, llama a create_or_update_agent_flow con flow_id=${flow.id} y ` +
-      `agent_id=${agentId} para EDITARLO directamente — no crees un flujo nuevo salvo que el usuario lo pida explícitamente.`;
+      `agent_id=${agentId} para EDITARLO directamente — no crees un flujo nuevo salvo que el usuario lo pida explícitamente.\n\n` +
+      `Grafo actual de este flujo (úsalo como base real — no asumas que es lo que tú recuerdas haber construido antes):\n` +
+      `${flow.graph_json || '{"nodes":[],"edges":[]}'}`;
     try {
       const res = await test.mutateAsync({
         id: agentId, message: msg, channel_id: channelId, extra_system_context: extraSystemContext,
@@ -92,7 +122,7 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
                   : { background: 'var(--acm-base)', color: 'var(--acm-fg-3)' }
               }
             >
-              {m.text}
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{m.text}</ReactMarkdown>
             </div>
           ))}
           {test.isPending && (

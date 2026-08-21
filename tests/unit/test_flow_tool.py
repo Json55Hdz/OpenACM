@@ -49,7 +49,7 @@ class TestAutoLayout:
         edges = [{"from": "start", "to": "end", "fromHandle": "default", "toHandle": "default", "kind": "flow"}]
         _auto_layout(nodes, edges)
         assert "position" in nodes[0] and "position" in nodes[1]
-        assert nodes[0]["position"]["x"] < nodes[1]["position"]["x"]  # start before end
+        assert nodes[0]["position"]["y"] < nodes[1]["position"]["y"]  # start above end (vertical layout)
 
     def test_never_overwrites_existing_position(self):
         nodes = [{"id": "start", "type": "start", "position": {"x": 999, "y": 999}}]

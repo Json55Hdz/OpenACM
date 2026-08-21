@@ -674,6 +674,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           onPaneContextMenu={onPaneContextMenu}
           nodeTypes={NODE_TYPES}
           fitView
+          colorMode="dark"
         >
           <Background />
           <Controls />
