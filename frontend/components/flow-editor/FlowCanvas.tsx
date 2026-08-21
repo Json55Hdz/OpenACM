@@ -784,8 +784,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 value={String(selectedNode.data.search_term || '')}
                 onInsert={v => updateSelectedNodeData({ search_term: v })}
               />
-              <input ref={searchTermRef} className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
-              <TemplatePreview value={String(selectedNode.data.search_term || '')} params={testParams} outputs={testOutputs} />
+              <ConnectableField nodeId={selectedNode.id} fieldName="search_term" edges={edges} setEdges={setEdges}>
+                <input ref={searchTermRef} className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
+                <TemplatePreview value={String(selectedNode.data.search_term || '')} params={testParams} outputs={testOutputs} />
+              </ConnectableField>
             </>
           )}
           {selectedNode.type === 'end' && (

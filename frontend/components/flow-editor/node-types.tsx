@@ -125,6 +125,11 @@ export function WooCommerceNode({ id, data }: NodeProps) {
       <div style={pinLabelStyle}>salida: result</div>
       <div style={pinLabelStyle}>salida: count</div>
       <Handle type="target" position={Position.Top} id="default" />
+      {/* Data-input pin for WooCommerce's wire-or-literal "search_term"
+          field — independent of the flow-in "default" handle above. The
+          Connection selector stays dropdown-only, no pin, per the spec's
+          explicit boundary. */}
+      <Handle type="target" position={Position.Left} id="search_term" style={{ top: '55%' }} />
       <Handle type="source" position={Position.Bottom} id="default" />
       {/* Named data-output pins (Task 4's backend {"result": ..., "count":
           ...} shape) — independent of the flow-out "default" handle above,
