@@ -24,14 +24,14 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
   const { test } = useAgentMutations();
   const qc = useQueryClient();
   const channelId = `agent_${agentId}_flow_${flow.id}`;
-  const { data: history } = useConversationHistory(channelId, 'dashboard_test');
+  const { data: history, isFetching: historyFetching } = useConversationHistory(channelId, 'dashboard_test');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (hydrated || !history) return;
+    if (hydrated || historyFetching || !history) return;
     setMessages(
       (history as HistoryItem[])
         // Mirrors memory.py's _load_from_db filter: an assistant turn that
@@ -42,7 +42,7 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
         .map(h => ({ role: h.role as 'user' | 'assistant', text: h.content as string }))
     );
     setHydrated(true);
-  }, [history, hydrated]);
+  }, [history, historyFetching, hydrated]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: 'end' });
