@@ -30,6 +30,12 @@ def detect_cycle(graph: dict) -> list[str] | None:
     """
     adjacency: dict[str, list[str]] = {}
     for edge in graph.get("edges", []):
+        # Data edges carry no execution-order meaning and can legitimately
+        # point "backward" relative to flow order (e.g. Set aliasing an
+        # earlier node's output) — only flow edges can ever form a real
+        # execution cycle.
+        if edge.get("kind", "flow") != "flow":
+            continue
         adjacency.setdefault(edge["from"], []).append(edge["to"])
 
     node_ids = [n["id"] for n in graph.get("nodes", [])]
@@ -88,6 +94,66 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
         return f"[missing: {name}.{field}]"
 
     return _TEMPLATE_RE.sub(_replace, template)
+
+
+def _resolve_pin_value(
+    source_id: str, source_handle: str, nodes: dict[str, dict], outputs: dict[str, Any],
+) -> tuple[bool, Any]:
+    """Resolve a data edge's source pin to its RAW value (not stringified).
+    Returns (True, value) if the source has produced a value, else
+    (False, None). Shared by resolve_field() (which stringifies the result
+    for template/text fields) and the `set`-node branch in run() (which
+    needs the actual typed value — e.g. a WooCommerce result dict — not a
+    stringified one), so the Get-node special case below lives in exactly
+    one place.
+
+    Get nodes have no flow handles (see the spec's "pure node" section) so
+    run()'s flow-walk never visits one and outputs[get_node_id] is never
+    populated the normal way. Evaluate the Get's own name-lookup on demand
+    instead of expecting it to already be in outputs.
+    """
+    source_node = nodes.get(source_id)
+    if source_node is not None and source_node["type"] == "get":
+        name = source_node["config"]["name"]
+        if name not in outputs:
+            return False, None
+        return True, outputs[name]
+
+    if source_id not in outputs:
+        return False, None
+    value = outputs[source_id]
+    if source_handle != "default" and isinstance(value, dict):
+        if source_handle not in value:
+            return False, None
+        return True, value[source_handle]
+    return True, value
+
+
+def resolve_field(
+    field_name: str,
+    node_id: str,
+    cfg: dict,
+    data_edges_by_target: dict[tuple[str, str], tuple[str, str]],
+    nodes: dict[str, dict],
+    params: dict,
+    outputs: dict,
+) -> str:
+    """Resolve one node config field's value, preferring a wired data edge
+    over the field's literal value — the "wire wins" rule this spec
+    introduces. Falls back to substitute_templates(cfg[field_name], ...)
+    exactly as before when no data edge targets this field, so every flow
+    saved before this shipped resolves this field identically to before.
+    """
+    edge_source = data_edges_by_target.get((node_id, field_name))
+    if edge_source is None:
+        return substitute_templates(cfg[field_name], params, outputs)
+
+    source_id, source_handle = edge_source
+    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
+    if not found:
+        marker = source_id if source_handle == "default" else f"{source_id}.{source_handle}"
+        return f"[missing: {marker}]"
+    return str(value)
 
 
 class FlowExecutor:
@@ -191,8 +257,18 @@ class FlowExecutor:
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         nodes = {n["id"]: n for n in graph.get("nodes", [])}
         edges_by_source: dict[str, dict[str, str]] = {}
+        # Keyed by (target_node_id, field_name) -> (source_node_id,
+        # source_handle) — built only from data edges, consulted by
+        # resolve_field() and the set-node branch below. A data edge never
+        # goes into edges_by_source: the flow-walk must never follow one.
+        data_edges_by_target: dict[tuple[str, str], tuple[str, str]] = {}
         for edge in graph.get("edges", []):
-            edges_by_source.setdefault(edge["from"], {})[edge.get("fromHandle", "default")] = edge["to"]
+            if edge.get("kind", "flow") == "data":
+                data_edges_by_target[(edge["to"], edge.get("toHandle", "value"))] = (
+                    edge["from"], edge.get("fromHandle", "default")
+                )
+            else:
+                edges_by_source.setdefault(edge["from"], {})[edge.get("fromHandle", "default")] = edge["to"]
 
         start_node = next((n for n in nodes.values() if n["type"] == "start"), None)
         if not start_node:

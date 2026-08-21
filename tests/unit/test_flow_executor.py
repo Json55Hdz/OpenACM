@@ -68,6 +68,21 @@ class TestDetectCycle:
         assert cycle is not None
         assert set(cycle) == {"x", "y"}
 
+    def test_a_backward_data_edge_is_never_flagged_as_a_cycle(self):
+        from openacm.core.flow_executor import detect_cycle
+        graph = {
+            "nodes": [{"id": "start"}, {"id": "a"}, {"id": "b"}],
+            "edges": [
+                {"from": "start", "to": "a", "fromHandle": "default", "kind": "flow"},
+                {"from": "a", "to": "b", "fromHandle": "default", "kind": "flow"},
+                # A data edge pointing "backward" from b to a is allowed —
+                # data edges carry no execution order and must never be
+                # mistaken for a real cycle.
+                {"from": "b", "to": "a", "fromHandle": "default", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        assert detect_cycle(graph) is None
+
 
 class TestSubstituteTemplates:
     def test_bare_param_name_substitutes_whole_value(self):
@@ -111,6 +126,61 @@ class TestSubstituteTemplates:
             "{{name}} bought {{http1.item}}", params={"name": "Ana"}, outputs={"http1": {"item": "Widget"}}
         )
         assert result == "Ana bought Widget"
+
+
+class TestResolveField:
+    def test_no_data_edge_falls_back_to_literal_and_template(self):
+        from openacm.core.flow_executor import resolve_field
+        cfg = {"url": "https://example.com/{{producto}}"}
+        result = resolve_field(
+            "url", "http1", cfg, data_edges_by_target={}, nodes={},
+            params={"producto": "zapatos"}, outputs={},
+        )
+        assert result == "https://example.com/zapatos"
+
+    def test_data_edge_from_default_handle_resolves_whole_value(self):
+        from openacm.core.flow_executor import resolve_field
+        cfg = {"url": "https://ignored.example.com"}
+        data_edges_by_target = {("http2", "url"): ("http1", "default")}
+        nodes = {"http1": {"id": "http1", "type": "http", "config": {}}}
+        result = resolve_field(
+            "url", "http2", cfg, data_edges_by_target, nodes,
+            params={}, outputs={"http1": "https://real-source.example.com"},
+        )
+        assert result == "https://real-source.example.com"
+
+    def test_data_edge_with_named_handle_narrows_into_a_dict_value(self):
+        from openacm.core.flow_executor import resolve_field
+        cfg = {"search_term": "ignored"}
+        data_edges_by_target = {("woo1", "search_term"): ("http1", "count")}
+        nodes = {"http1": {"id": "http1", "type": "http", "config": {}}}
+        result = resolve_field(
+            "search_term", "woo1", cfg, data_edges_by_target, nodes,
+            params={}, outputs={"http1": {"count": 7, "result": "..."}},
+        )
+        assert result == "7"
+
+    def test_data_edge_from_a_get_source_resolves_via_the_variable_name_not_the_node_id(self):
+        from openacm.core.flow_executor import resolve_field
+        cfg = {"value": "ignored"}
+        data_edges_by_target = {("cond1", "value"): ("get1", "default")}
+        nodes = {"get1": {"id": "get1", "type": "get", "config": {"name": "mi_variable"}}}
+        result = resolve_field(
+            "value", "cond1", cfg, data_edges_by_target, nodes,
+            params={}, outputs={"mi_variable": "hola"},  # get1's own id is NOT a key in outputs
+        )
+        assert result == "hola"
+
+    def test_data_edge_from_a_source_that_has_not_executed_yet_is_a_missing_marker(self):
+        from openacm.core.flow_executor import resolve_field
+        cfg = {"url": "ignored"}
+        data_edges_by_target = {("http2", "url"): ("http1", "default")}
+        nodes = {"http1": {"id": "http1", "type": "http", "config": {}}}
+        result = resolve_field(
+            "url", "http2", cfg, data_edges_by_target, nodes,
+            params={}, outputs={},  # http1 never ran (e.g. it's on the untaken branch)
+        )
+        assert result == "[missing: http1]"
 
 
 class TestFlowExecutorStartToEnd:
