@@ -1778,6 +1778,9 @@ function FlowsTab({ agentId }: { agentId: number }) {
   const update = useUpdateFlow(agentId);
   const del = useDeleteFlow(agentId);
   const [editingFlowId, setEditingFlowId] = useState<number | null>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importError, setImportError] = useState<string | null>(null);
 
   if (isLoading || !flows) return <Loader2 size={16} className="animate-spin" />;
 
@@ -1785,6 +1788,36 @@ function FlowsTab({ agentId }: { agentId: number }) {
     create.mutate({ name: 'Nuevo flujo', description: '' }, {
       onSuccess: (created: any) => setEditingFlowId(created.id),
     });
+  };
+
+  const handleImport = () => {
+    setImportError(null);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(importText);
+    } catch {
+      setImportError('Eso no es JSON válido.');
+      return;
+    }
+    if (parsed.kind !== 'openacm-flow' || !parsed.graph_json) {
+      setImportError('Esto no parece un flujo de OpenACM exportado.');
+      return;
+    }
+    create.mutate(
+      {
+        name: parsed.name || 'Flujo importado',
+        description: parsed.description || '',
+        graph_json: JSON.stringify(parsed.graph_json),
+      },
+      {
+        onSuccess: (created: any) => {
+          setShowImport(false);
+          setImportText('');
+          setEditingFlowId(created.id);
+        },
+        onError: (err: Error) => setImportError(err.message || 'Error al importar el flujo.'),
+      }
+    );
   };
 
   if (editingFlowId !== null) {
@@ -1811,9 +1844,30 @@ function FlowsTab({ agentId }: { agentId: number }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <button onClick={handleCreate} disabled={create.isPending} className="btn-secondary self-end text-[11px] px-2 py-1">
-        + Nuevo flujo
-      </button>
+      <div className="flex gap-2 self-end">
+        <button onClick={() => setShowImport(v => !v)} className="btn-secondary text-[11px] px-2 py-1">
+          Importar flujo
+        </button>
+        <button onClick={handleCreate} disabled={create.isPending} className="btn-secondary text-[11px] px-2 py-1">
+          + Nuevo flujo
+        </button>
+      </div>
+      {showImport && (
+        <div className="flex flex-col gap-1 p-2 rounded" style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)' }}>
+          <textarea
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            placeholder="Pega el JSON exportado aquí"
+            rows={6}
+            className="text-[11px] p-2 rounded"
+            style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', color: 'var(--acm-fg-2)', fontFamily: 'monospace' }}
+          />
+          {importError && <div className="text-[11px]" style={{ color: 'var(--acm-danger, #e55)' }}>{importError}</div>}
+          <button onClick={handleImport} disabled={create.isPending || !importText.trim()} className="btn-primary text-[11px] px-2 py-1 self-start">
+            Importar
+          </button>
+        </div>
+      )}
       {flows.length === 0 ? (
         <div className="text-[12px]" style={{ color: 'var(--acm-fg-4)' }}>Este agente no tiene flujos todavía.</div>
       ) : (

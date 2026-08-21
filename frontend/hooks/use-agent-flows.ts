@@ -41,7 +41,7 @@ export function useCreateFlow(agentId: number) {
   const qc = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { name: string; description?: string }) =>
+    mutationFn: (data: { name: string; description?: string; graph_json?: string }) =>
       fetchAPI(`/api/agents/${agentId}/flows`, { method: 'POST', body: JSON.stringify(data) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-flows', agentId] }),
   });
