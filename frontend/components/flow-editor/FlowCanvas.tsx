@@ -14,6 +14,7 @@ import { useAPI } from '@/hooks/use-api';
 import { Trash2 } from 'lucide-react';
 import { InspectorSection } from './InspectorSection';
 import { FlowChatPanel } from './FlowChatPanel';
+import { FlowTestPanel } from './FlowTestPanel';
 
 interface StartParam {
   name: string;
@@ -310,6 +311,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const generateFlowSkill = useGenerateFlowSkill(agentId, flow.id);
   const [showSkillPanel, setShowSkillPanel] = useState(false);
   const [showChatPanel, setShowChatPanel] = useState(false);
+  const [showTestPanel, setShowTestPanel] = useState(false);
   const [skillName, setSkillName] = useState(flowSkill?.name || flow.name);
   const [skillContent, setSkillContent] = useState(flowSkill?.content || '');
   const [skillError, setSkillError] = useState<string | null>(null);
@@ -317,6 +319,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const [testParams, setTestParams] = useState<Record<string, string>>({});
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testOutputs, setTestOutputs] = useState<Record<string, unknown> | null>(null);
+  const [testError, setTestError] = useState(false);
   const [testing, setTesting] = useState(false);
   const { fetchAPI } = useAPI();
 
@@ -326,6 +329,8 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const runTest = async () => {
     setTesting(true);
     setTestResult(null);
+    setTestOutputs(null);
+    setTestError(false);
     try {
       // Test the graph as it currently stands in the canvas, not whatever
       // was last saved — saving before every test run was real friction.
@@ -333,11 +338,14 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       const res = (await fetchAPI(`/api/agents/${agentId}/flows/${flow.id}/test`, {
         method: 'POST',
         body: JSON.stringify({ params: testParams, graph_json: currentGraph }),
-      })) as { result: string; outputs: Record<string, unknown> };
+      })) as { result: string; outputs: Record<string, unknown>; error: boolean };
       setTestResult(res.result);
       setTestOutputs(res.outputs);
-    } catch {
-      setTestResult('Error al ejecutar la prueba.');
+      setTestError(res.error);
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : 'Error al ejecutar la prueba.';
+      setTestResult(detail);
+      setTestError(true);
     } finally {
       setTesting(false);
     }
@@ -611,6 +619,9 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
         <button onClick={() => setShowChatPanel(v => !v)} className="btn-secondary text-[11px] px-2 py-1 mt-1">
           💬 Chat con IA
         </button>
+        <button onClick={() => setShowTestPanel(v => !v)} className="btn-secondary text-[11px] px-2 py-1 mt-1">
+          ▶ Probar flujo
+        </button>
         <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
           <div className="label text-[var(--acm-fg-4)] mb-1">Variables</div>
           {variableNames.length === 0 ? (
@@ -630,28 +641,20 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
           )}
           <button onClick={addNewVariable} className="btn-secondary w-full text-[11px] px-2 py-1">+ Nueva variable</button>
         </div>
-        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--acm-border)' }}>
-          <div className="text-[11px] mb-1" style={{ color: 'var(--acm-fg-4)' }}>Probar flujo</div>
-          {startParams.map(p => (
-            <input
-              key={p.name}
-              className="acm-input w-full mb-1 text-[11px]"
-              placeholder={p.name}
-              value={testParams[p.name] || ''}
-              onChange={e => setTestParams(prev => ({ ...prev, [p.name]: e.target.value }))}
-            />
-          ))}
-          <button onClick={runTest} disabled={testing} className="btn-secondary text-[11px] px-2 py-1 w-full">
-            {testing ? 'Ejecutando...' : 'Probar flujo'}
-          </button>
-          {testResult !== null && (
-            <div className="mt-1 p-1 text-[10px] whitespace-pre-wrap" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-border)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>
-              {testResult || '(el flujo no devolvió texto — revisa la plantilla del nodo Final)'}
-            </div>
-          )}
-        </div>
       </div>
       {showChatPanel && <FlowChatPanel agentId={agentId} flow={flow} />}
+      {showTestPanel && (
+        <FlowTestPanel
+          startParams={startParams}
+          testParams={testParams}
+          onParamChange={(name, value) => setTestParams(prev => ({ ...prev, [name]: value }))}
+          onRun={runTest}
+          testing={testing}
+          result={testResult}
+          outputs={testOutputs}
+          error={testError}
+        />
+      )}
       <div
         ref={canvasWrapperRef}
         className="flex-1 relative"

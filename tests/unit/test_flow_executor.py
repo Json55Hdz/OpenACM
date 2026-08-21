@@ -3,7 +3,7 @@ minimal Start-to-End graph walk. Node-type-specific handlers (HTTP,
 Conditional, WooCommerce) are tested in their own dedicated test files."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from openacm.core.flow_executor import FlowExecutor, substitute_templates
+from openacm.core.flow_executor import FlowExecutor, is_error_result, substitute_templates
 
 
 class TestDetectCycle:
@@ -1108,6 +1108,24 @@ class TestGetNode:
         executor = FlowExecutor()
         result, _ = await executor.run(graph, params={})
         assert result == "[missing: get1]"
+
+
+class TestIsErrorResult:
+    def test_end_node_output_is_not_an_error(self):
+        assert is_error_result("done") is False
+        assert is_error_result("🌤️ Clima en Madrid: 18°C") is False
+
+    def test_missing_start_node_is_an_error(self):
+        assert is_error_result("Error: flow has no Start node") is True
+
+    def test_missing_required_param_is_an_error(self):
+        assert is_error_result("Error: missing required parameter 'url'") is True
+
+    def test_node_handler_exception_is_an_error(self):
+        assert is_error_result("Error in node 'weather' (http): 403 Forbidden") is True
+
+    def test_unknown_node_type_is_an_error(self):
+        assert is_error_result("Error: unknown node type 'bogus'") is True
 
 
 class TestValidateGraph:

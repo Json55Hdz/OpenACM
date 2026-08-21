@@ -257,3 +257,27 @@ class TestTestFlowEndpoint:
             resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
         assert resp.status_code == 200
         assert "outputs" in resp.json()
+
+    async def test_successful_run_reports_error_false(self, app_client, _mock_state):
+        async with app_client as ac:
+            resp = await ac.post("/api/agents/42/flows/7/test", json={"params": {}})
+        assert resp.status_code == 200
+        assert resp.json()["error"] is False
+
+    async def test_failed_run_reports_error_true(self, app_client, _mock_state):
+        """A required start param left unset makes run() take its
+        "Error: missing required parameter" early-return — the response's
+        `error` flag must reflect that instead of always reading False."""
+        override_graph = (
+            '{"nodes":[{"id":"start","type":"start","config":{"parameters":'
+            '[{"name":"url","required":true}]}},'
+            '{"id":"end","type":"end","config":{"template":"done"}}],'
+            '"edges":[{"from":"start","to":"end","fromHandle":"default"}]}'
+        )
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/agents/42/flows/7/test",
+                json={"params": {}, "graph_json": override_graph},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["error"] is True

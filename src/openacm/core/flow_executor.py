@@ -16,6 +16,22 @@ import httpx
 
 _TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}")
 
+# Every early-return string inside FlowExecutor.run() that signals failure
+# (missing Start node, missing param, cycle guard, unknown node/type, a node
+# handler's exception) starts with one of these two prefixes. Centralized
+# here so callers (the /test endpoint) can tell a real failure apart from a
+# successful End-node result without re-deriving or drifting from the exact
+# strings run() produces.
+_ERROR_PREFIXES = ("Error: ", "Error in node ")
+
+
+def is_error_result(result: str) -> bool:
+    """True if `result` is one of run()'s error-path strings rather than an
+    End node's actual template output. (An End template that itself starts
+    with one of these prefixes would be misclassified — an accepted, narrow
+    edge case, not worth widening run()'s return contract to avoid.)"""
+    return result.startswith(_ERROR_PREFIXES)
+
 
 def detect_cycle(graph: dict) -> list[str] | None:
     """DFS cycle detection over the flow's directed edges (ignoring

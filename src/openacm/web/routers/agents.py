@@ -249,7 +249,7 @@ def register_routes(app: FastAPI) -> None:
         if not flow or flow["agent_id"] != agent_id:
             raise HTTPException(status_code=404, detail="Flow not found")
 
-        from openacm.core.flow_executor import FlowExecutor
+        from openacm.core.flow_executor import FlowExecutor, is_error_result
 
         data = await request.json()
         test_params = data.get("params", {})
@@ -265,7 +265,7 @@ def register_routes(app: FastAPI) -> None:
 
         executor = FlowExecutor(get_connection=get_connection)
         result, outputs = await executor.run(graph, test_params)
-        return {"result": result, "outputs": outputs}
+        return {"result": result, "outputs": outputs, "error": is_error_result(result)}
 
     @app.get("/api/agents/{agent_id}/flows/{flow_id}/skill")
     async def get_flow_skill(agent_id: int, flow_id: int):

@@ -15,17 +15,47 @@ import type { AgentFlow } from '@/hooks/use-agent-flows';
 // attachments) since replies here are brief build confirmations, not rich
 // chat messages.
 const MARKDOWN_COMPONENTS = {
-  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>,
+  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-1.5 last:mb-0 leading-relaxed break-words" style={{ overflowWrap: 'anywhere' }}>{children}</p>,
   strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold" style={{ color: 'var(--acm-fg)' }}>{children}</strong>,
   em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
   ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc list-inside space-y-0.5 my-1.5 pl-1">{children}</ul>,
   ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal list-inside space-y-0.5 my-1.5 pl-1">{children}</ol>,
   li: ({ children }: { children?: React.ReactNode }) => <li>{children}</li>,
+  // break-words/overflow-wrap so an unbroken token (a long URL, a query
+  // string) wraps inside the bubble instead of forcing the 320px panel
+  // wider than its fixed width.
   code: ({ children }: { children?: React.ReactNode }) => (
-    <code className="rounded-[4px] px-1 py-0.5 text-[11px] mono" style={{ background: 'var(--acm-elev)', color: 'var(--acm-accent)' }}>{children}</code>
+    <code
+      className="rounded-[4px] px-1 py-0.5 text-[11px] mono break-words"
+      style={{ background: 'var(--acm-elev)', color: 'var(--acm-accent)', overflowWrap: 'anywhere' }}
+    >{children}</code>
+  ),
+  // A fenced code block's own <pre> defaults to white-space: pre (no wrap)
+  // — scope containment to this element alone (its inner <code> already
+  // wraps via the override above) rather than fighting pre's own layout.
+  pre: ({ children }: { children?: React.ReactNode }) => (
+    <pre className="max-w-full overflow-x-auto my-1.5 acm-scroll">{children}</pre>
   ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: 'var(--acm-accent)' }}>{children}</a>
+    <a
+      href={href} target="_blank" rel="noopener noreferrer"
+      className="underline underline-offset-2 break-words"
+      style={{ color: 'var(--acm-accent)', overflowWrap: 'anywhere' }}
+    >{children}</a>
+  ),
+  // GFM tables don't wrap by nature (columns), so contain overflow with a
+  // dedicated horizontal scroller instead of letting the table's intrinsic
+  // width push the whole panel wider.
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="max-w-full overflow-x-auto my-1.5 rounded acm-scroll" style={{ border: '1px solid var(--acm-border)' }}>
+      <table className="text-[11px]" style={{ borderCollapse: 'collapse', width: '100%' }}>{children}</table>
+    </div>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="text-left px-2 py-1 font-medium whitespace-nowrap" style={{ borderBottom: '1px solid var(--acm-border)', color: 'var(--acm-fg-2)' }}>{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="px-2 py-1 align-top" style={{ borderBottom: '1px solid var(--acm-border)', color: 'var(--acm-fg-3)' }}>{children}</td>
   ),
 };
 
@@ -104,18 +134,18 @@ export function FlowChatPanel({ agentId, flow }: { agentId: number; flow: AgentF
 
   return (
     <div
-      className="flex flex-col gap-2 p-3 rounded shrink-0"
+      className="flex flex-col gap-2 p-3 rounded shrink-0 overflow-hidden"
       style={{ background: 'var(--acm-elev)', border: '1px solid var(--acm-border)', width: 320 }}
     >
       <div className="text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: 'var(--acm-fg-4)' }}>
         Chat con IA — construir este flujo
       </div>
       {messages.length > 0 && (
-        <div className="space-y-2 max-h-64 overflow-y-auto acm-scroll">
+        <div className="space-y-2 max-h-64 overflow-y-auto overflow-x-hidden acm-scroll">
           {messages.map((m, i) => (
             <div
               key={i}
-              className="text-[12px] px-3 py-2 rounded-lg max-w-[90%]"
+              className="text-[12px] px-3 py-2 rounded-lg max-w-[90%] min-w-0"
               style={
                 m.role === 'user'
                   ? { background: 'var(--acm-accent-tint)', borderLeft: '2px solid var(--acm-accent)', color: 'var(--acm-fg-2)', marginLeft: 'auto' }
