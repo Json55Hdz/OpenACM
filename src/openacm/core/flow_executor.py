@@ -170,14 +170,23 @@ class FlowExecutor:
             "woocommerce": FlowExecutor._run_woocommerce_node,
         }
 
-    async def _run_http_node(self, node: dict, params: dict, outputs: dict) -> Any:
+    async def _run_http_node(
+        self, node: dict, params: dict, outputs: dict,
+        data_edges_by_target: dict[tuple[str, str], tuple[str, str]], nodes: dict[str, dict],
+    ) -> Any:
         cfg = node["config"]
-        url = substitute_templates(cfg["url"], params, outputs)
+        url = resolve_field("url", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
         method = cfg.get("method", "GET").upper()
         headers = {k: substitute_templates(v, params, outputs) for k, v in (cfg.get("headers") or {}).items()}
-        body = cfg.get("body")
-        if body:
-            body = substitute_templates(body, params, outputs)
+        # body is optional (defaults to None, not ""); only route it through
+        # resolve_field when there's a literal to template-substitute OR a
+        # data edge targets it — otherwise leave it exactly None, matching
+        # the pre-existing behavior byte-for-byte for a flow saved before
+        # this task shipped.
+        if cfg.get("body") or (node["id"], "body") in data_edges_by_target:
+            body = resolve_field("body", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
+        else:
+            body = cfg.get("body")
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.request(method, url, headers=headers, content=body)
@@ -187,7 +196,10 @@ class FlowExecutor:
             except Exception:
                 return response.text
 
-    async def _run_conditional_node(self, node: dict, params: dict, outputs: dict) -> dict:
+    async def _run_conditional_node(
+        self, node: dict, params: dict, outputs: dict,
+        data_edges_by_target: dict[tuple[str, str], tuple[str, str]], nodes: dict[str, dict],
+    ) -> dict:
         cfg = node["config"]
         operator = cfg["operator"]
         if operator not in self._CONDITIONAL_OPERATORS:
@@ -207,7 +219,10 @@ class FlowExecutor:
 
         return {"branch": branch, "passthrough": resolved}
 
-    async def _run_woocommerce_node(self, node: dict, params: dict, outputs: dict) -> str:
+    async def _run_woocommerce_node(
+        self, node: dict, params: dict, outputs: dict,
+        data_edges_by_target: dict[tuple[str, str], tuple[str, str]], nodes: dict[str, dict],
+    ) -> str:
         cfg = node["config"]
         search_term = substitute_templates(cfg["search_term"], params, outputs)
 
@@ -323,7 +338,7 @@ class FlowExecutor:
                 return f"Error: unknown node type '{node['type']}'", outputs
 
             try:
-                result = await handler(self, node, params, outputs)
+                result = await handler(self, node, params, outputs, data_edges_by_target, nodes)
             except Exception as exc:
                 return f"Error in node '{node['id']}' ({node['type']}): {exc}", outputs
 

@@ -347,6 +347,47 @@ class TestHttpNode:
         assert "zapatos" in call_kwargs.args[1] or "zapatos" in str(call_kwargs)
 
 
+class TestHttpNodeDataEdges:
+    async def test_url_is_resolved_from_a_data_edge_when_one_targets_it(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http0", "type": "http", "config": {"url": "https://source.example.com", "method": "GET"}},
+                {"id": "http1", "type": "http", "config": {"url": "https://ignored-literal.example.com", "method": "GET"}},
+                {"id": "end", "type": "end", "config": {"template": "{{http1}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http0", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http0", "to": "http1", "fromHandle": "default", "toHandle": "url", "kind": "data"},
+            ],
+        }
+        source_response = MagicMock()
+        source_response.headers = {"content-type": "text/plain"}
+        source_response.text = "https://real-target.example.com"
+        source_response.json.side_effect = ValueError("not json")
+        source_response.raise_for_status = MagicMock()
+
+        target_response = MagicMock()
+        target_response.headers = {"content-type": "text/plain"}
+        target_response.text = "ok"
+        target_response.json.side_effect = ValueError("not json")
+        target_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.request.side_effect = [source_response, target_response]
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            await executor.run(graph, params={})
+
+        second_call_args = mock_client.request.call_args_list[1]
+        assert second_call_args.args[1] == "https://real-target.example.com"
+
+
 def _conditional_graph(operator, value, field="{{start_value}}"):
     return {
         "nodes": [
