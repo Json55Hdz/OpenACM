@@ -111,6 +111,45 @@ function TemplatePreview({ value, params, outputs }: { value: string; params: Re
   return <div className="text-[9px] mt-1 p-1" style={{ background: 'var(--acm-base)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>{previewTemplate(value, params, outputs)}</div>;
 }
 
+// Shared connected/disconnected rendering for a single wire-or-literal
+// Inspector field (HTTP url/body — this task; Conditional field/value and
+// WooCommerce search_term reuse this exact component unchanged in later
+// tasks). A `kind: "data"` edge whose `targetHandle` matches `fieldName`
+// and whose `target` matches `nodeId` hides the literal input (`children`)
+// and shows a small chip with a disconnect action instead; with no such
+// edge, `children` renders exactly as it did before this feature.
+function ConnectableField({ nodeId, fieldName, edges, setEdges, children }: {
+  nodeId: string;
+  fieldName: string;
+  edges: Edge[];
+  setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
+  children: React.ReactNode;
+}) {
+  const dataEdge = edges.find(e =>
+    e.target === nodeId &&
+    e.targetHandle === fieldName &&
+    (e.data as { kind?: string } | undefined)?.kind === 'data'
+  );
+  if (!dataEdge) return <>{children}</>;
+  const sourceLabel = dataEdge.sourceHandle && dataEdge.sourceHandle !== 'default'
+    ? `${dataEdge.source}.${dataEdge.sourceHandle}`
+    : dataEdge.source;
+  return (
+    <div className="flex items-center gap-1 mb-1 p-1" style={{ background: 'var(--acm-base)', border: '1px solid var(--acm-node-data)', borderRadius: 4 }}>
+      <span className="text-[10px] flex-1" style={{ color: 'var(--acm-fg-3)' }}>
+        🔌 conectado a {'{{'}{sourceLabel}{'}}'}
+      </span>
+      <button
+        className="text-[var(--acm-fg-4)] hover:text-[var(--acm-err)]"
+        onClick={() => setEdges(eds => eds.filter(e => e.id !== dataEdge.id))}
+        title="Desconectar"
+      >
+        <Trash2 size={11} />
+      </button>
+    </div>
+  );
+}
+
 // Node ids look like "prefix_N" (matching the template-substitution regex's
 // [a-zA-Z0-9_]+ charset, so a UUID with hyphens is not an option here).
 // The counter is seeded per-flow from the highest existing suffix already
@@ -661,8 +700,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                   value={String(selectedNode.data.url || '')}
                   onInsert={v => updateSelectedNodeData({ url: v })}
                 />
-                <input ref={urlInputRef} className="acm-input w-full" value={String(selectedNode.data.url || '')} onChange={e => updateSelectedNodeData({ url: e.target.value })} />
-                <TemplatePreview value={String(selectedNode.data.url || '')} params={testParams} outputs={testOutputs} />
+                <ConnectableField nodeId={selectedNode.id} fieldName="url" edges={edges} setEdges={setEdges}>
+                  <input ref={urlInputRef} className="acm-input w-full" value={String(selectedNode.data.url || '')} onChange={e => updateSelectedNodeData({ url: e.target.value })} />
+                  <TemplatePreview value={String(selectedNode.data.url || '')} params={testParams} outputs={testOutputs} />
+                </ConnectableField>
                 <label>Método</label>
                 <select className="acm-input w-full" value={String(selectedNode.data.method || 'GET')} onChange={e => updateSelectedNodeData({ method: e.target.value })}>
                   <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
@@ -676,8 +717,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                   value={String(selectedNode.data.body || '')}
                   onInsert={v => updateSelectedNodeData({ body: v })}
                 />
-                <textarea ref={bodyInputRef} className="acm-input w-full" rows={3} value={String(selectedNode.data.body || '')} onChange={e => updateSelectedNodeData({ body: e.target.value })} />
-                <TemplatePreview value={String(selectedNode.data.body || '')} params={testParams} outputs={testOutputs} />
+                <ConnectableField nodeId={selectedNode.id} fieldName="body" edges={edges} setEdges={setEdges}>
+                  <textarea ref={bodyInputRef} className="acm-input w-full" rows={3} value={String(selectedNode.data.body || '')} onChange={e => updateSelectedNodeData({ body: e.target.value })} />
+                  <TemplatePreview value={String(selectedNode.data.body || '')} params={testParams} outputs={testOutputs} />
+                </ConnectableField>
               </InspectorSection>
             </>
           )}

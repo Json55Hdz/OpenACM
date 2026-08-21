@@ -61,14 +61,26 @@ export function StartNode({ data }: NodeProps) {
 }
 
 export function HttpNode({ id, data }: NodeProps) {
+  const targetConnections = useNodeConnections({ id, handleType: 'target' });
+  const urlWired = targetConnections.some(c => c.targetHandle === 'url');
+  const bodyWired = targetConnections.some(c => c.targetHandle === 'body');
   return (
     <div style={{ ...baseStyleFor('http'), position: 'relative' }}>
       <MergeBadge id={id} />
       <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🌐 HTTP Request</div>
-      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.method || 'GET')} {String(data.url || '')}</div>
+      <div style={{ color: 'var(--acm-fg-4)' }}>
+        {String(data.method || 'GET')} {urlWired ? '🔌 url conectada' : String(data.url || '')}
+      </div>
+      {bodyWired && <div style={{ color: 'var(--acm-fg-4)' }}>🔌 body conectado</div>}
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: response</div>
       <Handle type="target" position={Position.Top} id="default" />
+      {/* Data-input pins for HTTP's wire-or-literal "url"/"body" fields —
+          independent of the flow-in "default" handle above. method/headers
+          stay literal-only, no pin, per the spec's explicit
+          dropdown/template boundary. */}
+      <Handle type="target" position={Position.Left} id="url" style={{ top: '55%' }} />
+      <Handle type="target" position={Position.Left} id="body" style={{ top: '75%' }} />
       <Handle type="source" position={Position.Bottom} id="default" />
     </div>
   );
