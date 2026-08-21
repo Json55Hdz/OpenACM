@@ -43,13 +43,19 @@ function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
 }
 
 // Local re-implementation of flow_executor.py's substitute_templates rule
-// (bare {{name}} whole-value, {{node_id.field}} one-level dict lookup,
-// "[missing: ...]" marker) so the Inspector can preview a resolved value
-// without a network round-trip per keystroke.
-function previewTemplate(template: string, outputs: Record<string, unknown>): string {
+// (bare {{name}} whole-value — params checked BEFORE outputs, matching
+// substitute_templates(template, params, outputs) in flow_executor.py:79-84,
+// since Start parameters are never written into the outputs dict returned
+// by /test — it's keyed by node id and Set-node names only;
+// {{node_id.field}} one-level dict lookup against outputs; "[missing: ...]"
+// marker) so the Inspector can preview a resolved value without a network
+// round-trip per keystroke.
+function previewTemplate(template: string, params: Record<string, string>, outputs: Record<string, unknown>): string {
   return template.replace(/\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}/g, (_match, name, field) => {
     if (field === undefined) {
-      return name in outputs ? String(outputs[name]) : `[missing: ${name}]`;
+      if (name in params) return String(params[name]);
+      if (name in outputs) return String(outputs[name]);
+      return `[missing: ${name}]`;
     }
     const value = outputs[name];
     if (value && typeof value === 'object' && field in (value as Record<string, unknown>)) {
@@ -59,12 +65,12 @@ function previewTemplate(template: string, outputs: Record<string, unknown>): st
   });
 }
 
-function TemplatePreview({ value, outputs }: { value: string; outputs: Record<string, unknown> | null }) {
+function TemplatePreview({ value, params, outputs }: { value: string; params: Record<string, string>; outputs: Record<string, unknown> | null }) {
   if (!outputs) {
     return <div className="text-[9px] mt-1" style={{ color: 'var(--acm-fg-4)' }}>corré &quot;Probar flujo&quot; para ver valores reales acá</div>;
   }
   if (!value.includes('{{')) return null;
-  return <div className="text-[9px] mt-1 p-1" style={{ background: 'var(--acm-base)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>{previewTemplate(value, outputs)}</div>;
+  return <div className="text-[9px] mt-1 p-1" style={{ background: 'var(--acm-base)', borderRadius: 4, color: 'var(--acm-fg-3)' }}>{previewTemplate(value, params, outputs)}</div>;
 }
 
 // Node ids look like "prefix_N" (matching the template-substitution regex's
@@ -604,7 +610,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                   onInsert={v => updateSelectedNodeData({ url: v })}
                 />
                 <input ref={urlInputRef} className="acm-input w-full" value={String(selectedNode.data.url || '')} onChange={e => updateSelectedNodeData({ url: e.target.value })} />
-                <TemplatePreview value={String(selectedNode.data.url || '')} outputs={testOutputs} />
+                <TemplatePreview value={String(selectedNode.data.url || '')} params={testParams} outputs={testOutputs} />
                 <label>Método</label>
                 <select className="acm-input w-full" value={String(selectedNode.data.method || 'GET')} onChange={e => updateSelectedNodeData({ method: e.target.value })}>
                   <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
@@ -619,7 +625,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                   onInsert={v => updateSelectedNodeData({ body: v })}
                 />
                 <textarea ref={bodyInputRef} className="acm-input w-full" rows={3} value={String(selectedNode.data.body || '')} onChange={e => updateSelectedNodeData({ body: e.target.value })} />
-                <TemplatePreview value={String(selectedNode.data.body || '')} outputs={testOutputs} />
+                <TemplatePreview value={String(selectedNode.data.body || '')} params={testParams} outputs={testOutputs} />
               </InspectorSection>
             </>
           )}
@@ -634,7 +640,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 onInsert={v => updateSelectedNodeData({ field: v })}
               />
               <input ref={conditionalFieldRef} className="acm-input w-full mb-2" value={String(selectedNode.data.field || '')} onChange={e => updateSelectedNodeData({ field: e.target.value })} />
-              <TemplatePreview value={String(selectedNode.data.field || '')} outputs={testOutputs} />
+              <TemplatePreview value={String(selectedNode.data.field || '')} params={testParams} outputs={testOutputs} />
               <label>Operador</label>
               <select className="acm-input w-full mb-2" value={String(selectedNode.data.operator || 'contains')} onChange={e => updateSelectedNodeData({ operator: e.target.value })}>
                 <option value="contains">contiene</option>
@@ -680,7 +686,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 onInsert={v => updateSelectedNodeData({ search_term: v })}
               />
               <input ref={searchTermRef} className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
-              <TemplatePreview value={String(selectedNode.data.search_term || '')} outputs={testOutputs} />
+              <TemplatePreview value={String(selectedNode.data.search_term || '')} params={testParams} outputs={testOutputs} />
             </>
           )}
           {selectedNode.type === 'end' && (
@@ -694,7 +700,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 onInsert={v => updateSelectedNodeData({ template: v })}
               />
               <textarea ref={templateRef} className="acm-input w-full" rows={4} value={String(selectedNode.data.template || '')} onChange={e => updateSelectedNodeData({ template: e.target.value })} />
-              <TemplatePreview value={String(selectedNode.data.template || '')} outputs={testOutputs} />
+              <TemplatePreview value={String(selectedNode.data.template || '')} params={testParams} outputs={testOutputs} />
             </>
           )}
           {selectedNode.type === 'set' && (
