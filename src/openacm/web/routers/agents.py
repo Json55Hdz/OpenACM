@@ -249,6 +249,85 @@ def register_routes(app: FastAPI) -> None:
         result = await executor.run(graph, test_params)
         return {"result": result}
 
+    @app.get("/api/agents/{agent_id}/flows/{flow_id}/skill")
+    async def get_flow_skill(agent_id: int, flow_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow or flow["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        return await _state.database.get_flow_skill(flow_id)
+
+    @app.post("/api/agents/{agent_id}/flows/{flow_id}/skill")
+    async def create_flow_skill_endpoint(agent_id: int, flow_id: int, request: Request):
+        if not _state.database or not _state.brain or not _state.brain.skill_manager:
+            raise HTTPException(status_code=503, detail="Skill manager not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow or flow["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        if await _state.database.get_flow_skill(flow_id) is not None:
+            raise HTTPException(status_code=409, detail="Flow already has a skill — use PUT to update it")
+        data = await request.json()
+        return await _state.brain.skill_manager.create_flow_skill(
+            flow_id=flow_id,
+            name=data["name"],
+            description=data.get("description", ""),
+            content=data.get("content", ""),
+        )
+
+    @app.put("/api/agents/{agent_id}/flows/{flow_id}/skill")
+    async def update_flow_skill_endpoint(agent_id: int, flow_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow or flow["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        skill = await _state.database.get_flow_skill(flow_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Flow has no skill yet")
+        data = await request.json()
+        # Database.update_skill (database.py:1461-1468) accepts description/
+        # content/category/is_active only — no "name" parameter, so renaming
+        # a flow-skill isn't supported by the underlying method. "name" is
+        # deliberately excluded here rather than silently dropped by an
+        # unsupported-kwarg failure.
+        allowed_fields = {"description", "content"}
+        kwargs = {k: v for k, v in data.items() if k in allowed_fields}
+        await _state.database.update_skill(skill["id"], **kwargs)
+        return await _state.database.get_flow_skill(flow_id)
+
+    @app.delete("/api/agents/{agent_id}/flows/{flow_id}/skill")
+    async def delete_flow_skill_endpoint(agent_id: int, flow_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow or flow["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        skill = await _state.database.get_flow_skill(flow_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Flow has no skill")
+        await _state.database.delete_skill(skill["id"])
+        return {"status": "ok", "deleted": True}
+
+    @app.post("/api/agents/{agent_id}/flows/{flow_id}/skill/generate")
+    async def generate_flow_skill_endpoint(agent_id: int, flow_id: int, request: Request):
+        if not _state.database or not _state.brain or not _state.brain.skill_manager:
+            raise HTTPException(status_code=503, detail="Skill manager not available")
+        flow = await _state.database.get_flow(flow_id)
+        if not flow or flow["agent_id"] != agent_id:
+            raise HTTPException(status_code=404, detail="Flow not found")
+        data = await request.json()
+        try:
+            return await _state.brain.skill_manager.generate_flow_skill(
+                flow_id=flow_id,
+                name=data["name"],
+                description=data.get("description", ""),
+                llm_router=_state.brain.llm_router,
+            )
+        except Exception as e:
+            log.error("Failed to generate flow skill", error=str(e))
+            raise HTTPException(status_code=500, detail="Failed to generate skill")
+
     # ─── Connections ────────────────────────────────────────
 
     @app.get("/api/agents/{agent_id}/connections")

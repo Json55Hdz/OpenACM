@@ -7,6 +7,7 @@ Metadata is synced with the database.
 
 import structlog
 import re
+import json
 from pathlib import Path
 from typing import Any
 from datetime import datetime
@@ -535,3 +536,93 @@ Make it practical and actionable. The AI should be able to immediately apply thi
 
         sections = [f"## {s['name']}\n\n{s['content']}" for s in combined]
         return MSG_SKILL_CONTEXT_HEADER + "\n\n".join(sections) + MSG_SKILL_CONTEXT_FOOTER
+
+    async def get_flow_skill(self, flow_id: int) -> dict[str, Any] | None:
+        """A flow's own singular skill, if it has one."""
+        return await self.database.get_flow_skill(flow_id)
+
+    async def create_flow_skill(
+        self,
+        flow_id: int,
+        name: str,
+        description: str,
+        content: str,
+    ) -> dict[str, Any] | None:
+        """Create a flow's own skill. Unlike create_skill(), this never
+        touches the ./skills/ file-sync path — see create_worker_skill()
+        for why that matters. Callers must check get_flow_skill(flow_id)
+        is None first — a flow has at most one skill (enforced at the API
+        layer, not here, matching how create_worker_skill/create_agent_skill
+        don't self-enforce agent/worker-level policy either)."""
+        skill_id = await self.database.create_skill(
+            name=name,
+            description=description,
+            content=content,
+            category="custom",
+            is_builtin=False,
+            flow_id=flow_id,
+        )
+        return await self.database.get_skill(skill_id)
+
+    async def generate_flow_skill(
+        self,
+        flow_id: int,
+        name: str,
+        description: str,
+        llm_router=None,
+    ) -> dict[str, Any] | None:
+        """Generate a flow-scoped skill using the LLM — unlike
+        generate_agent_skill()/generate_worker_skill(), the prompt is built
+        from the flow's own graph (node types, descriptions, Start
+        parameters) rather than from a user-supplied use_cases string, since
+        the point is to describe THIS flow specifically."""
+        if not llm_router:
+            raise ValueError("LLM router required for skill generation")
+
+        flow = await self.database.get_flow(flow_id)
+        graph = json.loads(flow["graph_json"]) if flow else {"nodes": []}
+        start_node = next((n for n in graph.get("nodes", []) if n["type"] == "start"), None)
+        params_desc = ", ".join(
+            f"{p['name']} ({p.get('type', 'string')}): {p.get('description', '')}"
+            for p in (start_node["config"].get("parameters", []) if start_node else [])
+        ) or "(sin parámetros)"
+        node_types = ", ".join(n["type"] for n in graph.get("nodes", []) if n["type"] not in ("start", "end"))
+
+        prompt = f"""Create a comprehensive skill guide for an AI assistant that decides when and how to call one specific tool (a "flow").
+
+Flow Name: {name}
+Flow Description: {description}
+Flow's callable parameters: {params_desc}
+Flow's internal steps (node types, in order): {node_types or '(ninguno)'}
+
+Write the skill content in Markdown format following this structure:
+
+# {name}
+
+## Overview
+Brief description of what this flow does and when it should be called.
+
+## Guidelines
+When to call this flow vs. not, and how to fill in its parameters correctly.
+
+## Examples
+Concrete example user requests that should trigger this flow.
+
+## Common Pitfalls
+What to avoid (e.g. calling it with the wrong parameter, calling it when a different tool is more appropriate).
+
+Make it practical and actionable. The AI should be able to immediately apply this knowledge.
+"""
+
+        response = await llm_router.chat(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+        )
+        content = response.get("content", "")
+
+        return await self.create_flow_skill(
+            flow_id=flow_id,
+            name=name,
+            description=description,
+            content=content,
+        )
