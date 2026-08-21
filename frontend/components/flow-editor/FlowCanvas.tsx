@@ -28,7 +28,7 @@ interface GraphJson {
 
 function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
   return {
-    nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.config })),
+    nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.config || {} })),
     edges: graph.edges.map(e => ({
       id: `${e.from}-${e.to}-${e.fromHandle}-${e.toHandle || 'default'}`,
       source: e.from,
@@ -572,7 +572,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     a.href = url;
     a.download = `${slug}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    // Revoke on the next tick, not synchronously: outside Chrome the
+    // download may not have started reading the blob yet when click()
+    // returns, and revoking first makes the download silently fail.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   return (

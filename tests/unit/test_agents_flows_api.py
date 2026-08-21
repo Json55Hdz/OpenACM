@@ -120,11 +120,18 @@ class TestCreateUpdateDeleteFlow:
         assert resp.status_code == 400
         _mock_state.create_flow.assert_not_awaited()
 
-    async def test_create_flow_without_graph_json_is_unchanged(self, app_client, _mock_state):
+    async def test_create_flow_without_graph_json_gets_a_valid_default_skeleton(self, app_client, _mock_state):
+        """A brand-new flow must be born already-valid: the empty graph
+        {"nodes":[],"edges":[]} it used to start with is now rejected by
+        validate_graph, which made "+ Nuevo flujo" then "Guardar flujo" 400."""
+        from openacm.core.flow_executor import validate_graph
+
         async with app_client as ac:
             resp = await ac.post("/api/agents/42/flows", json={"name": "new-flow"})
         assert resp.status_code == 200
-        assert "graph_json" not in _mock_state.create_flow.await_args.kwargs
+        assert "graph_json" in _mock_state.create_flow.await_args.kwargs
+        sent_graph = _mock_state.create_flow.await_args.kwargs["graph_json"]
+        assert validate_graph(_json.loads(sent_graph)) == []
 
 
 class TestParseAndValidateGraphNowUsesFullValidation:

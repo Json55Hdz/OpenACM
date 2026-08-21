@@ -26,7 +26,7 @@ def _build_flow_tool(flow: dict, executor) -> ToolDefinition:
     start_node = next((n for n in graph["nodes"] if n["type"] == "start"), None)
     properties: dict = {}
     required: list[str] = []
-    for p in (start_node["config"].get("parameters", []) if start_node else []):
+    for p in (start_node.get("config", {}).get("parameters", []) if start_node else []):
         properties[p["name"]] = {"type": p.get("type", "string"), "description": p.get("description", "")}
         if p.get("required"):
             required.append(p["name"])

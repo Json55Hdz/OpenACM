@@ -42,6 +42,17 @@ def _parse_and_validate_graph(graph_json: str) -> dict:
     return graph
 
 
+# A brand-new flow used to start life as {"nodes":[],"edges":[]}, which the
+# strengthened validate_graph now correctly rejects (0 start, 0 end nodes) —
+# so "+ Nuevo flujo" followed immediately by "Guardar flujo" 400'd. New flows
+# get this minimal already-valid skeleton instead: one Start wired to one End.
+_DEFAULT_NEW_FLOW_GRAPH = (
+    '{"nodes":[{"id":"start","type":"start","config":{"parameters":[]},"position":{"x":0,"y":0}},'
+    '{"id":"end","type":"end","config":{"template":""},"position":{"x":260,"y":0}}],'
+    '"edges":[{"from":"start","to":"end","fromHandle":"default","toHandle":"default","kind":"flow"}]}'
+)
+
+
 def register_routes(app: FastAPI) -> None:
     # ─── API: Agents ──────────────────────────────────────────
 
@@ -200,6 +211,8 @@ def register_routes(app: FastAPI) -> None:
         if "graph_json" in data:
             _parse_and_validate_graph(data["graph_json"])  # raises on invalid, discards the parsed dict — DB stores the string
             create_kwargs["graph_json"] = data["graph_json"]
+        else:
+            create_kwargs["graph_json"] = _DEFAULT_NEW_FLOW_GRAPH
         flow_id = await _state.database.create_flow(**create_kwargs)
         return await _state.database.get_flow(flow_id)
 

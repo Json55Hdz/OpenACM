@@ -394,7 +394,14 @@ class FlowExecutor:
         return {"result": "\n".join(output), "count": len(products[:5])}
 
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
-        nodes = {n["id"]: n for n in graph.get("nodes", [])}
+        # Normalize once, here: the spec's global constraint says a node with
+        # no "config" key is treated as config: {} (and validate_graph
+        # deliberately does not reject one). Every downstream handler and
+        # lookup reads its node out of THIS dict, so defaulting it at this
+        # single point is what actually honors that constraint — otherwise a
+        # config-less node raises a raw KeyError mid-run, which for an agent
+        # flow tool surfaces as a broken chat rather than a flow error.
+        nodes = {n["id"]: {**n, "config": n.get("config", {})} for n in graph.get("nodes", [])}
         edges_by_source: dict[str, dict[str, str]] = {}
         # Keyed by (target_node_id, field_name) -> (source_node_id,
         # source_handle) — built only from data edges, consulted by

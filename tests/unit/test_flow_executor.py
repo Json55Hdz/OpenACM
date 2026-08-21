@@ -1205,3 +1205,28 @@ class TestValidateGraph:
         graph = {"nodes": [{"id": "a", "type": "bogus", "config": {}}], "edges": []}
         errors = validate_graph(graph)
         assert len(errors) >= 2  # unknown type AND missing start AND missing end
+
+
+class TestConfiglessNodeDoesNotCrash:
+    """The spec's global constraint: a node with no "config" key is treated
+    as config: {}. validate_graph correctly accepts such a node, so run()
+    must honor the same default rather than raising a raw KeyError — which,
+    for a flow exposed as an agent tool, bricks the owning agent's chat."""
+
+    async def test_start_node_with_no_config_key_runs_without_crashing(self):
+        graph = {
+            "nodes": [{"id": "start", "type": "start"}, {"id": "end", "type": "end", "config": {"template": "done"}}],
+            "edges": [{"from": "start", "to": "end", "fromHandle": "default", "toHandle": "default", "kind": "flow"}],
+        }
+        executor = FlowExecutor()
+        result, _ = await executor.run(graph, params={})
+        assert result == "done"
+
+    async def test_end_node_with_no_config_key_runs_without_crashing(self):
+        graph = {
+            "nodes": [{"id": "start", "type": "start", "config": {"parameters": []}}, {"id": "end", "type": "end"}],
+            "edges": [{"from": "start", "to": "end", "fromHandle": "default", "toHandle": "default", "kind": "flow"}],
+        }
+        executor = FlowExecutor()
+        result, _ = await executor.run(graph, params={})
+        assert result == ""  # missing config -> {} -> template defaults to ""
