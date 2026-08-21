@@ -97,8 +97,16 @@ export function WooCommerceNode({ id, data }: NodeProps) {
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.search_term || '')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: result</div>
+      <div style={pinLabelStyle}>salida: count</div>
       <Handle type="target" position={Position.Top} id="default" />
       <Handle type="source" position={Position.Bottom} id="default" />
+      {/* Named data-output pins (Task 4's backend {"result": ..., "count":
+          ...} shape) — independent of the flow-out "default" handle above,
+          which keeps its old id/position unchanged so every flow saved
+          before this shipped still renders its existing flow edge
+          correctly. */}
+      <Handle type="source" position={Position.Right} id="result" style={{ top: '40%' }} />
+      <Handle type="source" position={Position.Right} id="count" style={{ top: '65%' }} />
     </div>
   );
 }
