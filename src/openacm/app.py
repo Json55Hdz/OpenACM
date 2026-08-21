@@ -312,6 +312,9 @@ class OpenACM:
         from openacm.tools import cron_tool
         self.tool_registry.register_module(cron_tool)
 
+        from openacm.tools import flow_tool
+        self.tool_registry.register_module(flow_tool)
+
         from openacm.tools import swarm_tool
         self.tool_registry.register_module(swarm_tool)
 
