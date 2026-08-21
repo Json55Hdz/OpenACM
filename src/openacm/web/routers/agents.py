@@ -838,6 +838,8 @@ def register_routes(app: FastAPI) -> None:
         message = data.get("message", "").strip()
         if not message:
             raise HTTPException(status_code=400, detail="message required")
+        channel_id = data.get("channel_id")
+        extra_system_context = data.get("extra_system_context")
 
         from openacm.core.agent_runner import AgentRunner
         runner = AgentRunner(
@@ -848,7 +850,10 @@ def register_routes(app: FastAPI) -> None:
             database=_state.database,
             skill_manager=_state.brain.skill_manager,
         )
-        response = await runner.run(agent=agent, message=message, user_id="dashboard_test")
+        response = await runner.run(
+            agent=agent, message=message, user_id="dashboard_test",
+            channel_id=channel_id, extra_system_context=extra_system_context,
+        )
         return {"response": response}
 
     # ─── API: Debug Traces ───────────────────────────────────

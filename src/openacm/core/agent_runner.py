@@ -140,6 +140,7 @@ class AgentRunner:
         user_id: str = "user",
         channel_id: str | None = None,
         channel_type: str = "agent",
+        extra_system_context: str | None = None,
     ) -> str:
         """
         Process a message through the given agent config.
@@ -211,6 +212,9 @@ class AgentRunner:
                         f"\n\n## {flow_skill['name']}\n\n{flow_skill['content']}"
                         f"{MSG_SKILL_CONTEXT_FOOTER}"
                     )
+
+        if extra_system_context:
+            system_prompt = f"{system_prompt}\n\n{extra_system_context}"
 
         config = AssistantConfig(
             name=agent["name"],
