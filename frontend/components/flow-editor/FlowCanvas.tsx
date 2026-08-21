@@ -190,6 +190,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   };
 
   const clipboardRef = useRef<{ nodes: Node[]; edges: Edge[] } | null>(null);
+  // How many times the CURRENT clipboard contents have been pasted, so
+  // repeated Ctrl+V without a new Ctrl+C staggers each paste instead of
+  // stacking every copy on the exact same position.
+  const pasteCountRef = useRef(0);
 
   const onCanvasCopy = useCallback(() => {
     // Start/End are singleton per flow, so they're silently excluded from
@@ -201,17 +205,21 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     // outside the selection would dangle once pasted as a fresh copy.
     const internalEdges = edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target));
     clipboardRef.current = { nodes: selectedNodes, edges: internalEdges };
+    pasteCountRef.current = 0;
   }, [nodes, edges]);
 
   const onCanvasPaste = useCallback(() => {
     const clip = clipboardRef.current;
     if (!clip || clip.nodes.length === 0) return;
 
+    pasteCountRef.current += 1;
+    const offset = pasteCountRef.current * 40;
+
     const idMap: Record<string, string> = {};
     const pastedNodes: Node[] = clip.nodes.map(n => {
       const newId = nextNodeId((n.type || 'http') as string);
       idMap[n.id] = newId;
-      return { ...n, id: newId, selected: false, position: { x: n.position.x + 40, y: n.position.y + 40 } };
+      return { ...n, id: newId, selected: false, position: { x: n.position.x + offset, y: n.position.y + offset } };
     });
     const pastedEdges: Edge[] = clip.edges.map(e => ({
       id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}`,
@@ -225,6 +233,12 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   }, [nodeIdCounterRef]);
 
   const onCanvasKeyDown = useCallback((event: React.KeyboardEvent) => {
+    // Don't hijack Ctrl+C/Ctrl+V while the user is typing in a text field
+    // (e.g. the right-click node-search input, which auto-focuses) — let
+    // the native input handle copy/paste of its own text instead of also
+    // triggering node clipboard actions as a side effect.
+    const target = event.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
     const isMeta = event.ctrlKey || event.metaKey;
     if (!isMeta) return;
     if (event.key === 'c' || event.key === 'C') {
