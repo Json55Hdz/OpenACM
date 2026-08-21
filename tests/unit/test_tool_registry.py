@@ -8,9 +8,11 @@ Covers:
   - _is_conversational: short chat messages produce no tool intent
 """
 
+import numpy as np
 import pytest
 
-from openacm.tools.registry import ToolRegistry
+from openacm.tools.base import ToolDefinition
+from openacm.tools.registry import ALWAYS_INCLUDE_TOOLS, ToolRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +117,77 @@ class TestIsRelevant:
         # "de" and "en" are 2 letters — must not cause an accidental match
         # against unrelated text that also happens to contain them.
         assert tool_registry.is_relevant("de qué color es el auto?", "Envía un correo de bienvenida") is False
+
+
+# ---------------------------------------------------------------------------
+# ALWAYS_INCLUDE_TOOLS — create_or_update_agent_flow must survive low similarity
+# ---------------------------------------------------------------------------
+
+class _FakeSemanticModel:
+    """Deterministic stand-in for a sentence-transformer model.
+
+    Assigns orthogonal vectors based on which known substring a text contains,
+    so cosine similarity between the message and each tool is fully predictable
+    without loading a real embeddings model (the `tool_registry` fixture
+    intentionally has none loaded).
+    """
+
+    def encode(self, texts, convert_to_numpy=True, show_progress_bar=False):
+        vecs = []
+        for text in texts:
+            if "create_or_update_agent_flow" in text:
+                vecs.append([1.0, 0.0, 0.0])
+            elif "some_other_tool" in text:
+                vecs.append([0.0, 1.0, 0.0])
+            else:
+                vecs.append([0.0, 0.0, 1.0])
+        return np.array(vecs, dtype=np.float32)
+
+
+async def _dummy_handler(**kwargs):
+    return "ok"
+
+
+class TestAlwaysIncludeFlowTool:
+    """create_or_update_agent_flow must be offered regardless of semantic score.
+
+    Real-world flow-building messages can land just under
+    SEMANTIC_TOOL_THRESHOLD on their own merit, which used to mean the tool
+    was silently never offered to the LLM. It's now in ALWAYS_INCLUDE_TOOLS
+    (registry.py), so get_tools_semantic must include it unconditionally —
+    proven here with a message that is deliberately orthogonal (0 similarity)
+    to every registered tool, including the flow tool itself.
+    """
+
+    def test_flow_tool_is_in_always_include_set(self):
+        assert "create_or_update_agent_flow" in ALWAYS_INCLUDE_TOOLS
+
+    def test_flow_tool_always_included_for_unrelated_message(self, tool_registry):
+        tool_registry.tools["create_or_update_agent_flow"] = ToolDefinition(
+            name="create_or_update_agent_flow",
+            description="Build or update an agent flow conversationally.",
+            parameters={"type": "object", "properties": {}},
+            handler=_dummy_handler,
+            category="ai",
+        )
+        tool_registry.tools["some_other_tool"] = ToolDefinition(
+            name="some_other_tool",
+            description="Completely unrelated helper tool.",
+            parameters={"type": "object", "properties": {}},
+            handler=_dummy_handler,
+            category="general",
+        )
+        tool_registry._semantic_model = _FakeSemanticModel()
+
+        selected = tool_registry.get_tools_semantic("hola, qué tal")
+
+        selected_names = {t["function"]["name"] for t in selected}
+        # Selected despite 0 similarity to the message — because it's always-include.
+        assert "create_or_update_agent_flow" in selected_names
+        # Sanity check: a normal tool with the same (0) similarity is NOT
+        # included, proving the flow tool's inclusion is due to
+        # ALWAYS_INCLUDE_TOOLS and not some accidental similarity match.
+        assert "some_other_tool" not in selected_names
 
 
 class TestIsConversational:

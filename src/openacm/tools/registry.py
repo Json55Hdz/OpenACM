@@ -36,6 +36,7 @@ ALWAYS_INCLUDE_TOOLS = {
     "edit_file",
     "web_search",
     "list_tools",  # always visible so the AI can answer "what can you do?"
+    "create_or_update_agent_flow",  # always available so an agent can build its own flows conversationally — see note below on why semantic scoring alone isn't reliable for this tool
 }
 
 
