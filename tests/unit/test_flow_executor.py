@@ -1466,6 +1466,102 @@ class TestLoopNode:
         assert result.startswith("Error: flow exceeded maximum node visits")
 
 
+class TestWholeValueSourcePinAliases:
+    """http's "response", conditional's "result", and set's "value" source
+    pins all alias the node's WHOLE stored output — unlike WooCommerce's
+    "result"/"count" or Loop's "item"/"index", where outputs[node_id] is
+    itself a dict keyed by the handle name, these three store the raw
+    value directly. A JSON-object response is the case that would break
+    without the alias carve-out: wiring "response" would otherwise try to
+    find a literal "response" KEY inside the response body itself."""
+
+    async def test_http_response_pin_yields_the_whole_json_object_not_a_key_lookup(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/data", "method": "GET"}},
+                {"id": "set1", "type": "set", "config": {"name": "captured"}},
+                {"id": "end", "type": "end", "config": {"template": "{{captured.city}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "set1", "fromHandle": "default", "kind": "flow"},
+                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "set1", "fromHandle": "response", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = {"city": "Bogota", "response": "not-this-key"}
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "Bogota"
+
+    async def test_conditional_result_pin_yields_the_evaluated_field_value(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": [{"name": "start_value", "type": "string", "required": True}]}},
+                {"id": "cond1", "type": "conditional", "config": {"field": "{{start_value}}", "operator": "contains", "value": "zap"}},
+                {"id": "set1", "type": "set", "config": {"name": "captured"}},
+                {"id": "end", "type": "end", "config": {"template": "{{captured}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "cond1", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "set1", "fromHandle": "true", "kind": "flow"},
+                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "set1", "fromHandle": "result", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        executor = FlowExecutor()
+        result, _ = await executor.run(graph, params={"start_value": "zapatos"})
+        assert result == "zapatos"
+
+    async def test_set_value_pin_yields_the_aliased_value_to_a_downstream_node(self):
+        """set1 has no wired "value" target pin — it falls back to
+        aliasing http1's output (its flow-immediate predecessor), exactly
+        as it already does today. What's new here is set2 reading THAT
+        captured value back out via set1's "value" SOURCE pin, rather than
+        via set1's {{captured}} template name."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/greeting", "method": "GET"}},
+                {"id": "set1", "type": "set", "config": {"name": "captured"}},
+                {"id": "set2", "type": "set", "config": {"name": "relayed"}},
+                {"id": "end", "type": "end", "config": {"template": "{{relayed}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "set1", "fromHandle": "default", "kind": "flow"},
+                {"from": "set1", "to": "set2", "fromHandle": "default", "kind": "flow"},
+                {"from": "set2", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "set1", "to": "set2", "fromHandle": "value", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        response = MagicMock()
+        response.headers = {"content-type": "text/plain"}
+        response.text = "hola"
+        response.json.side_effect = ValueError("not json")
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "hola"
+
+
 class TestValidateGraph:
     def _valid_graph(self):
         return {

@@ -110,10 +110,10 @@ NODE_TARGET_HANDLES: dict[str, set[str]] = {
 
 NODE_SOURCE_HANDLES: dict[str, set[str]] = {
     "start": {"default"},
-    "http": {"default"},
-    "conditional": {"true", "false"},
+    "http": {"default", "response"},
+    "conditional": {"true", "false", "result"},
     "woocommerce": {"default", "result", "count"},
-    "set": {"default"},
+    "set": {"default", "value"},
     "get": {"default"},
     "end": set(),
     "loop": {"loop", "done", "item", "index"},
@@ -263,6 +263,17 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
     return _TEMPLATE_RE.sub(_replace, template)
 
 
+# (node_type, source_handle) pairs whose value IS the node's whole stored
+# output, not a key to look up inside it — unlike WooCommerce's
+# "result"/"count" or Loop's "item"/"index", where outputs[node_id] is
+# itself a dict keyed by the handle name, Http/Conditional/Set store the
+# raw value directly (outputs[node_id] = the response / the passthrough /
+# the aliased value). Without this carve-out, wiring e.g. an Http node's
+# "response" pin into another field would incorrectly try to look up a
+# "response" key INSIDE the actual HTTP response body.
+_WHOLE_VALUE_SOURCE_ALIASES = {("http", "response"), ("conditional", "result"), ("set", "value")}
+
+
 def _resolve_pin_value(
     source_id: str, source_handle: str, nodes: dict[str, dict], outputs: dict[str, Any],
 ) -> tuple[bool, Any]:
@@ -289,6 +300,9 @@ def _resolve_pin_value(
     if source_id not in outputs:
         return False, None
     value = outputs[source_id]
+    node_type = source_node["type"] if source_node is not None else None
+    if (node_type, source_handle) in _WHOLE_VALUE_SOURCE_ALIASES:
+        return True, value
     if source_handle != "default" and isinstance(value, dict):
         if source_handle not in value:
             return False, None

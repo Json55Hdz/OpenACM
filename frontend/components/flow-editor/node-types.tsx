@@ -36,16 +36,17 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //   start:        source "default"                                  -> flow
 //   end:          target "default"                                  -> flow
 //   http:         target "default" -> flow; target "url"/"body" -> data;
-//                 source "default"                                  -> flow
+//                 source "default" -> flow; source "response"     -> data
 //   conditional:  target "default" -> flow; target "field"/"value" -> data;
-//                 source "true"/"false"                             -> flow
+//                 source "true"/"false"                             -> flow;
+//                 source "result"                                   -> data
 //   loop:         target "default" -> flow; target "items"        -> data;
 //                 source "loop"/"done"                              -> flow;
 //                 source "item"/"index"                             -> data
 //   woocommerce:  target "default" -> flow; target "search_term"  -> data;
 //                 source "default" -> flow; source "result"/"count" -> data
 //   set:          target "default" -> flow; target "value"        -> data;
-//                 source "default"                                  -> flow
+//                 source "default" -> flow; source "value"          -> data
 //   get:          ONE handle only — source, id="default" — but Get is a
 //                 pure node (no flow-in/flow-out concept at all, see
 //                 GetNode's comment below) and that "default" id carries
@@ -106,10 +107,6 @@ export function pinProps(nodeType: string, handleId: string | null | undefined, 
 const idStyle: React.CSSProperties = {
   fontFamily: 'monospace', fontSize: 10, color: 'var(--acm-accent)', marginTop: 4,
   userSelect: 'all', cursor: 'text',
-};
-
-const pinLabelStyle: React.CSSProperties = {
-  fontSize: 9, color: 'var(--acm-fg-4)', marginTop: 2,
 };
 
 const mergeBadgeStyle: React.CSSProperties = {
@@ -267,7 +264,7 @@ export function HttpNode({ id, data, selected }: NodeProps) {
       <PinRow nodeType="http" handleId="url" handleKind="target" label="url" literalPreview={urlWired || !data.url ? undefined : truncate(String(data.url))} />
       <PinRow nodeType="http" handleId="body" handleKind="target" label="body" literalPreview={bodyWired || !data.body ? undefined : truncate(String(data.body))} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>salida: response</div>
+      <PinRow nodeType="http" handleId="response" handleKind="source" label="response" />
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
       <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
     </NodeCard>
@@ -288,7 +285,7 @@ export function ConditionalNode({ id, data, selected }: NodeProps) {
       <PinRow nodeType="conditional" handleId="field" handleKind="target" label="field" literalPreview={fieldWired || !data.field ? undefined : truncate(String(data.field))} />
       <PinRow nodeType="conditional" handleId="value" handleKind="target" label="value" literalPreview={valueWired || !data.value ? undefined : truncate(String(data.value))} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>salida: result</div>
+      <PinRow nodeType="conditional" handleId="result" handleKind="source" label="result" />
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
       <Handle type="source" position={Position.Bottom} id="true" style={{ ...truePin.style, left: '30%' }} title={truePin.title} />
       <Handle type="source" position={Position.Bottom} id="false" style={{ ...falsePin.style, left: '70%' }} title={falsePin.title} />
@@ -357,7 +354,7 @@ export function SetNode({ id, data, selected }: NodeProps) {
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <PinRow nodeType="set" handleId="value" handleKind="target" label="valor (opcional)" />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>salida: value</div>
+      <PinRow nodeType="set" handleId="value" handleKind="source" label="value" />
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
       <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
     </NodeCard>
