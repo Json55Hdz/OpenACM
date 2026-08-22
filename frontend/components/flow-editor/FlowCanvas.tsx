@@ -320,7 +320,7 @@ function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outp
           <optgroup key={source.id} label={source.label}>
             <option value={source.id}>{source.label} (todo el valor)</option>
             {paths.map(p => (
-              <option key={`${source.id}${p.path}`} value={`${source.id}${p.path}`}>
+              <option key={`${source.id}${p.path}`} value={`${source.id}${p.path}`} disabled={p.path.endsWith('…')}>
                 {p.path || '(valor)'} → {p.preview}
               </option>
             ))}
