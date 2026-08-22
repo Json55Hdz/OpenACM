@@ -670,19 +670,28 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     }]);
   }, [screenToFlowPosition]);
 
-  // Rejects a connection wiring a data-output pin (e.g. WooCommerce's
-  // `result`) directly into a flow-in handle (`targetHandle === 'default'`)
-  // — that edge would look like a normal connection on the canvas but
-  // FlowExecutor.run()'s flow-walk never follows it (it only walks a
-  // node's 'default' source-side flow-out edge), so the flow would
-  // silently end early with "flow ended without reaching an End node".
+  // Rejects any connection whose two ends aren't the same pin kind —
+  // flow-out can only reach a flow-in, data-out can only reach a data-in.
+  // Both directions matter equally:
+  //   - data -> flow (e.g. WooCommerce's `result` into a flow-in `default`
+  //     handle): that edge would look like a normal connection on the
+  //     canvas but FlowExecutor.run()'s flow-walk never follows it (it
+  //     only walks a node's 'default' source-side flow-out edge), so the
+  //     flow would silently end early with "flow ended without reaching
+  //     an End node".
+  //   - flow -> data (e.g. Http's flow-out `default` diamond into Set's
+  //     `value` data-in circle): visually plausible since Set's `value`
+  //     handle isn't `default`, but it's not actually routing "the next
+  //     step of the flow" anywhere — it'd just alias Http's own default
+  //     output, which is confusing enough that it should never have been
+  //     draggable there in the first place.
   const isValidConnection = useCallback((connection: Edge | Connection) => {
-    const targetHandle = connection.targetHandle || 'default';
-    if (targetHandle !== 'default') return true;
     const sourceNode = nodes.find(n => n.id === connection.source);
-    if (!sourceNode) return true;
+    const targetNode = nodes.find(n => n.id === connection.target);
+    if (!sourceNode || !targetNode) return true;
     const sourcePinKind = classifyPin(sourceNode.type, connection.sourceHandle, 'source');
-    return sourcePinKind !== 'data';
+    const targetPinKind = classifyPin(targetNode.type, connection.targetHandle, 'target');
+    return sourcePinKind === targetPinKind;
   }, [nodes]);
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
