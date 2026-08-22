@@ -1355,6 +1355,116 @@ class TestLoopNode:
 
         assert result == "outer=y:1 inner=3:2 tracked=3"
 
+    async def test_non_numeric_max_iterations_falls_back_to_default_instead_of_raising(self):
+        """A config value that isn't a clean int (a string from a JSON
+        import, or an explicit null) must not raise a TypeError out of
+        run() — it should fall back to the 200 default and complete the
+        flow normally."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {"max_iterations": "not-a-number"}},
+                {"id": "seen", "type": "set", "config": {"name": "seen"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = ["a", "b", "c"]
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, outputs = await executor.run(graph, params={})
+
+        assert result == "Last seen: c, final index: 2"
+        assert outputs["loop1"] == {"item": "c", "index": 2}
+
+    async def test_null_max_iterations_falls_back_to_default_instead_of_raising(self):
+        """.get(key, 200) does NOT protect against an explicit null — the
+        key IS present, so the default is never used and None flows
+        through. Confirm the coercion catches this case too."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {"max_iterations": None}},
+                {"id": "seen", "type": "set", "config": {"name": "seen"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = ["a", "b", "c"]
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, outputs = await executor.run(graph, params={})
+
+        assert result == "Last seen: c, final index: 2"
+        assert outputs["loop1"] == {"item": "c", "index": 2}
+
+    async def test_global_visit_cap_tripped_inside_loop_names_the_loop_not_a_cycle(self):
+        """A legitimate loop with a large max_iterations and a multi-visit
+        body can trip the global _MAX_NODE_VISITS backstop with zero
+        actual cycles. The error must name the loop, not claim
+        "possible cycle"."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {"max_iterations": 5000}},
+                {"id": "noop", "type": "set", "config": {"name": "noop"}},
+                {"id": "end", "type": "end", "config": {"template": "unreachable"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "noop", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = list(range(3000))
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert "possible cycle" not in result
+        assert "loop1" in result
+        assert result.startswith("Error: flow exceeded maximum node visits")
+
 
 class TestValidateGraph:
     def _valid_graph(self):

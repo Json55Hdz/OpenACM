@@ -2,10 +2,14 @@
 FlowExecutor — interprets a node-graph flow (built visually by the user)
 and runs it as a tool call for an Agent.
 
-A flow is a linear chain of nodes with exactly one possible branch point
-(a Conditional node, which has two outgoing edges: "true" and "false").
-There are no loops, no multi-input nodes, and no rejoined branches — see
-docs/superpowers/specs/2026-07-05-agent-node-flows-design.md for the full
+A flow is a chain of nodes with one possible branch point (a Conditional
+node, which has two outgoing edges: "true" and "false") plus one
+possible iteration point (a Loop node, whose "loop" output re-runs its
+body once per item and whose "done" output fires once the items are
+exhausted — see the loop_stack machinery in run()). There are no
+multi-input nodes and no rejoined branches otherwise — see
+docs/superpowers/specs/2026-07-05-agent-node-flows-design.md and
+docs/superpowers/specs/2026-08-22-flow-loop-node-design.md for the full
 design rationale.
 """
 import json as _json
@@ -509,6 +513,20 @@ class FlowExecutor:
 
             visits += 1
             if visits > self._MAX_NODE_VISITS:
+                # A legitimate loop with a large max_iterations and a
+                # multi-node body can trip this same global backstop even
+                # with zero actual cycles — telling the user "possible
+                # cycle" in that case is actively misleading (and only
+                # after doing all _MAX_NODE_VISITS worth of real work).
+                # Distinguish the two cases using loop_stack: non-empty
+                # means we're inside a loop, so blame the loop by name
+                # instead of a phantom cycle.
+                if loop_stack:
+                    return (
+                        f"Error: flow exceeded maximum node visits ({self._MAX_NODE_VISITS}) "
+                        f"while inside loop '{loop_stack[-1]['loop_node_id']}' — reduce "
+                        f"max_iterations on that loop or shorten its body"
+                    ), outputs
                 return "Error: flow exceeded maximum node visits (possible cycle)", outputs
 
             node = nodes.get(current_id)
@@ -529,11 +547,23 @@ class FlowExecutor:
                     previous_id = current_id
                     current_id = edges_by_source.get(node["id"], {}).get("done")
                     continue
+                # max_iterations must survive a non-int config value (a
+                # string from a JSON import, or an explicit null — note
+                # .get(..., 200) does NOT protect against null, since the
+                # key IS present) without raising: fall back to the 200
+                # default for anything that isn't a clean int or numeric
+                # string, and clamp to a minimum of 1 so a 0/negative
+                # config value still runs at least one iteration instead
+                # of behaving like an off-by-one "run zero times".
+                try:
+                    max_iterations = max(1, int(node["config"].get("max_iterations") or 200))
+                except (TypeError, ValueError):
+                    max_iterations = 200
                 loop_stack.append({
                     "loop_node_id": node["id"],
                     "items": items,
                     "index": 0,
-                    "max_iterations": node["config"].get("max_iterations", 200),
+                    "max_iterations": max_iterations,
                 })
                 outputs[node["id"]] = {"item": items[0], "index": 0}
                 previous_id = current_id

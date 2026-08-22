@@ -39,6 +39,9 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //                 source "default"                                  -> flow
 //   conditional:  target "default" -> flow; target "field"/"value" -> data;
 //                 source "true"/"false"                             -> flow
+//   loop:         target "default" -> flow; target "items"        -> data;
+//                 source "loop"/"done"                              -> flow;
+//                 source "item"/"index"                             -> data
 //   woocommerce:  target "default" -> flow; target "search_term"  -> data;
 //                 source "default" -> flow; source "result"/"count" -> data
 //   set:          target "default" -> flow; target "value"        -> data;
@@ -53,8 +56,9 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //
 // For every target handle, "default" is the flow-in pin and every other
 // named target handle is a data pin. For every source handle (except
-// Get's, per above), "default" and Conditional's "true"/"false" are flow
-// pins and every other named source handle is a data pin.
+// Get's, per above), "default", Conditional's "true"/"false", and Loop's
+// "loop"/"done" are flow pins and every other named source handle is a
+// data pin.
 export function classifyPin(nodeType: string | undefined, handleId: string | null | undefined, handleKind: 'source' | 'target'): 'flow' | 'data' {
   const id = handleId || 'default';
   if (nodeType === 'get') return 'data';

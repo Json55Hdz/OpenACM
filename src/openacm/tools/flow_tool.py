@@ -27,6 +27,7 @@ TIPOS DE NODO Y SU CONFIG (campo 'config' de cada nodo):
 - set: {"name": str} — guarda un valor en una variable con nombre, referenciable luego como {{name}}. Pines de flujo: entrada "default", salida "default". Pin de dato de entrada (opcional): "value" — si no se conecta, usa la salida del nodo anterior en el flujo.
 - get: {"name": str} — nodo puro (SIN pines de flujo, ni entrada ni salida) que expone el valor de una variable ya guardada. Pin de dato de salida: "default".
 - end: {"template": str} — termina el flujo y devuelve el resultado de sustituir plantillas en 'template'. Pin de flujo de entrada: "default". Sin salidas.
+- loop: {"max_iterations": int} (opcional, default 200) — itera sobre una lista, ejecutando su cadena de nodos conectada al pin "loop" una vez por cada elemento. Pin de flujo de entrada: "default". Pin de dato de entrada: "items" (SOLO cable, sin literal — debe conectarse a algo que resuelva a una lista). Pines de flujo de SALIDA: "loop" (se dispara una vez por cada elemento) y "done" (se dispara una sola vez al terminar) — NO tiene salida de flujo "default". Pines de dato de salida: "item" (el elemento actual), "index" (el índice actual, 0-based). IMPORTANTE: la cadena de nodos conectada a "loop" NO necesita ningún cable de vuelta — cuando esa cadena llega a un punto muerto (sin más salida de flujo), el motor avanza automáticamente al siguiente elemento, o sigue por "done" si ya no quedan. Conectar manualmente un nodo de vuelta al loop sería un error de uso, no es necesario ni correcto.
 
 EDGES: cada edge es {"from": node_id, "to": node_id, "fromHandle": pin_id, "toHandle": pin_id, "kind": "flow"|"data"}. Un edge "flow" define qué nodo se ejecuta después. Un edge "data" conecta la salida nombrada de un nodo directamente al campo de entrada nombrado de otro (alternativa a escribir {{node_id.field}} a mano).
 
@@ -36,7 +37,7 @@ POSICIÓN: el campo "position" de cada nodo es opcional — si lo omites, se cal
 
 REGLAS: debe haber exactamente un nodo "start" y al menos un nodo "end". Todo id de nodo debe ser único. Todo "from"/"to" de un edge debe apuntar a un id de nodo que exista en el grafo."""
 
-_NODE_TYPE_ENUM = ["start", "http", "conditional", "woocommerce", "set", "get", "end"]
+_NODE_TYPE_ENUM = ["start", "http", "conditional", "woocommerce", "set", "get", "end", "loop"]
 
 # The node/handle vocabulary lives HERE, nested inside the parameter schema,
 # rather than only in _FLOW_TOOL_DESCRIPTION above. ToolDefinition.to_slim_schema()
@@ -53,7 +54,8 @@ _NODE_TYPE_VOCABULARY = (
     "woocommerce: config={connection_id,search_term} — busca productos en WooCommerce. Pines de flujo entrada/salida: 'default'. Pin de dato de entrada: 'search_term'. Pines de dato de salida: 'result' (texto formateado), 'count' (número). "
     "set: config={name} — guarda un valor en una variable, referenciable como {{name}}. Pines de flujo entrada/salida: 'default'. Pin de dato de entrada opcional: 'value' (si no se conecta, usa la salida del nodo anterior en el flujo). "
     "get: config={name} — nodo PURO, SIN pines de flujo (ni entrada ni salida). Pin de dato de salida: 'default'. "
-    "end: config={template} — termina el flujo devolviendo 'template' con sustitución de {{...}}. Pin de flujo de entrada: 'default'. Sin salidas."
+    "end: config={template} — termina el flujo devolviendo 'template' con sustitución de {{...}}. Pin de flujo de entrada: 'default'. Sin salidas. "
+    "loop: config={max_iterations} (opcional, default 200) — itera sobre una lista. Pin de flujo de entrada: 'default'. Pin de dato de entrada: 'items' (solo cable, debe resolver a una lista). Pines de flujo de SALIDA: 'loop' (una vez por elemento) y 'done' (al terminar) — NO 'default'. Pines de dato de salida: 'item', 'index'. La cadena conectada a 'loop' NO necesita cable de vuelta: al llegar a un punto muerto, el motor avanza solo al siguiente elemento o sigue por 'done'."
 )
 
 _FLOW_TOOL_PARAMETERS = {
