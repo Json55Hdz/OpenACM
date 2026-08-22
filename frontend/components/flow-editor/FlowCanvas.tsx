@@ -119,6 +119,45 @@ function walkTemplatePath(value: unknown, path: string): { found: boolean; value
   return { found: true, value };
 }
 
+interface PathEntry { path: string; preview: string }
+
+function truncatePreview(value: unknown, max = 40): string {
+  const s = typeof value === 'string' ? value : JSON.stringify(value);
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+// Walks a real testOutputs[ancestorId] value and enumerates every LEAF
+// reachable via a dotted/bracketed path — mirroring exactly the path shape
+// flow_executor.py's substitute_templates resolves (".field" for a dict
+// key, "[N]" for a list index), so every entry this produces is guaranteed
+// to resolve correctly once inserted as {{ancestorId<path>}}. `path` is
+// empty string for a non-nested (scalar) value at the top level; every
+// nested entry's `path` starts with "." or "[" ready to concatenate
+// directly after the ancestor id. Capped at depth 6 / 60 total entries (a
+// real API response can nest arbitrarily) — the cap appends one final
+// "…" entry rather than silently dropping the rest.
+function enumeratePaths(value: unknown, basePath: string, depth = 0, budget = { count: 0 }): PathEntry[] {
+  const MAX_DEPTH = 6;
+  const MAX_ENTRIES = 60;
+  if (depth >= MAX_DEPTH || value === null || typeof value !== 'object') {
+    budget.count += 1;
+    return [{ path: basePath, preview: truncatePreview(value) }];
+  }
+  const entries: PathEntry[] = [];
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      if (budget.count >= MAX_ENTRIES) { entries.push({ path: `${basePath}[…]`, preview: '' }); break; }
+      entries.push(...enumeratePaths(value[i], `${basePath}[${i}]`, depth + 1, budget));
+    }
+  } else {
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      if (budget.count >= MAX_ENTRIES) { entries.push({ path: `${basePath}.…`, preview: '' }); break; }
+      entries.push(...enumeratePaths((value as Record<string, unknown>)[key], `${basePath}.${key}`, depth + 1, budget));
+    }
+  }
+  return entries;
+}
+
 // Local re-implementation of flow_executor.py's substitute_templates rule
 // (bare {{name}} whole-value — params checked BEFORE outputs, matching
 // substitute_templates(template, params, outputs) in flow_executor.py,
@@ -204,27 +243,24 @@ function maxNodeIdSuffix(nodes: Node[]): number {
   return max;
 }
 
-function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: string): string[] {
-  // A node can have multiple incoming edges since merge points were added
-  // (a Conditional's true/false branches sharing a downstream node) — this
-  // collects every ancestor reachable via ANY incoming path, not just a
-  // single linear chain. A Set node reachable via only one branch still
-  // shows up as an insertable reference here; if the flow actually took
-  // the other branch at runtime, referencing it resolves to the existing
-  // "[missing: ...]" marker rather than being silently hidden from the
-  // picker.
-  //
-  // This walk deliberately does NOT filter by edge kind — `edges` now
-  // contains both flow AND data edges (see toReactFlow/toGraphJson), so a
-  // node fed by a data edge from several hops back is discovered as an
-  // ancestor exactly the same way a flow-edge ancestor always was. No
-  // separate data-edge traversal is needed.
+interface VariableSource { id: string; label: string }
+
+// Every ancestor reachable via any incoming edge (flow or data — see the
+// walk below, unchanged from the function this replaces), surfaced as an
+// insertable source: its own raw node id (e.g. "weather", "http1") always,
+// PLUS a Set node's custom alias name (its config.name) if it has one — a
+// Set node is reachable under BOTH its id and its friendly name, since
+// flow_executor.py's Set-node branch writes the value under both keys in
+// `outputs`. Get nodes contribute no separate alias: referencing a Get
+// node's own id resolves to whatever it aliased, exactly like any other
+// node's id would.
+function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: string): VariableSource[] {
   const incomingBySource: Record<string, string[]> = {};
   for (const e of edges) {
     (incomingBySource[e.target] ||= []).push(e.source);
   }
-
-  const names = new Set<string>();
+  const seen = new Set<string>();
+  const sources: VariableSource[] = [];
   const visited = new Set<string>();
   const queue: string[] = [...(incomingBySource[selectedNodeId] || [])];
   while (queue.length > 0) {
@@ -232,36 +268,65 @@ function availableVariableNames(nodes: Node[], edges: Edge[], selectedNodeId: st
     if (visited.has(currentId)) continue;
     visited.add(currentId);
     const node = nodes.find(n => n.id === currentId);
-    const name = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
-    if (name) names.add(name);
+    if (node && !seen.has(node.id)) {
+      seen.add(node.id);
+      sources.push({ id: node.id, label: node.id });
+    }
+    const setName = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
+    if (setName && !seen.has(setName)) {
+      seen.add(setName);
+      sources.push({ id: setName, label: setName });
+    }
     queue.push(...(incomingBySource[currentId] || []));
   }
-  return Array.from(names);
+  return sources;
 }
 
-function VariablePicker({ names, targetRef, value, onInsert }: {
-  names: string[];
+function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outputs }: {
+  nodeId: string;
+  nodes: Node[];
+  edges: Edge[];
   targetRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   value: string;
   onInsert: (newValue: string) => void;
+  outputs: Record<string, unknown> | null;
 }) {
-  if (names.length === 0) return null;
+  const sources = availableVariableSources(nodes, edges, nodeId);
+  if (sources.length === 0) return null;
+
+  const insert = (fullRef: string) => {
+    const insertText = `{{${fullRef}}}`;
+    const el = targetRef.current;
+    const start = el?.selectionStart ?? value.length;
+    const end = el?.selectionEnd ?? value.length;
+    onInsert(value.slice(0, start) + insertText + value.slice(end));
+  };
+
   return (
     <select
       className="acm-input w-full mb-1 text-[10px]"
       value=""
-      onChange={e => {
-        const name = e.target.value;
-        if (!name) return;
-        const insertText = `{{${name}}}`;
-        const el = targetRef.current;
-        const start = el?.selectionStart ?? value.length;
-        const end = el?.selectionEnd ?? value.length;
-        onInsert(value.slice(0, start) + insertText + value.slice(end));
-      }}
+      onChange={e => { if (e.target.value) insert(e.target.value); }}
     >
       <option value="">Insertar variable...</option>
-      {names.map(n => <option key={n} value={n}>{n}</option>)}
+      {sources.map(source => {
+        const val = outputs?.[source.id];
+        const expandable = val !== null && val !== undefined && typeof val === 'object';
+        if (!expandable) {
+          return <option key={source.id} value={source.id}>{source.label}</option>;
+        }
+        const paths = enumeratePaths(val, '');
+        return (
+          <optgroup key={source.id} label={source.label}>
+            <option value={source.id}>{source.label} (todo el valor)</option>
+            {paths.map(p => (
+              <option key={`${source.id}${p.path}`} value={`${source.id}${p.path}`}>
+                {p.path || '(valor)'} → {p.preview}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
     </select>
   );
 }
@@ -847,7 +912,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <InspectorSection title="Request">
                 <label>URL</label>
                 <VariablePicker
-                  names={availableVariableNames(nodes, edges, selectedNode.id)}
+                  nodeId={selectedNode.id}
+                  nodes={nodes}
+                  edges={edges}
+                  outputs={testOutputs}
                   targetRef={urlInputRef}
                   value={String(selectedNode.data.url || '')}
                   onInsert={v => updateSelectedNodeData({ url: v })}
@@ -864,7 +932,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <InspectorSection title="Headers & Body" defaultOpen={false}>
                 <label>Cuerpo (para POST/PUT)</label>
                 <VariablePicker
-                  names={availableVariableNames(nodes, edges, selectedNode.id)}
+                  nodeId={selectedNode.id}
+                  nodes={nodes}
+                  edges={edges}
+                  outputs={testOutputs}
                   targetRef={bodyInputRef}
                   value={String(selectedNode.data.body || '')}
                   onInsert={v => updateSelectedNodeData({ body: v })}
@@ -881,7 +952,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <div className="label text-[var(--acm-fg-4)] mb-1">Condición</div>
               <label>Campo (ej: {'{{http1.status}}'})</label>
               <VariablePicker
-                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                nodeId={selectedNode.id}
+                nodes={nodes}
+                edges={edges}
+                outputs={testOutputs}
                 targetRef={conditionalFieldRef}
                 value={String(selectedNode.data.field || '')}
                 onInsert={v => updateSelectedNodeData({ field: v })}
@@ -931,7 +1005,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               )}
               <label>Término de búsqueda</label>
               <VariablePicker
-                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                nodeId={selectedNode.id}
+                nodes={nodes}
+                edges={edges}
+                outputs={testOutputs}
                 targetRef={searchTermRef}
                 value={String(selectedNode.data.search_term || '')}
                 onInsert={v => updateSelectedNodeData({ search_term: v })}
@@ -947,7 +1024,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <div className="label text-[var(--acm-fg-4)] mb-1">Respuesta</div>
               <label>Plantilla de respuesta</label>
               <VariablePicker
-                names={availableVariableNames(nodes, edges, selectedNode.id)}
+                nodeId={selectedNode.id}
+                nodes={nodes}
+                edges={edges}
+                outputs={testOutputs}
                 targetRef={templateRef}
                 value={String(selectedNode.data.template || '')}
                 onInsert={v => updateSelectedNodeData({ template: v })}
