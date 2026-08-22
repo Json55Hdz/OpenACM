@@ -97,14 +97,6 @@ export function pinProps(nodeType: string, handleId: string | null | undefined, 
   };
 }
 
-function baseStyleFor(type: string): React.CSSProperties {
-  return {
-    padding: '8px 12px', borderRadius: 8, fontSize: 11,
-    background: 'var(--acm-elev)', border: `1px solid ${CATEGORY_COLORS[NODE_CATEGORY[type]]}`,
-    color: 'var(--acm-fg-2)', minWidth: 140,
-  };
-}
-
 const idStyle: React.CSSProperties = {
   fontFamily: 'monospace', fontSize: 10, color: 'var(--acm-accent)', marginTop: 4,
   userSelect: 'all', cursor: 'text',
@@ -134,126 +126,202 @@ function MergeBadge({ id }: { id: string }) {
   return <div style={mergeBadgeStyle} title="Punto de unión (varias ramas llegan aquí)">{flowIncoming.length}</div>;
 }
 
-export function StartNode({ data }: NodeProps) {
-  const out = pinProps('start', 'default', 'source', 'inicio → siguiente nodo');
+function truncate(value: string, max = 24): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
+// One sentence per node TYPE (not per instance) — "what does this kind of
+// node do," shown via the header's (?) icon tooltip.
+const NODE_DESCRIPTIONS: Record<string, string> = {
+  start: 'Punto de entrada del flujo. Define los parámetros que recibe cuando se ejecuta.',
+  http: 'Hace una petición web (GET/POST/...) a una URL y guarda la respuesta para usar en nodos siguientes.',
+  conditional: 'Evalúa una condición sobre un valor y bifurca el flujo en dos ramas: true o false.',
+  woocommerce: 'Busca productos en una tienda WooCommerce conectada y devuelve los resultados.',
+  set: 'Guarda un valor bajo un nombre para poder reutilizarlo más adelante en el flujo.',
+  get: 'Recupera un valor guardado previamente por un nodo Guardar (Set), en cualquier punto del flujo.',
+  end: 'Punto final del flujo. Arma la respuesta final combinando texto fijo y valores de nodos anteriores.',
+};
+
+function InfoIcon({ description }: { description: string }) {
+  if (!description) return null;
   return (
-    <div style={baseStyleFor('start')}>
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.flow }}>▶ Inicio</div>
-      <div style={{ color: 'var(--acm-fg-4)' }}>{(data.parameters as any[] || []).length} parámetro(s)</div>
-      <Handle type="source" position={Position.Bottom} id="default" style={out.style} title={out.title} />
+    <span
+      title={description}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        width: 13, height: 13, borderRadius: '50%', fontSize: 9, fontWeight: 700,
+        color: 'var(--acm-fg-3)', border: '1px solid var(--acm-fg-4)', cursor: 'help',
+        flexShrink: 0,
+      }}
+    >
+      ?
+    </span>
+  );
+}
+
+// Shared card wrapper every node type below renders into: a category-tinted
+// header bar (icon + title + info tooltip) separated from the body, an
+// accent-colored glow when `selected` (a prop React Flow passes to every
+// custom node component — see NodeProps), and `position: relative` so
+// MergeBadge's absolute top-right offset resolves against the whole card
+// regardless of how deep inside `children` it's rendered.
+function NodeCard({ type, icon, title, selected, children }: {
+  type: string; icon: string; title: string; selected?: boolean; children: React.ReactNode;
+}) {
+  const color = CATEGORY_COLORS[NODE_CATEGORY[type]];
+  return (
+    <div
+      style={{
+        borderRadius: 8, fontSize: 11, background: 'var(--acm-elev)',
+        border: `1px solid ${color}`, color: 'var(--acm-fg-2)', minWidth: 160,
+        position: 'relative', overflow: 'visible',
+        boxShadow: selected ? '0 0 0 2px var(--acm-accent), 0 0 12px oklch(0.84 0.16 82 / 0.5)' : 'none',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px',
+          borderRadius: '7px 7px 0 0', borderBottom: `1px solid ${color}`,
+          background: `color-mix(in srgb, ${color} 18%, transparent)`,
+          fontWeight: 600,
+        }}
+      >
+        <span>{icon}</span>
+        <span style={{ flex: 1 }}>{title}</span>
+        <InfoIcon description={NODE_DESCRIPTIONS[type] || ''} />
+      </div>
+      <div style={{ padding: '6px 8px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {children}
+      </div>
     </div>
   );
 }
 
-export function HttpNode({ id, data }: NodeProps) {
+// One row per DATA pin (never a flow pin — those stay on the card's
+// top/bottom edge, unchanged). The Handle renders with `position: 'static'`
+// (overriding React Flow's own default `position: absolute` handle CSS via
+// inline style, which always wins) so it sits in the row's normal flex flow
+// instead of needing a manually-tuned percentage offset — React Flow
+// measures each Handle's actual rendered DOM position for edge-anchoring,
+// so this works regardless of nesting depth. Input rows read
+// pin-then-label(-then-preview) left-aligned; output rows read
+// label-then-pin right-aligned — matching an input's dot-on-the-left /
+// output's dot-on-the-right convention.
+function PinRow({ nodeType, handleId, handleKind, label, literalPreview }: {
+  nodeType: string; handleId: string; handleKind: 'source' | 'target'; label: string; literalPreview?: string;
+}) {
+  const { style, title } = pinProps(nodeType, handleId, handleKind, label);
+  const handleEl = (
+    <Handle
+      type={handleKind}
+      position={handleKind === 'target' ? Position.Left : Position.Right}
+      id={handleId}
+      style={{ ...style, position: 'static' }}
+      title={title}
+    />
+  );
+  if (handleKind === 'target') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, minHeight: 16 }}>
+        {handleEl}
+        <span style={{ color: 'var(--acm-fg-3)' }}>{label}</span>
+        {literalPreview && <span className="mono" style={{ color: 'var(--acm-fg-4)', fontSize: 9 }}>{literalPreview}</span>}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, minHeight: 16 }}>
+      <span style={{ color: 'var(--acm-fg-3)' }}>{label}</span>
+      {handleEl}
+    </div>
+  );
+}
+
+export function StartNode({ data, selected }: NodeProps) {
+  const out = pinProps('start', 'default', 'source', 'inicio → siguiente nodo');
+  return (
+    <NodeCard type="start" icon="▶" title="Inicio" selected={selected}>
+      <div style={{ color: 'var(--acm-fg-4)' }}>{(data.parameters as any[] || []).length} parámetro(s)</div>
+      <Handle type="source" position={Position.Bottom} id="default" style={out.style} title={out.title} />
+    </NodeCard>
+  );
+}
+
+export function HttpNode({ id, data, selected }: NodeProps) {
   const targetConnections = useNodeConnections({ id, handleType: 'target' });
   const urlWired = targetConnections.some(c => c.targetHandle === 'url');
   const bodyWired = targetConnections.some(c => c.targetHandle === 'body');
   const flowIn = pinProps('http', 'default', 'target', 'nodo anterior');
-  const urlPin = pinProps('http', 'url', 'target', 'url');
-  const bodyPin = pinProps('http', 'body', 'target', 'body');
   const flowOut = pinProps('http', 'default', 'source', 'siguiente nodo');
   return (
-    <div style={{ ...baseStyleFor('http'), position: 'relative' }}>
+    <NodeCard type="http" icon="🌐" title="HTTP Request" selected={selected}>
       <MergeBadge id={id} />
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🌐 HTTP Request</div>
-      <div style={{ color: 'var(--acm-fg-4)' }}>
-        {String(data.method || 'GET')} {urlWired ? '🔌 url conectada' : String(data.url || '')}
-      </div>
-      {bodyWired && <div style={{ color: 'var(--acm-fg-4)' }}>🔌 body conectado</div>}
+      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.method || 'GET')}</div>
+      <PinRow nodeType="http" handleId="url" handleKind="target" label="url" literalPreview={urlWired || !data.url ? undefined : truncate(String(data.url))} />
+      <PinRow nodeType="http" handleId="body" handleKind="target" label="body" literalPreview={bodyWired || !data.body ? undefined : truncate(String(data.body))} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: response</div>
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-      {/* Data-input pins for HTTP's wire-or-literal "url"/"body" fields —
-          independent of the flow-in "default" handle above. method/headers
-          stay literal-only, no pin, per the spec's explicit
-          dropdown/template boundary. */}
-      <Handle type="target" position={Position.Left} id="url" style={{ ...urlPin.style, top: '55%' }} title={urlPin.title} />
-      <Handle type="target" position={Position.Left} id="body" style={{ ...bodyPin.style, top: '75%' }} title={bodyPin.title} />
       <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
-    </div>
+    </NodeCard>
   );
 }
 
-export function ConditionalNode({ id, data }: NodeProps) {
+export function ConditionalNode({ id, data, selected }: NodeProps) {
   const flowIn = pinProps('conditional', 'default', 'target', 'nodo anterior');
-  const fieldPin = pinProps('conditional', 'field', 'target', 'field');
-  const valuePin = pinProps('conditional', 'value', 'target', 'value');
   const truePin = pinProps('conditional', 'true', 'source', 'true');
   const falsePin = pinProps('conditional', 'false', 'source', 'false');
   return (
-    <div style={{ ...baseStyleFor('conditional'), position: 'relative' }}>
+    <NodeCard type="conditional" icon="◆" title="Condicional" selected={selected}>
       <MergeBadge id={id} />
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.logic }}>◆ Condicional</div>
-      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.field || '')} {String(data.operator || '')} {String(data.value || '')}</div>
+      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.operator || '')}</div>
+      <PinRow nodeType="conditional" handleId="field" handleKind="target" label="field" literalPreview={data.field ? truncate(String(data.field)) : undefined} />
+      <PinRow nodeType="conditional" handleId="value" handleKind="target" label="value" literalPreview={data.value ? truncate(String(data.value)) : undefined} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: result</div>
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-      {/* Data-input pins for Conditional's wire-or-literal "field"/"value"
-          fields — independent of the flow-in "default" handle above.
-          operator stays dropdown-only, no pin, per the spec's explicit
-          boundary. */}
-      <Handle type="target" position={Position.Left} id="field" style={{ ...fieldPin.style, top: '55%' }} title={fieldPin.title} />
-      <Handle type="target" position={Position.Left} id="value" style={{ ...valuePin.style, top: '75%' }} title={valuePin.title} />
       <Handle type="source" position={Position.Bottom} id="true" style={{ ...truePin.style, left: '30%' }} title={truePin.title} />
       <Handle type="source" position={Position.Bottom} id="false" style={{ ...falsePin.style, left: '70%' }} title={falsePin.title} />
-    </div>
+      {/* Unreal shows a label on every exec pin that isn't a lone default
+          in/out — Conditional's two flow-out branches are exactly that
+          case, so (unlike every other node's single flow-in/flow-out,
+          which stays unlabeled per the spec) these two get a persistent
+          label instead of relying only on the Handle's hover title. */}
+      <div style={{ position: 'absolute', bottom: -14, left: '30%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)' }}>true</div>
+      <div style={{ position: 'absolute', bottom: -14, left: '70%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)' }}>false</div>
+    </NodeCard>
   );
 }
 
-export function WooCommerceNode({ id, data }: NodeProps) {
+export function WooCommerceNode({ id, data, selected }: NodeProps) {
   const flowIn = pinProps('woocommerce', 'default', 'target', 'nodo anterior');
-  const searchTermPin = pinProps('woocommerce', 'search_term', 'target', 'search_term');
   const flowOut = pinProps('woocommerce', 'default', 'source', 'siguiente nodo');
-  const resultPin = pinProps('woocommerce', 'result', 'source', 'result');
-  const countPin = pinProps('woocommerce', 'count', 'source', 'count');
   return (
-    <div style={{ ...baseStyleFor('woocommerce'), position: 'relative' }}>
+    <NodeCard type="woocommerce" icon="🛒" title="WooCommerce" selected={selected}>
       <MergeBadge id={id} />
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.integration }}>🛒 WooCommerce</div>
-      <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.search_term || '')}</div>
+      <PinRow nodeType="woocommerce" handleId="search_term" handleKind="target" label="search_term" literalPreview={data.search_term ? truncate(String(data.search_term)) : undefined} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>salida: result</div>
-      <div style={pinLabelStyle}>salida: count</div>
+      <PinRow nodeType="woocommerce" handleId="result" handleKind="source" label="result" />
+      <PinRow nodeType="woocommerce" handleId="count" handleKind="source" label="count" />
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-      {/* Data-input pin for WooCommerce's wire-or-literal "search_term"
-          field — independent of the flow-in "default" handle above. The
-          Connection selector stays dropdown-only, no pin, per the spec's
-          explicit boundary. */}
-      <Handle type="target" position={Position.Left} id="search_term" style={{ ...searchTermPin.style, top: '55%' }} title={searchTermPin.title} />
       <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
-      {/* Named data-output pins (Task 4's backend {"result": ..., "count":
-          ...} shape) — independent of the flow-out "default" handle above,
-          which keeps its old id/position unchanged so every flow saved
-          before this shipped still renders its existing flow edge
-          correctly. */}
-      <Handle type="source" position={Position.Right} id="result" style={{ ...resultPin.style, top: '40%' }} title={resultPin.title} />
-      <Handle type="source" position={Position.Right} id="count" style={{ ...countPin.style, top: '65%' }} title={countPin.title} />
-    </div>
+    </NodeCard>
   );
 }
 
-export function SetNode({ id, data }: NodeProps) {
+export function SetNode({ id, data, selected }: NodeProps) {
   const flowIn = pinProps('set', 'default', 'target', 'nodo anterior');
-  const valuePin = pinProps('set', 'value', 'target', 'value');
   const flowOut = pinProps('set', 'default', 'source', 'siguiente nodo');
   return (
-    <div style={{ ...baseStyleFor('set'), position: 'relative' }}>
+    <NodeCard type="set" icon="💾" title="Guardar (Set)" selected={selected}>
       <MergeBadge id={id} />
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>💾 Guardar (Set)</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
+      <PinRow nodeType="set" handleId="value" handleKind="target" label="valor (opcional)" />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>entrada: valor (opcional — sin conexión usa el nodo anterior)</div>
       <div style={pinLabelStyle}>salida: value</div>
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-      {/* Second, independent target handle for Set's data-input pin
-          (toHandle="value", matching flow_executor.py's Set-node branch) —
-          can be wired from ANY node's output, not just the flow-immediate
-          predecessor. Falls back to the old previous_id behavior when
-          nothing is wired here. */}
-      <Handle type="target" position={Position.Left} id="value" style={valuePin.style} title={valuePin.title} />
       <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
-    </div>
+    </NodeCard>
   );
 }
 
@@ -264,28 +332,26 @@ export function SetNode({ id, data }: NodeProps) {
 // FlowExecutor.run()'s flow-edge traversal. See resolve_field's Get
 // special case in flow_executor.py (_resolve_pin_value) for how a
 // never-walked Get node's value still gets computed on demand.
-export function GetNode({ id, data }: NodeProps) {
+export function GetNode({ id, data, selected }: NodeProps) {
   const out = pinProps('get', 'default', 'source', 'value');
   return (
-    <div style={baseStyleFor('get')}>
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.data }}>📤 Obtener (Get)</div>
+    <NodeCard type="get" icon="📤" title="Obtener (Get)" selected={selected}>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: value</div>
       <Handle type="source" position={Position.Bottom} id="default" style={out.style} title={out.title} />
-    </div>
+    </NodeCard>
   );
 }
 
-export function EndNode({ id, data }: NodeProps) {
+export function EndNode({ id, data, selected }: NodeProps) {
   const flowIn = pinProps('end', 'default', 'target', 'nodo anterior');
   return (
-    <div style={{ ...baseStyleFor('end'), position: 'relative' }}>
+    <NodeCard type="end" icon="■" title="Final" selected={selected}>
       <MergeBadge id={id} />
-      <div style={{ fontWeight: 600, marginBottom: 4, color: CATEGORY_COLORS.flow }}>■ Final</div>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.template || '')}</div>
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-    </div>
+    </NodeCard>
   );
 }
 
