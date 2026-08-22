@@ -1167,6 +1167,195 @@ class TestIsErrorResult:
         assert is_error_result("Error: unknown node type 'bogus'") is True
 
 
+class TestLoopNode:
+    async def test_loop_runs_body_once_per_item_then_reaches_done(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {}},
+                {"id": "seen", "type": "set", "config": {"name": "seen"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = ["a", "b", "c"]
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, outputs = await executor.run(graph, params={})
+
+        assert result == "Last seen: c, final index: 2"
+        assert outputs["loop1"] == {"item": "c", "index": 2}
+
+    async def test_empty_items_list_skips_straight_to_done(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {}},
+                {"id": "marker", "type": "set", "config": {"name": "should_not_run"}},
+                {"id": "end", "type": "end", "config": {"template": "{{should_not_run}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "marker", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = []
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "[missing: should_not_run]"
+
+    async def test_max_iterations_cap_trips_with_items_remaining(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {"max_iterations": 2}},
+                {"id": "noop", "type": "set", "config": {"name": "noop"}},
+                {"id": "end", "type": "end", "config": {"template": "unreachable"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "noop", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = ["a", "b", "c", "d", "e"]
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "Error in node 'loop1' (loop): reached max_iterations (2) with more items remaining"
+
+    async def test_items_pin_not_wired_returns_error(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "loop1", "type": "loop", "config": {}},
+                {"id": "end", "type": "end", "config": {"template": "done"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        executor = FlowExecutor()
+        result, _ = await executor.run(graph, params={})
+        assert result == "Error in node 'loop1' (loop): 'items' pin is not wired to a list"
+
+    async def test_end_node_inside_loop_body_terminates_the_whole_flow_immediately(self):
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {}},
+                {"id": "end", "type": "end", "config": {"template": "Stopped at {{loop1.item}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "end", "fromHandle": "loop", "kind": "flow"},
+            ],
+        }
+        response = MagicMock()
+        response.json.return_value = ["a", "b", "c"]
+        response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.return_value = response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "Stopped at a"
+
+    async def test_nested_loops_both_trackers_resolve_independently(self):
+        """Outer loop (2 items) wraps an inner loop (3 items). The inner
+        loop's own "done" pin is deliberately left UNWIRED — when the
+        inner loop exhausts, it dead-ends too, which must cascade to
+        advancing the OUTER frame (not error out), proving the stack
+        (not a single value) is what tracks "which loop am I in"."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http_outer", "type": "http", "config": {"url": "https://example.com/outer", "method": "GET"}},
+                {"id": "http_inner", "type": "http", "config": {"url": "https://example.com/inner", "method": "GET"}},
+                {"id": "loop_outer", "type": "loop", "config": {}},
+                {"id": "loop_inner", "type": "loop", "config": {}},
+                {"id": "track", "type": "set", "config": {"name": "last_inner_seen"}},
+                {"id": "end", "type": "end", "config": {
+                    "template": "outer={{loop_outer.item}}:{{loop_outer.index}} inner={{loop_inner.item}}:{{loop_inner.index}} tracked={{last_inner_seen}}"
+                }},
+            ],
+            "edges": [
+                {"from": "start", "to": "http_outer", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_outer", "to": "http_inner", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_inner", "to": "loop_outer", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_outer", "to": "loop_outer", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop_outer", "to": "loop_inner", "fromHandle": "loop", "kind": "flow"},
+                {"from": "http_inner", "to": "loop_inner", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop_inner", "to": "track", "fromHandle": "loop", "kind": "flow"},
+                {"from": "loop_inner", "to": "track", "fromHandle": "item", "toHandle": "value", "kind": "data"},
+                {"from": "loop_outer", "to": "end", "fromHandle": "done", "kind": "flow"},
+            ],
+        }
+        response_outer = MagicMock()
+        response_outer.json.return_value = ["x", "y"]
+        response_outer.raise_for_status = MagicMock()
+        response_inner = MagicMock()
+        response_inner.json.return_value = [1, 2, 3]
+        response_inner.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request.side_effect = [response_outer, response_inner]
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "outer=y:1 inner=3:2 tracked=3"
+
+
 class TestValidateGraph:
     def _valid_graph(self):
         return {
@@ -1262,6 +1451,24 @@ class TestValidateGraph:
         graph = {"nodes": [{"id": "a", "type": "bogus", "config": {}}], "edges": []}
         errors = validate_graph(graph)
         assert len(errors) >= 2  # unknown type AND missing start AND missing end
+
+    def test_loop_node_with_valid_handles_has_no_errors(self):
+        from openacm.core.flow_executor import validate_graph
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://x", "method": "GET"}},
+                {"id": "loop1", "type": "loop", "config": {}},
+                {"id": "end", "type": "end", "config": {"template": "{{loop1.item}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default", "toHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
+                {"from": "loop1", "to": "end", "fromHandle": "done", "toHandle": "default", "kind": "flow"},
+            ],
+        }
+        assert validate_graph(graph) == []
 
 
 class TestConfiglessNodeDoesNotCrash:

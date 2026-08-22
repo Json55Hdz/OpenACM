@@ -91,7 +91,7 @@ def detect_cycle(graph: dict) -> list[str] | None:
 # Mirrors classifyPin() in frontend/components/flow-editor/node-types.tsx —
 # keep both in sync when either changes. Target = a node's flow-in/data-in
 # handle ids; source = its flow-out/data-out handle ids.
-KNOWN_NODE_TYPES = {"start", "http", "conditional", "woocommerce", "set", "get", "end"}
+KNOWN_NODE_TYPES = {"start", "http", "conditional", "woocommerce", "set", "get", "end", "loop"}
 
 NODE_TARGET_HANDLES: dict[str, set[str]] = {
     "start": set(),
@@ -101,6 +101,7 @@ NODE_TARGET_HANDLES: dict[str, set[str]] = {
     "set": {"default", "value"},
     "get": set(),
     "end": {"default"},
+    "loop": {"default", "items"},
 }
 
 NODE_SOURCE_HANDLES: dict[str, set[str]] = {
@@ -111,6 +112,7 @@ NODE_SOURCE_HANDLES: dict[str, set[str]] = {
     "set": {"default"},
     "get": {"default"},
     "end": set(),
+    "loop": {"loop", "done", "item", "index"},
 }
 
 
@@ -321,7 +323,7 @@ class FlowExecutor:
     """Interprets and runs one flow's graph_json against a set of params."""
 
     _CONDITIONAL_OPERATORS = {"contains", "equals", "is_empty", "is_error"}
-    _MAX_NODE_VISITS = 50
+    _MAX_NODE_VISITS = 2000
 
     def __init__(self, get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None):
         self.get_connection = get_connection
@@ -472,8 +474,39 @@ class FlowExecutor:
         current_id = edges_by_source.get(start_node["id"], {}).get("default")
         previous_id: str | None = None
         visits = 0
+        # Tracks "which loop(s) am I inside" as a stack (not a single
+        # value) so nested loops need no special-casing — each `loop` node
+        # entered pushes its own frame on top; a dead end always advances
+        # whichever frame is on TOP, so an inner loop's exhaustion falls
+        # through and advances the outer loop's frame automatically, even
+        # when the inner loop's own "done" pin is left unwired.
+        loop_stack: list[dict[str, Any]] = []
 
-        while current_id:
+        while current_id or loop_stack:
+            if current_id is None:
+                # A dead end inside a loop body — the whole reason this
+                # node type needs no explicit "go back" wiring. Advance the
+                # innermost active loop instead of treating this as
+                # "flow ended without reaching an End node".
+                frame = loop_stack[-1]
+                frame["index"] += 1
+                if frame["index"] >= len(frame["items"]):
+                    loop_stack.pop()
+                    previous_id = frame["loop_node_id"]
+                    current_id = edges_by_source.get(frame["loop_node_id"], {}).get("done")
+                    continue
+                if frame["index"] >= frame["max_iterations"]:
+                    return (
+                        f"Error in node '{frame['loop_node_id']}' (loop): "
+                        f"reached max_iterations ({frame['max_iterations']}) with more items remaining"
+                    ), outputs
+                outputs[frame["loop_node_id"]] = {
+                    "item": frame["items"][frame["index"]], "index": frame["index"],
+                }
+                previous_id = frame["loop_node_id"]
+                current_id = edges_by_source.get(frame["loop_node_id"], {}).get("loop")
+                continue
+
             visits += 1
             if visits > self._MAX_NODE_VISITS:
                 return "Error: flow exceeded maximum node visits (possible cycle)", outputs
@@ -481,6 +514,31 @@ class FlowExecutor:
             node = nodes.get(current_id)
             if node is None:
                 return f"Error: flow references unknown node '{current_id}'", outputs
+
+            if node["type"] == "loop":
+                value_edge = data_edges_by_target.get((node["id"], "items"))
+                items = None
+                if value_edge is not None:
+                    source_id, source_handle = value_edge
+                    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
+                    if found:
+                        items = value
+                if not isinstance(items, list):
+                    return f"Error in node '{node['id']}' (loop): 'items' pin is not wired to a list", outputs
+                if not items:
+                    previous_id = current_id
+                    current_id = edges_by_source.get(node["id"], {}).get("done")
+                    continue
+                loop_stack.append({
+                    "loop_node_id": node["id"],
+                    "items": items,
+                    "index": 0,
+                    "max_iterations": node["config"].get("max_iterations", 200),
+                })
+                outputs[node["id"]] = {"item": items[0], "index": 0}
+                previous_id = current_id
+                current_id = edges_by_source.get(node["id"], {}).get("loop")
+                continue
 
             if node["type"] == "end":
                 template = node["config"].get("template", "")
