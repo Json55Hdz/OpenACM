@@ -397,13 +397,13 @@ function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outp
 
 const NODE_CATEGORIES: Array<{ label: string; types: Array<keyof typeof NODE_TYPES> }> = [
   { label: 'FLUJO', types: ['start', 'end'] },
-  { label: 'LÓGICA', types: ['conditional'] },
+  { label: 'LÓGICA', types: ['conditional', 'loop'] },
   { label: 'INTEGRACIONES', types: ['http', 'woocommerce'] },
   { label: 'DATOS', types: ['set', 'get'] },
 ];
 
 const NODE_LABELS: Record<keyof typeof NODE_TYPES, string> = {
-  start: '▶ Inicio', end: '■ Final', conditional: '◆ Condicional',
+  start: '▶ Inicio', end: '■ Final', conditional: '◆ Condicional', loop: '🔁 Bucle (Por cada)',
   http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', set: '💾 Guardar (Set)', get: '📤 Obtener (Get)',
 };
 
@@ -596,6 +596,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       start: { parameters: [] },
       http: { url: '', method: 'GET', headers: {}, body: '' },
       conditional: { field: '', operator: 'contains', value: '' },
+      loop: { max_iterations: 200 },
       woocommerce: { connection_id: null, search_term: '' },
       set: { name: '' },
       get: { name: '' },
@@ -1121,6 +1122,19 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
                 placeholder="ej: resultado_busqueda"
                 value={String(selectedNode.data.name || '')}
                 onChange={e => updateSelectedNodeData({ name: e.target.value })}
+              />
+            </>
+          )}
+          {selectedNode.type === 'loop' && (
+            <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Bucle (Por cada)</div>
+              <label>Máximo de iteraciones</label>
+              <input
+                type="number"
+                min={1}
+                className="acm-input w-full"
+                value={String(selectedNode.data.max_iterations ?? 200)}
+                onChange={e => updateSelectedNodeData({ max_iterations: Number(e.target.value) })}
               />
             </>
           )}

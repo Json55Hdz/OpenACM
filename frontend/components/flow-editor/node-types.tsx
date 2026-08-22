@@ -15,6 +15,7 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
   start: 'flow',
   end: 'flow',
   conditional: 'logic',
+  loop: 'logic',
   http: 'integration',
   woocommerce: 'integration',
   set: 'data',
@@ -61,6 +62,7 @@ export function classifyPin(nodeType: string | undefined, handleId: string | nul
     return id === 'default' ? 'flow' : 'data';
   }
   if (nodeType === 'conditional' && (id === 'true' || id === 'false')) return 'flow';
+  if (nodeType === 'loop' && (id === 'loop' || id === 'done')) return 'flow';
   return id === 'default' ? 'flow' : 'data';
 }
 
@@ -136,6 +138,7 @@ const NODE_DESCRIPTIONS: Record<string, string> = {
   start: 'Punto de entrada del flujo. Define los parámetros que recibe cuando se ejecuta.',
   http: 'Hace una petición web (GET/POST/...) a una URL y guarda la respuesta para usar en nodos siguientes.',
   conditional: 'Evalúa una condición sobre un valor y bifurca el flujo en dos ramas: true o false.',
+  loop: 'Repite una cadena de nodos una vez por cada elemento de una lista. No hace falta conectar nada de vuelta: cuando la cadena del cuerpo llega a un punto muerto, sigue automáticamente con el próximo elemento.',
   woocommerce: 'Busca productos en una tienda WooCommerce conectada y devuelve los resultados.',
   set: 'Guarda un valor bajo un nombre para poder reutilizarlo más adelante en el flujo.',
   get: 'Recupera un valor guardado previamente por un nodo Guardar (Set), en cualquier punto del flujo.',
@@ -299,6 +302,30 @@ export function ConditionalNode({ id, data, selected }: NodeProps) {
   );
 }
 
+export function LoopNode({ id, data, selected }: NodeProps) {
+  const flowIn = pinProps('loop', 'default', 'target', 'nodo anterior');
+  const loopPin = pinProps('loop', 'loop', 'source', 'loop');
+  const donePin = pinProps('loop', 'done', 'source', 'done');
+  return (
+    <NodeCard type="loop" icon="🔁" title="Bucle (Por cada)" selected={selected}>
+      <MergeBadge id={id} />
+      <PinRow nodeType="loop" handleId="items" handleKind="target" label="items" />
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <PinRow nodeType="loop" handleId="item" handleKind="source" label="item" />
+      <PinRow nodeType="loop" handleId="index" handleKind="source" label="index" />
+      <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
+      <Handle type="source" position={Position.Bottom} id="loop" style={{ ...loopPin.style, left: '30%' }} title={loopPin.title} />
+      <Handle type="source" position={Position.Bottom} id="done" style={{ ...donePin.style, left: '70%' }} title={donePin.title} />
+      {/* Same reasoning as Conditional's true/false labels: two flow-out
+          pins on one node need persistent labels, unlike every other
+          node's single flow-in/flow-out pair. pointerEvents: 'none' keeps
+          them from stealing clicks meant for the diamond pins underneath. */}
+      <div style={{ position: 'absolute', bottom: -14, left: '30%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)', pointerEvents: 'none' }}>loop</div>
+      <div style={{ position: 'absolute', bottom: -14, left: '70%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)', pointerEvents: 'none' }}>done</div>
+    </NodeCard>
+  );
+}
+
 export function WooCommerceNode({ id, data, selected }: NodeProps) {
   const targetConnections = useNodeConnections({ id, handleType: 'target' });
   const searchTermWired = targetConnections.some(c => c.targetHandle === 'search_term');
@@ -365,6 +392,7 @@ export const NODE_TYPES = {
   start: StartNode,
   http: HttpNode,
   conditional: ConditionalNode,
+  loop: LoopNode,
   woocommerce: WooCommerceNode,
   set: SetNode,
   get: GetNode,
