@@ -102,7 +102,7 @@ NODE_TARGET_HANDLES: dict[str, set[str]] = {
     "http": {"default", "url", "body"},
     "conditional": {"default", "field", "value"},
     "woocommerce": {"default", "search_term"},
-    "set": {"default", "value"},
+    "set": {"value"},
     "get": set(),
     "end": {"default"},
     "loop": {"default", "items"},
@@ -113,7 +113,7 @@ NODE_SOURCE_HANDLES: dict[str, set[str]] = {
     "http": {"default", "response"},
     "conditional": {"true", "false", "result"},
     "woocommerce": {"default", "result", "count"},
-    "set": {"default", "value"},
+    "set": {"value"},
     "get": {"default"},
     "end": set(),
     "loop": {"loop", "done", "item", "index"},
@@ -230,13 +230,20 @@ def _walk_template_path(value: Any, path: str) -> tuple[bool, Any]:
     return True, value
 
 
-def substitute_templates(template: str, params: dict[str, Any], outputs: dict[str, Any]) -> str:
+def substitute_templates(
+    template: str, params: dict[str, Any], outputs: dict[str, Any],
+    nodes: dict[str, dict] | None = None,
+    data_edges_by_target: dict[tuple[str, str], tuple[str, str]] | None = None,
+) -> str:
     """Replace {{name}} / {{node_id.field}} / {{node_id.field[0].sub}}
     references in template.
 
     {{name}} (no path): checks params first, then node outputs, for an
     exact key match — substitutes the whole value (stringified) if found
-    in either, else the literal marker "[missing: name]".
+    in either, else the literal marker "[missing: name]". A name/node-id
+    not yet in outputs gets one on-demand computation attempt first (see
+    _ensure_output_computed) — this is how a pure Set node's value gets
+    produced, since nothing writes it to outputs proactively.
 
     {{node_id<path>}} (with a dotted/bracketed path): only looks in node
     outputs, walking each ".field" as a dict-key lookup and each "[N]" as a
@@ -244,16 +251,24 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
     path can't be resolved (unknown node_id, wrong container type, missing
     key, out-of-range index), substitutes "[missing: node_id<path>]" —
     never a silent empty string or partial value.
+
+    `nodes`/`data_edges_by_target` are optional so every existing
+    direct-unit-test call (which only exercises params/outputs lookups,
+    never a pure Set) keeps working unchanged; every real call site in
+    this module passes both.
     """
+    nodes = nodes or {}
+    data_edges_by_target = data_edges_by_target or {}
+
     def _replace(match: re.Match) -> str:
         name, path = match.group(1), match.group(2)
         if not path:
             if name in params:
                 return str(params[name])
-            if name in outputs:
+            if _ensure_output_computed(name, nodes, outputs, data_edges_by_target):
                 return _stringify_whole_value(outputs[name])
             return f"[missing: {name}]"
-        if name not in outputs:
+        if not _ensure_output_computed(name, nodes, outputs, data_edges_by_target):
             return f"[missing: {name}{path}]"
         found, value = _walk_template_path(outputs[name], path)
         if not found:
@@ -274,28 +289,96 @@ def substitute_templates(template: str, params: dict[str, Any], outputs: dict[st
 _WHOLE_VALUE_SOURCE_ALIASES = {("http", "response"), ("conditional", "result"), ("set", "value")}
 
 
+def _compute_set_value_on_demand(
+    set_node: dict,
+    nodes: dict[str, dict],
+    outputs: dict[str, Any],
+    data_edges_by_target: dict[tuple[str, str], tuple[str, str]],
+    _resolving: frozenset[str],
+) -> tuple[bool, Any]:
+    """Pure Set nodes (no flow pins) compute their value the first time
+    something actually references them, by pulling it through their own
+    wired "value" input pin — never proactively, since nothing walks a Set
+    node into `outputs` anymore. Caches into outputs[set_id] AND
+    outputs[declared_name] so later references (by node id, by name, or a
+    pin wired straight to this node) all see the same value without
+    recomputing.
+
+    `_resolving` guards against two Set nodes wired into each other (a
+    data-edge cycle) infinite-looping — the save-time cycle check
+    deliberately exempts data edges (a Set aliasing an earlier node's
+    output is allowed to point "backward"), so this is the only thing
+    standing in the way.
+    """
+    set_id = set_node["id"]
+    if set_id in _resolving:
+        return False, None
+    value_edge = data_edges_by_target.get((set_id, "value"))
+    if value_edge is None:
+        return False, None
+    source_id, source_handle = value_edge
+    found, value = _resolve_pin_value(
+        source_id, source_handle, nodes, outputs, data_edges_by_target, _resolving | {set_id},
+    )
+    if not found:
+        return False, None
+    outputs[set_id] = value
+    name = set_node["config"].get("name")
+    if name:
+        outputs[name] = value
+    return True, value
+
+
+def _ensure_output_computed(
+    key: str,
+    nodes: dict[str, dict],
+    outputs: dict[str, Any],
+    data_edges_by_target: dict[tuple[str, str], tuple[str, str]],
+    _resolving: frozenset[str] = frozenset(),
+) -> bool:
+    """True once outputs[key] exists — computing it on demand from a pure
+    Set node if `key` names one (matched by node id OR by its declared
+    variable name) and nothing has triggered it yet."""
+    if key in outputs:
+        return True
+    set_node = nodes.get(key)
+    if set_node is None or set_node.get("type") != "set":
+        set_node = next(
+            (n for n in nodes.values() if n["type"] == "set" and n["config"].get("name") == key),
+            None,
+        )
+    if set_node is None:
+        return False
+    found, _ = _compute_set_value_on_demand(set_node, nodes, outputs, data_edges_by_target, _resolving)
+    return found
+
+
 def _resolve_pin_value(
     source_id: str, source_handle: str, nodes: dict[str, dict], outputs: dict[str, Any],
+    data_edges_by_target: dict[tuple[str, str], tuple[str, str]],
+    _resolving: frozenset[str] = frozenset(),
 ) -> tuple[bool, Any]:
     """Resolve a data edge's source pin to its RAW value (not stringified).
     Returns (True, value) if the source has produced a value, else
     (False, None). Shared by resolve_field() (which stringifies the result
-    for template/text fields) and the `set`-node branch in run() (which
-    needs the actual typed value — e.g. a WooCommerce result dict — not a
-    stringified one), so the Get-node special case below lives in exactly
-    one place.
+    for template/text fields) and run()'s Loop-node items resolution
+    (which needs the actual typed value, not a stringified one).
 
     Get nodes have no flow handles (see the spec's "pure node" section) so
     run()'s flow-walk never visits one and outputs[get_node_id] is never
-    populated the normal way. Evaluate the Get's own name-lookup on demand
-    instead of expecting it to already be in outputs.
+    populated the normal way; Set nodes lost their flow handles too (a
+    later change) for the same reason. Both compute on demand instead of
+    expecting to already be in outputs — see _ensure_output_computed.
     """
     source_node = nodes.get(source_id)
     if source_node is not None and source_node["type"] == "get":
         name = source_node["config"]["name"]
-        if name not in outputs:
+        if not _ensure_output_computed(name, nodes, outputs, data_edges_by_target, _resolving):
             return False, None
         return True, outputs[name]
+
+    if source_node is not None and source_node["type"] == "set" and source_id not in outputs:
+        _compute_set_value_on_demand(source_node, nodes, outputs, data_edges_by_target, _resolving)
 
     if source_id not in outputs:
         return False, None
@@ -327,10 +410,10 @@ def resolve_field(
     """
     edge_source = data_edges_by_target.get((node_id, field_name))
     if edge_source is None:
-        return substitute_templates(cfg[field_name], params, outputs)
+        return substitute_templates(cfg[field_name], params, outputs, nodes, data_edges_by_target)
 
     source_id, source_handle = edge_source
-    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
+    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs, data_edges_by_target)
     if not found:
         marker = source_id if source_handle == "default" else f"{source_id}.{source_handle}"
         return f"[missing: {marker}]"
@@ -358,7 +441,10 @@ class FlowExecutor:
         cfg = node["config"]
         url = resolve_field("url", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
         method = cfg.get("method", "GET").upper()
-        headers = {k: substitute_templates(v, params, outputs) for k, v in (cfg.get("headers") or {}).items()}
+        headers = {
+            k: substitute_templates(v, params, outputs, nodes, data_edges_by_target)
+            for k, v in (cfg.get("headers") or {}).items()
+        }
         # body is optional (defaults to None, not ""); only route it through
         # resolve_field when there's a literal to template-substitute OR a
         # data edge targets it — otherwise leave it exactly None, matching
@@ -490,7 +576,6 @@ class FlowExecutor:
 
         outputs: dict[str, Any] = {}
         current_id = edges_by_source.get(start_node["id"], {}).get("default")
-        previous_id: str | None = None
         visits = 0
         # Tracks "which loop(s) am I inside" as a stack (not a single
         # value) so nested loops need no special-casing — each `loop` node
@@ -510,7 +595,6 @@ class FlowExecutor:
                 frame["index"] += 1
                 if frame["index"] >= len(frame["items"]):
                     loop_stack.pop()
-                    previous_id = frame["loop_node_id"]
                     current_id = edges_by_source.get(frame["loop_node_id"], {}).get("done")
                     continue
                 if frame["index"] >= frame["max_iterations"]:
@@ -521,7 +605,6 @@ class FlowExecutor:
                 outputs[frame["loop_node_id"]] = {
                     "item": frame["items"][frame["index"]], "index": frame["index"],
                 }
-                previous_id = frame["loop_node_id"]
                 current_id = edges_by_source.get(frame["loop_node_id"], {}).get("loop")
                 continue
 
@@ -552,13 +635,12 @@ class FlowExecutor:
                 items = None
                 if value_edge is not None:
                     source_id, source_handle = value_edge
-                    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
+                    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs, data_edges_by_target)
                     if found:
                         items = value
                 if not isinstance(items, list):
                     return f"Error in node '{node['id']}' (loop): 'items' pin is not wired to a list", outputs
                 if not items:
-                    previous_id = current_id
                     current_id = edges_by_source.get(node["id"], {}).get("done")
                     continue
                 # max_iterations must survive a non-int config value (a
@@ -580,45 +662,22 @@ class FlowExecutor:
                     "max_iterations": max_iterations,
                 })
                 outputs[node["id"]] = {"item": items[0], "index": 0}
-                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("loop")
                 continue
 
             if node["type"] == "end":
                 template = node["config"].get("template", "")
-                return substitute_templates(template, params, outputs), outputs
-
-            if node["type"] == "set":
-                # A data edge targeting Set's "value" handle wins if one
-                # exists — it can alias ANY earlier node's output, not just
-                # the immediate flow-predecessor. If none exists (every Set
-                # node saved before this task shipped), fall back to the
-                # old previous_id behavior exactly as it worked before:
-                # previous_id is the node actually visited just before this
-                # one IN THIS RUN — correct even when this node has multiple
-                # incoming edges in the graph (a merge point after a
-                # Conditional's two branches), since only one of those
-                # edges is ever the real predecessor on any given run.
-                value_edge = data_edges_by_target.get((node["id"], "value"))
-                if value_edge is not None:
-                    source_id, source_handle = value_edge
-                    found, value = _resolve_pin_value(source_id, source_handle, nodes, outputs)
-                    if found:
-                        outputs[node["id"]] = value
-                        outputs[node["config"]["name"]] = value
-                elif previous_id and previous_id in outputs:
-                    value = outputs[previous_id]
-                    outputs[node["id"]] = value
-                    outputs[node["config"]["name"]] = value
-                previous_id = current_id
-                current_id = edges_by_source.get(node["id"], {}).get("default")
-                continue
+                return substitute_templates(template, params, outputs, nodes, data_edges_by_target), outputs
 
             if node["type"] == "get":
+                # Get has no flow handles — the UI never gives one a flow
+                # position, so this branch only runs for a hand-built
+                # graph_json that still wires one into the flow. Kept for
+                # exactly that case; a real flow resolves Get purely
+                # on-demand via _resolve_pin_value.
                 name = node["config"]["name"]
-                if name in outputs:
+                if _ensure_output_computed(name, nodes, outputs, data_edges_by_target):
                     outputs[node["id"]] = outputs[name]
-                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
                 continue
 
@@ -633,11 +692,9 @@ class FlowExecutor:
 
             if node["type"] == "conditional":
                 outputs[node["id"]] = result["passthrough"]
-                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("true" if result["branch"] else "false")
             else:
                 outputs[node["id"]] = result
-                previous_id = current_id
                 current_id = edges_by_source.get(node["id"], {}).get("default")
 
         return "Error: flow ended without reaching an End node", outputs

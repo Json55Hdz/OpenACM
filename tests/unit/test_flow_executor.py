@@ -824,7 +824,10 @@ class TestWooCommerceStructuredOutput:
 
 
 def _set_graph(source_type="http", var_name="mi_variable"):
-    """Start -> source_node -> Set(name=var_name) -> End(template referencing the set)."""
+    """Start -> source_node -> End(template referencing the Set). Set has
+    no flow position (it's a pure node) — its "value" pin is wired
+    directly from source_node's default output and computed on demand
+    the moment {{var_name}} is first referenced."""
     source_node = {"id": "src1", "type": source_type, "config": {}}
     if source_type == "http":
         source_node["config"] = {"url": "https://example.com", "method": "GET"}
@@ -836,9 +839,9 @@ def _set_graph(source_type="http", var_name="mi_variable"):
             {"id": "end", "type": "end", "config": {"template": "Valor: {{" + var_name + "}}"}},
         ],
         "edges": [
-            {"from": "start", "to": "src1", "fromHandle": "default"},
-            {"from": "src1", "to": "var1", "fromHandle": "default"},
-            {"from": "var1", "to": "end", "fromHandle": "default"},
+            {"from": "start", "to": "src1", "fromHandle": "default", "kind": "flow"},
+            {"from": "src1", "to": "end", "fromHandle": "default", "kind": "flow"},
+            {"from": "src1", "to": "var1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
         ],
     }
 
@@ -882,13 +885,11 @@ class TestSetNode:
 
         assert result == "Por id: hola mundo"
 
-    async def test_variable_with_no_incoming_edge_aliases_none(self):
-        """A Set node placed directly after Start (or otherwise with no
-        real predecessor output to alias) resolves to the missing-marker,
-        not a crash — substitute_templates already handles a None/missing
-        outputs value via its existing missing-marker logic once the key
-        is simply absent, so the set handler stores nothing for a
-        node with no incoming edge."""
+    async def test_variable_with_nothing_wired_to_its_value_pin_resolves_to_missing(self):
+        """A pure Set node has no flow position and no previous-node
+        fallback anymore — if nothing is wired into its "value" input,
+        referencing its name finds nothing to compute, not a stale or
+        borrowed value."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -896,38 +897,50 @@ class TestSetNode:
                 {"id": "end", "type": "end", "config": {"template": "{{huerfana}}"}},
             ],
             "edges": [
-                {"from": "start", "to": "var1", "fromHandle": "default"},
-                {"from": "var1", "to": "end", "fromHandle": "default"},
+                {"from": "start", "to": "end", "fromHandle": "default", "kind": "flow"},
             ],
         }
         executor = FlowExecutor()
         result, _ = await executor.run(graph, params={})
         assert result == "[missing: huerfana]"
 
-    async def test_two_variables_with_the_same_name_last_one_wins(self):
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = "segundo valor"
-        mock_response.json.side_effect = ValueError("not json")
-        mock_response.raise_for_status = MagicMock()
+    async def test_two_variables_with_the_same_name_first_match_in_node_order_wins(self):
+        """Pure Set nodes have no execution order, so "two Sets sharing a
+        name" no longer has a "last one to run" — resolution just takes
+        the first matching Set node in the graph's node list. Not a shape
+        a real flow should build deliberately; documented here so the
+        behavior is at least deterministic instead of silently
+        arbitrary."""
+        response_a = MagicMock()
+        response_a.headers = {"content-type": "text/plain"}
+        response_a.text = "primer valor"
+        response_a.json.side_effect = ValueError("not json")
+        response_a.raise_for_status = MagicMock()
+        response_b = MagicMock()
+        response_b.headers = {"content-type": "text/plain"}
+        response_b.text = "segundo valor"
+        response_b.json.side_effect = ValueError("not json")
+        response_b.raise_for_status = MagicMock()
         mock_client = AsyncMock()
-        mock_client.request.return_value = mock_response
+        mock_client.request.side_effect = [response_a, response_b]
         mock_client.__aenter__.return_value = mock_client
         mock_client.__aexit__.return_value = False
 
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://a.example.com", "method": "GET"}},
+                {"id": "http2", "type": "http", "config": {"url": "https://b.example.com", "method": "GET"}},
                 {"id": "var1", "type": "set", "config": {"name": "dup"}},
-                {"id": "http1", "type": "http", "config": {"url": "https://example.com", "method": "GET"}},
                 {"id": "var2", "type": "set", "config": {"name": "dup"}},
                 {"id": "end", "type": "end", "config": {"template": "{{dup}}"}},
             ],
             "edges": [
-                {"from": "start", "to": "var1", "fromHandle": "default"},
-                {"from": "var1", "to": "http1", "fromHandle": "default"},
-                {"from": "http1", "to": "var2", "fromHandle": "default"},
-                {"from": "var2", "to": "end", "fromHandle": "default"},
+                {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "http2", "fromHandle": "default", "kind": "flow"},
+                {"from": "http2", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "var1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
+                {"from": "http2", "to": "var2", "fromHandle": "default", "toHandle": "value", "kind": "data"},
             ],
         }
 
@@ -935,25 +948,26 @@ class TestSetNode:
             executor = FlowExecutor()
             result, _ = await executor.run(graph, params={})
 
-        assert result == "segundo valor"
+        assert result == "primer valor"
 
-    async def test_set_node_downstream_of_a_merge_uses_the_branch_actually_taken(self):
-        """Two edges point at the same Set node — one from each of a
-        Conditional's branches. Only one branch executes per run, so the
-        Set node must alias whichever branch's output actually reached it,
-        not whichever edge happens to be last in the graph's edge list."""
+    async def test_set_wired_from_a_conditionals_result_pin_works_under_either_branch(self):
+        """Old previous_id-based "downstream of a merge" semantics no
+        longer apply — a pure Set just wires its "value" pin directly to
+        Conditional's "result" pin (the evaluated field value, the same
+        regardless of which branch fired), which doesn't care about flow
+        position at all."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": [{"name": "x", "type": "string", "required": True}]}},
                 {"id": "cond1", "type": "conditional", "config": {"field": "{{x}}", "operator": "equals", "value": "yes"}},
-                {"id": "merge1", "type": "set", "config": {"name": "picked"}},
+                {"id": "picked", "type": "set", "config": {"name": "picked"}},
                 {"id": "end", "type": "end", "config": {"template": "{{picked}}"}},
             ],
             "edges": [
-                {"from": "start", "to": "cond1", "fromHandle": "default"},
-                {"from": "cond1", "to": "merge1", "fromHandle": "true"},
-                {"from": "cond1", "to": "merge1", "fromHandle": "false"},
-                {"from": "merge1", "to": "end", "fromHandle": "default"},
+                {"from": "start", "to": "cond1", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "end", "fromHandle": "true", "kind": "flow"},
+                {"from": "cond1", "to": "end", "fromHandle": "false", "kind": "flow"},
+                {"from": "cond1", "to": "picked", "fromHandle": "result", "toHandle": "value", "kind": "data"},
             ],
         }
         executor = FlowExecutor()
@@ -961,19 +975,16 @@ class TestSetNode:
         result_true, _ = await executor.run(graph, params={"x": "yes"})
         result_false, _ = await executor.run(graph, params={"x": "no"})
 
-        # cond1's passthrough output is the resolved field value itself
-        # (per TestConditionalNode.test_passthrough_output_is_the_evaluated_value_not_the_boolean)
         assert result_true == "yes"
         assert result_false == "no"
 
 
 class TestSetNodeDataEdge:
     async def test_set_value_handle_wired_to_a_far_back_node_aliases_it_correctly(self):
-        """Old previous_id-only logic could only ever alias the node
-        immediately before Set in the chain. A data edge on Set's "value"
-        handle can reach back further — here Set sits after http_b (its
-        immediate flow-predecessor) but is wired to alias http_a's output,
-        several steps earlier."""
+        """A pure Set's "value" pin can wire from ANY node's output, not
+        just an adjacent one in the flow — set1 has no flow position at
+        all; it just pulls http_a's output the moment {{picked}} is
+        referenced, ignoring http_b entirely."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -985,8 +996,7 @@ class TestSetNodeDataEdge:
             "edges": [
                 {"from": "start", "to": "http_a", "fromHandle": "default", "kind": "flow"},
                 {"from": "http_a", "to": "http_b", "fromHandle": "default", "kind": "flow"},
-                {"from": "http_b", "to": "set1", "fromHandle": "default", "kind": "flow"},
-                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_b", "to": "end", "fromHandle": "default", "kind": "flow"},
                 {"from": "http_a", "to": "set1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
             ],
         }
@@ -1012,34 +1022,14 @@ class TestSetNodeDataEdge:
 
         assert result == "from A"
 
-    async def test_no_data_edge_on_value_handle_falls_back_to_previous_id_unchanged(self):
-        # Byte-identical to pre-this-task behavior for every flow saved
-        # before this shipped: no data edges at all, Set aliases its
-        # immediate flow-predecessor via previous_id exactly as before.
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = "hola mundo"
-        mock_response.json.side_effect = ValueError("not json")
-        mock_response.raise_for_status = MagicMock()
-        mock_client = AsyncMock()
-        mock_client.request.return_value = mock_response
-        mock_client.__aenter__.return_value = mock_client
-        mock_client.__aexit__.return_value = False
-
-        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
-            executor = FlowExecutor()
-            result, _ = await executor.run(_set_graph(), params={})
-
-        assert result == "Valor: hola mundo"
-
     async def test_set_value_handle_sourced_from_a_get_node_resolves_via_variable_name(self):
         """A Get node has no flow handles (it's a "pure" node — see
-        _resolve_pin_value's docstring), so run()'s flow-walk never visits
-        it and outputs[get_node_id] is never populated. When a Set node's
-        "value" data edge is sourced from a Get node, resolution must go
-        through the Get's configured variable name instead — exercised
-        here through the real run()/Set-branch code path end-to-end, not
-        just resolve_field()'s own isolated unit tests."""
+        _resolve_pin_value's docstring), and now neither does Set. When a
+        Set node's "value" data edge is sourced from a Get node,
+        resolution must go through the Get's configured variable name
+        instead of the Get node's own id — and that name lookup must
+        itself trigger a THIRD Set node's (set_a's) on-demand computation,
+        since nothing walked it into outputs proactively either."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -1051,9 +1041,8 @@ class TestSetNodeDataEdge:
             ],
             "edges": [
                 {"from": "start", "to": "http_a", "fromHandle": "default", "kind": "flow"},
-                {"from": "http_a", "to": "set_a", "fromHandle": "default", "kind": "flow"},
-                {"from": "set_a", "to": "set2", "fromHandle": "default", "kind": "flow"},
-                {"from": "set2", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_a", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http_a", "to": "set_a", "fromHandle": "default", "toHandle": "value", "kind": "data"},
                 {"from": "get1", "to": "set2", "fromHandle": "default", "toHandle": "value", "kind": "data"},
             ],
         }
@@ -1075,9 +1064,36 @@ class TestSetNodeDataEdge:
         assert outputs["final"] == outputs["some_var"]
         assert "get1" not in outputs
 
+    async def test_two_sets_wired_into_each_other_does_not_infinite_loop(self):
+        """Data edges are exempt from the save-time cycle check (a Set
+        aliasing an earlier node's output is allowed to point "backward")
+        — two Set nodes wired into each other's "value" pin is the one
+        shape that check can't catch. The _resolving guard makes
+        resolution fail closed (a missing marker) instead of recursing
+        forever."""
+        graph = {
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "set_a", "type": "set", "config": {"name": "a"}},
+                {"id": "set_b", "type": "set", "config": {"name": "b"}},
+                {"id": "end", "type": "end", "config": {"template": "{{a}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "set_b", "to": "set_a", "fromHandle": "value", "toHandle": "value", "kind": "data"},
+                {"from": "set_a", "to": "set_b", "fromHandle": "value", "toHandle": "value", "kind": "data"},
+            ],
+        }
+        executor = FlowExecutor()
+        result, _ = await executor.run(graph, params={})
+        assert result == "[missing: a]"
+
 
 def _get_graph(get_name="mi_variable"):
-    """Start -> HTTP -> Set(name=get_name) -> Get(name=get_name) -> End(references the Get node's own id)."""
+    """Start -> HTTP -> Get(name=get_name) -> End(references the Get
+    node's own id). Set(name=get_name) has no flow position — it's wired
+    from HTTP's default output and computed on demand the moment Get (or
+    anything else) first references get_name."""
     return {
         "nodes": [
             {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -1088,8 +1104,8 @@ def _get_graph(get_name="mi_variable"):
         ],
         "edges": [
             {"from": "start", "to": "src1", "fromHandle": "default"},
-            {"from": "src1", "to": "set1", "fromHandle": "default"},
-            {"from": "set1", "to": "get1", "fromHandle": "default"},
+            {"from": "src1", "to": "get1", "fromHandle": "default"},
+            {"from": "src1", "to": "set1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
             {"from": "get1", "to": "end", "fromHandle": "default"},
         ],
     }
@@ -1169,20 +1185,21 @@ class TestIsErrorResult:
 
 class TestLoopNode:
     async def test_loop_runs_body_once_per_item_then_reaches_done(self):
+        # No body node — with Set no longer flow-connectable, "loop1"'s
+        # own outputs (item/index) already carry the state of the last
+        # iteration, so the End template reads that directly instead of
+        # relaying it through a per-iteration Set node.
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {}},
-                {"id": "seen", "type": "set", "config": {"name": "seen"}},
-                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{loop1.item}}, final index: {{loop1.index}}"}},
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
-                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
                 {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1207,14 +1224,12 @@ class TestLoopNode:
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {}},
-                {"id": "marker", "type": "set", "config": {"name": "should_not_run"}},
-                {"id": "end", "type": "end", "config": {"template": "{{should_not_run}}"}},
+                {"id": "end", "type": "end", "config": {"template": "{{loop1.item}}"}},
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop1", "to": "marker", "fromHandle": "loop", "kind": "flow"},
                 {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1230,22 +1245,25 @@ class TestLoopNode:
             executor = FlowExecutor()
             result, _ = await executor.run(graph, params={})
 
-        assert result == "[missing: should_not_run]"
+        # An empty-items loop never writes outputs["loop1"] at all (only
+        # the non-empty branch does) — proof the body was never entered.
+        assert result == "[missing: loop1.item]"
 
     async def test_max_iterations_cap_trips_with_items_remaining(self):
+        # The max_iterations check fires on every dead end regardless of
+        # what (if anything) is wired into the loop's "loop" pin — no body
+        # node is needed to exercise it.
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {"max_iterations": 2}},
-                {"id": "noop", "type": "set", "config": {"name": "noop"}},
                 {"id": "end", "type": "end", "config": {"template": "unreachable"}},
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop1", "to": "noop", "fromHandle": "loop", "kind": "flow"},
                 {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1310,10 +1328,12 @@ class TestLoopNode:
 
     async def test_nested_loops_both_trackers_resolve_independently(self):
         """Outer loop (2 items) wraps an inner loop (3 items). The inner
-        loop's own "done" pin is deliberately left UNWIRED — when the
-        inner loop exhausts, it dead-ends too, which must cascade to
-        advancing the OUTER frame (not error out), proving the stack
-        (not a single value) is what tracks "which loop am I in"."""
+        loop's own "loop" AND "done" pins are BOTH deliberately left
+        UNWIRED (Set can no longer sit in a loop body to give "loop" a
+        target) — when the inner loop exhausts, it dead-ends immediately,
+        which must cascade to advancing the OUTER frame (not error out),
+        proving the stack (not a single value) is what tracks "which loop
+        am I in"."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -1321,9 +1341,8 @@ class TestLoopNode:
                 {"id": "http_inner", "type": "http", "config": {"url": "https://example.com/inner", "method": "GET"}},
                 {"id": "loop_outer", "type": "loop", "config": {}},
                 {"id": "loop_inner", "type": "loop", "config": {}},
-                {"id": "track", "type": "set", "config": {"name": "last_inner_seen"}},
                 {"id": "end", "type": "end", "config": {
-                    "template": "outer={{loop_outer.item}}:{{loop_outer.index}} inner={{loop_inner.item}}:{{loop_inner.index}} tracked={{last_inner_seen}}"
+                    "template": "outer={{loop_outer.item}}:{{loop_outer.index}} inner={{loop_inner.item}}:{{loop_inner.index}}"
                 }},
             ],
             "edges": [
@@ -1333,8 +1352,6 @@ class TestLoopNode:
                 {"from": "http_outer", "to": "loop_outer", "fromHandle": "default", "toHandle": "items", "kind": "data"},
                 {"from": "loop_outer", "to": "loop_inner", "fromHandle": "loop", "kind": "flow"},
                 {"from": "http_inner", "to": "loop_inner", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop_inner", "to": "track", "fromHandle": "loop", "kind": "flow"},
-                {"from": "loop_inner", "to": "track", "fromHandle": "item", "toHandle": "value", "kind": "data"},
                 {"from": "loop_outer", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1353,7 +1370,7 @@ class TestLoopNode:
             executor = FlowExecutor()
             result, _ = await executor.run(graph, params={})
 
-        assert result == "outer=y:1 inner=3:2 tracked=3"
+        assert result == "outer=y:1 inner=3:2"
 
     async def test_non_numeric_max_iterations_falls_back_to_default_instead_of_raising(self):
         """A config value that isn't a clean int (a string from a JSON
@@ -1365,15 +1382,12 @@ class TestLoopNode:
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {"max_iterations": "not-a-number"}},
-                {"id": "seen", "type": "set", "config": {"name": "seen"}},
-                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{loop1.item}}, final index: {{loop1.index}}"}},
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
-                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
                 {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1401,15 +1415,12 @@ class TestLoopNode:
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {"max_iterations": None}},
-                {"id": "seen", "type": "set", "config": {"name": "seen"}},
-                {"id": "end", "type": "end", "config": {"template": "Last seen: {{seen}}, final index: {{loop1.index}}"}},
+                {"id": "end", "type": "end", "config": {"template": "Last seen: {{loop1.item}}, final index: {{loop1.index}}"}},
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "loop1", "fromHandle": "default", "toHandle": "items", "kind": "data"},
-                {"from": "loop1", "to": "seen", "fromHandle": "loop", "kind": "flow"},
-                {"from": "loop1", "to": "seen", "fromHandle": "item", "toHandle": "value", "kind": "data"},
                 {"from": "loop1", "to": "end", "fromHandle": "done", "kind": "flow"},
             ],
         }
@@ -1432,13 +1443,16 @@ class TestLoopNode:
         """A legitimate loop with a large max_iterations and a multi-visit
         body can trip the global _MAX_NODE_VISITS backstop with zero
         actual cycles. The error must name the loop, not claim
-        "possible cycle"."""
+        "possible cycle". The body needs an actual flow-connectable node
+        to rack up visits (a dead-end pass doesn't increment `visits` at
+        all) — Set can no longer fill that role, so a synchronous
+        Conditional (its "false" output left unwired) stands in instead."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
                 {"id": "http1", "type": "http", "config": {"url": "https://example.com/items", "method": "GET"}},
                 {"id": "loop1", "type": "loop", "config": {"max_iterations": 5000}},
-                {"id": "noop", "type": "set", "config": {"name": "noop"}},
+                {"id": "noop", "type": "conditional", "config": {"field": "x", "operator": "equals", "value": "y"}},
                 {"id": "end", "type": "end", "config": {"template": "unreachable"}},
             ],
             "edges": [
@@ -1485,8 +1499,7 @@ class TestWholeValueSourcePinAliases:
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
-                {"from": "http1", "to": "set1", "fromHandle": "default", "kind": "flow"},
-                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "end", "fromHandle": "default", "kind": "flow"},
                 {"from": "http1", "to": "set1", "fromHandle": "response", "toHandle": "value", "kind": "data"},
             ],
         }
@@ -1514,8 +1527,7 @@ class TestWholeValueSourcePinAliases:
             ],
             "edges": [
                 {"from": "start", "to": "cond1", "fromHandle": "default", "kind": "flow"},
-                {"from": "cond1", "to": "set1", "fromHandle": "true", "kind": "flow"},
-                {"from": "set1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "cond1", "to": "end", "fromHandle": "true", "kind": "flow"},
                 {"from": "cond1", "to": "set1", "fromHandle": "result", "toHandle": "value", "kind": "data"},
             ],
         }
@@ -1524,11 +1536,10 @@ class TestWholeValueSourcePinAliases:
         assert result == "zapatos"
 
     async def test_set_value_pin_yields_the_aliased_value_to_a_downstream_node(self):
-        """set1 has no wired "value" target pin — it falls back to
-        aliasing http1's output (its flow-immediate predecessor), exactly
-        as it already does today. What's new here is set2 reading THAT
-        captured value back out via set1's "value" SOURCE pin, rather than
-        via set1's {{captured}} template name."""
+        """set2 reads set1's captured value via set1's "value" SOURCE pin,
+        rather than via set1's {{captured}} template name — proving a data
+        edge wired directly to a Set node's own output resolves it on
+        demand too, not just a bare-name template reference."""
         graph = {
             "nodes": [
                 {"id": "start", "type": "start", "config": {"parameters": []}},
@@ -1539,9 +1550,8 @@ class TestWholeValueSourcePinAliases:
             ],
             "edges": [
                 {"from": "start", "to": "http1", "fromHandle": "default", "kind": "flow"},
-                {"from": "http1", "to": "set1", "fromHandle": "default", "kind": "flow"},
-                {"from": "set1", "to": "set2", "fromHandle": "default", "kind": "flow"},
-                {"from": "set2", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "end", "fromHandle": "default", "kind": "flow"},
+                {"from": "http1", "to": "set1", "fromHandle": "default", "toHandle": "value", "kind": "data"},
                 {"from": "set1", "to": "set2", "fromHandle": "value", "toHandle": "value", "kind": "data"},
             ],
         }

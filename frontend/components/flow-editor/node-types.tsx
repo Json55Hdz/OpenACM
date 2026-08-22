@@ -45,8 +45,13 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //                 source "item"/"index"                             -> data
 //   woocommerce:  target "default" -> flow; target "search_term"  -> data;
 //                 source "default" -> flow; source "result"/"count" -> data
-//   set:          target "default" -> flow; target "value"        -> data;
-//                 source "default" -> flow; source "value"          -> data
+//   set:          NO flow handles at all — target "value" -> data;
+//                 source "value" -> data. Set is a pure node (like Get,
+//                 below): run() never flow-walks one, so it needs no
+//                 "default" handle on either side. Its "value" target
+//                 pin is the only way to feed it a value now — the old
+//                 no-wire-falls-back-to-previous-flow-node behavior is
+//                 gone along with the flow pins that made it meaningful.
 //   get:          ONE handle only — source, id="default" — but Get is a
 //                 pure node (no flow-in/flow-out concept at all, see
 //                 GetNode's comment below) and that "default" id carries
@@ -56,10 +61,12 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //                 its flow-out pin.
 //
 // For every target handle, "default" is the flow-in pin and every other
-// named target handle is a data pin. For every source handle (except
-// Get's, per above), "default", Conditional's "true"/"false", and Loop's
-// "loop"/"done" are flow pins and every other named source handle is a
-// data pin.
+// named target handle is a data pin (Set has no "default" target at all,
+// so every one of its handles falls into the data case). For every source
+// handle (except Get's, per above), "default", Conditional's
+// "true"/"false", and Loop's "loop"/"done" are flow pins and every other
+// named source handle is a data pin (again, Set has no "default" source,
+// so its lone "value" handle is always data).
 export function classifyPin(nodeType: string | undefined, handleId: string | null | undefined, handleKind: 'source' | 'target'): 'flow' | 'data' {
   const id = handleId || 'default';
   if (nodeType === 'get') return 'data';
@@ -141,7 +148,7 @@ const NODE_DESCRIPTIONS: Record<string, string> = {
   conditional: 'Evalúa una condición sobre un valor y bifurca el flujo en dos ramas: true o false.',
   loop: 'Repite una cadena de nodos una vez por cada elemento de una lista. No hace falta conectar nada de vuelta: cuando la cadena del cuerpo llega a un punto muerto, sigue automáticamente con el próximo elemento.',
   woocommerce: 'Busca productos en una tienda WooCommerce conectada y devuelve los resultados.',
-  set: 'Guarda un valor bajo un nombre para poder reutilizarlo más adelante en el flujo.',
+  set: 'Guarda, bajo un nombre, un valor conectado desde otro nodo — para poder reutilizarlo en cualquier punto del flujo.',
   get: 'Recupera un valor guardado previamente por un nodo Guardar (Set), en cualquier punto del flujo.',
   end: 'Punto final del flujo. Arma la respuesta final combinando texto fijo y valores de nodos anteriores.',
 };
@@ -345,18 +352,20 @@ export function WooCommerceNode({ id, data, selected }: NodeProps) {
   );
 }
 
+// Set is a pure data node — no flow-in/flow-out handles, matching Get
+// below (and Unreal Blueprint's pure/non-exec nodes). Its "value" target
+// pin is the only way to feed it a value now: with no flow position,
+// there's no more "previous node in the flow" to silently fall back to
+// when nothing is wired. Whatever first references its name (a bare
+// {{name}} template, or a data edge wired straight to this node) computes
+// it on demand — see _ensure_output_computed in flow_executor.py.
 export function SetNode({ id, data, selected }: NodeProps) {
-  const flowIn = pinProps('set', 'default', 'target', 'nodo anterior');
-  const flowOut = pinProps('set', 'default', 'source', 'siguiente nodo');
   return (
     <NodeCard type="set" icon="💾" title="Guardar (Set)" selected={selected}>
-      <MergeBadge id={id} />
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
-      <PinRow nodeType="set" handleId="value" handleKind="target" label="valor (opcional)" />
+      <PinRow nodeType="set" handleId="value" handleKind="target" label="value" />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <PinRow nodeType="set" handleId="value" handleKind="source" label="value" />
-      <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
-      <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
     </NodeCard>
   );
 }

@@ -283,19 +283,24 @@ interface VariableSource { id: string; label: string }
 // walk below), surfaced as an insertable source: its own raw node id (e.g.
 // "weather", "http1") for most node types, PLUS a Set node's custom alias
 // name (its config.name) if it has one — a Set node is reachable under BOTH
-// its id and its friendly name, since flow_executor.py's Set-node branch
-// writes the value under both keys in `outputs`.
+// its id and its friendly name, since flow_executor.py's Set-node
+// resolution writes the value under both keys in `outputs`.
 //
-// Two node types are exceptions, because their raw id is NEVER a key in
-// `outputs` at flow-run time and would only ever resolve to
-// "[missing: ...]" if offered:
+// Set and Get are BOTH pure nodes now (see SetNode/GetNode's comments in
+// node-types.tsx) — run() never flow-walks either one, so neither has a
+// meaningful "upstream/downstream" graph position any more. Every Set/Get
+// alias in the whole graph is offered unconditionally, on top of (not
+// instead of) the BFS below, which still applies to ordinary flow-walked
+// node ids.
+//
+// Two node types are exceptions to the BFS's raw-id offer, because their
+// raw id is NEVER a key in `outputs` at flow-run time and would only ever
+// resolve to "[missing: ...]" if offered:
 //   - Start: FlowExecutor.run() initializes `outputs = {}` and moves
 //     straight to Start's successor — Start's own id is never written.
-//   - Get: has no flow-in/flow-out handles at all (see GetNode's comment in
-//     node-types.tsx) so it's never flow-walked, and `outputs[get_id]` is
-//     never populated. What a Get node actually surfaces is whatever name
-//     it aliases (its config.name), so that alias — not the Get node's own
-//     id — is offered instead, same as a Set node's alias.
+//   - Get: has no flow-in/flow-out handles at all, so it's never
+//     flow-walked and `outputs[get_id]` is never populated — only its
+//     alias name (handled by the unconditional pass below) resolves.
 function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: string): VariableSource[] {
   const incomingBySource: Record<string, string[]> = {};
   for (const e of edges) {
@@ -303,6 +308,16 @@ function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: 
   }
   const seen = new Set<string>();
   const sources: VariableSource[] = [];
+
+  for (const node of nodes) {
+    if (node.type !== 'set' && node.type !== 'get') continue;
+    const aliasName = node.data.name as string | undefined;
+    if (aliasName && !seen.has(aliasName)) {
+      seen.add(aliasName);
+      sources.push({ id: aliasName, label: aliasName });
+    }
+  }
+
   const visited = new Set<string>();
   const queue: string[] = [...(incomingBySource[selectedNodeId] || [])];
   while (queue.length > 0) {
@@ -313,11 +328,6 @@ function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: 
     if (node && node.type !== 'start' && node.type !== 'get' && !seen.has(node.id)) {
       seen.add(node.id);
       sources.push({ id: node.id, label: node.id });
-    }
-    const aliasName = (node?.type === 'set' || node?.type === 'get') ? (node.data.name as string | undefined) : undefined;
-    if (aliasName && !seen.has(aliasName)) {
-      seen.add(aliasName);
-      sources.push({ id: aliasName, label: aliasName });
     }
     queue.push(...(incomingBySource[currentId] || []));
   }
@@ -636,27 +646,27 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     // pin — classify it so the promoted edge matches what was actually
     // dragged, instead of always assuming a flow-out drag.
     const pinKind = classifyPin(connectionState.fromNode!.type, fromHandleId, 'source');
+    // Set has no flow-in handle at all (it's a pure node — see SetNode's
+    // comment), so a flow-pin drag can no longer wire the new Set directly
+    // into the chain. Wire a DATA edge instead, from whichever handle on
+    // the source node actually carries "its overall value" — for
+    // http/woocommerce/set/start that's the same "default" id the flow pin
+    // uses, but Conditional's flow-out pins are "true"/"false" (its value
+    // pin is "result") and Loop's are "loop"/"done" (its value pin is
+    // "item"), so those need translating rather than reused verbatim.
+    const dataHandleId = pinKind === 'data' ? fromHandleId
+      : connectionState.fromNode!.type === 'conditional' ? 'result'
+      : connectionState.fromNode!.type === 'loop' ? 'item'
+      : fromHandleId;
 
     setNodes(nds => [...nds, { id: newId, type: 'set', position: flowPosition, data: { name } }]);
-    setEdges(eds => [...eds, pinKind === 'data' ? {
-      id: `${fromNodeId}-${newId}-${fromHandleId}-data`,
+    setEdges(eds => [...eds, {
+      id: `${fromNodeId}-${newId}-${dataHandleId}-data`,
       source: fromNodeId,
       target: newId,
-      sourceHandle: fromHandleId,
-      // Dragging a data pin to empty canvas means "save this value" — wire
-      // it into the new Set node's data-input "value" handle, not its
-      // flow-in "default" handle.
+      sourceHandle: dataHandleId,
       targetHandle: 'value',
       data: { kind: 'data' },
-    } : {
-      id: `${fromNodeId}-${newId}-${fromHandleId}-flow`,
-      source: fromNodeId,
-      target: newId,
-      sourceHandle: fromHandleId,
-      // A flow edge — dragging a flow-out handle to empty canvas promotes a
-      // new Set node into the CHAIN (its flow-in "default" handle).
-      targetHandle: 'default',
-      data: { kind: 'flow' },
     }]);
   }, [screenToFlowPosition]);
 
