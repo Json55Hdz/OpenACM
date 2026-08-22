@@ -122,6 +122,13 @@ function walkTemplatePath(value: unknown, path: string): { found: boolean; value
 interface PathEntry { path: string; preview: string }
 
 function truncatePreview(value: unknown, max = 40): string {
+  // A non-null object/array reaches here when the MAX_DEPTH cutoff lands on
+  // a container rather than a scalar (enumeratePaths still emits one entry
+  // for it). Don't JSON.stringify a whole subtree just to slice 40 chars
+  // off the front of it — show a cheap placeholder instead.
+  if (value !== null && typeof value === 'object') {
+    return Array.isArray(value) ? `Array(${value.length})` : '{...}';
+  }
   const s = typeof value === 'string' ? value : JSON.stringify(value);
   return s.length > max ? `${s.slice(0, max)}…` : s;
 }
@@ -129,18 +136,40 @@ function truncatePreview(value: unknown, max = 40): string {
 // Walks a real testOutputs[ancestorId] value and enumerates every LEAF
 // reachable via a dotted/bracketed path — mirroring exactly the path shape
 // flow_executor.py's substitute_templates resolves (".field" for a dict
-// key, "[N]" for a list index), so every entry this produces is guaranteed
-// to resolve correctly once inserted as {{ancestorId<path>}}. `path` is
-// empty string for a non-nested (scalar) value at the top level; every
-// nested entry's `path` starts with "." or "[" ready to concatenate
-// directly after the ancestor id. Capped at depth 6 / 60 total entries (a
-// real API response can nest arbitrarily) — the cap appends one final
-// "…" entry rather than silently dropping the rest.
+// key, "[N]" for a list index). Every object key is checked against
+// VALID_KEY_RE and skipped (not recursed into) if it fails, so every path
+// segment this produces is one either regex actually accepts — meaning
+// every entry this produces is guaranteed to resolve correctly once
+// inserted as {{ancestorId<path>}}, GIVEN ancestorId itself is a valid
+// template name. That's true for every id availableVariableSources offers
+// (node ids are constrained to this same charset — see maxNodeIdSuffix's
+// comment) with one carve-out: a Set/Get node's free-text alias isn't
+// charset-validated on entry, so an alias containing e.g. a space would
+// still fail to resolve — a separate, pre-existing gap this function has
+// no visibility into and doesn't attempt to fix. `path` is empty string for
+// a non-nested (scalar) value at the top level; every nested entry's `path`
+// starts with "." or "[" ready to concatenate directly after the ancestor
+// id. Capped at depth 6 / 60 total nodes visited (a real API response can
+// nest arbitrarily) — the cap appends one final "…" entry rather than
+// silently dropping the rest.
+// A field-name segment is only valid if it matches the same charset both
+// _TEMPLATE_RE (flow_executor.py) and this file's own previewTemplate/
+// walkTemplatePath regexes require ([a-zA-Z0-9_]+). A real API response key
+// like "content-type" or "@odata.context" fails this — and unlike the
+// "[missing: ...]" marker a bad key produces at runtime, a template built
+// from such a key wouldn't match the regex AT ALL, so it would be left as
+// completely unprocessed literal "{{...}}" text with zero diagnostic.
+const VALID_KEY_RE = /^[a-zA-Z0-9_]+$/;
+
 function enumeratePaths(value: unknown, basePath: string, depth = 0, budget = { count: 0 }): PathEntry[] {
   const MAX_DEPTH = 6;
   const MAX_ENTRIES = 60;
+  // Counted once per node VISITED (leaf or container), not just once per
+  // leaf emitted — otherwise a container with no leaf descendants (an empty
+  // object/array, or one that bottoms out entirely in more empty
+  // containers) costs full traversal without ever counting against the cap.
+  budget.count += 1;
   if (depth >= MAX_DEPTH || value === null || typeof value !== 'object') {
-    budget.count += 1;
     return [{ path: basePath, preview: truncatePreview(value) }];
   }
   const entries: PathEntry[] = [];
@@ -152,6 +181,11 @@ function enumeratePaths(value: unknown, basePath: string, depth = 0, budget = { 
   } else {
     for (const key of Object.keys(value as Record<string, unknown>)) {
       if (budget.count >= MAX_ENTRIES) { entries.push({ path: `${basePath}.…`, preview: '' }); break; }
+      // Skip (don't push, don't recurse) a key that isn't a valid template
+      // segment — the whole path from root must be valid, so one bad
+      // segment makes everything beneath it equally unreachable via a
+      // template reference.
+      if (!VALID_KEY_RE.test(key)) continue;
       entries.push(...enumeratePaths((value as Record<string, unknown>)[key], `${basePath}.${key}`, depth + 1, budget));
     }
   }
@@ -246,14 +280,22 @@ function maxNodeIdSuffix(nodes: Node[]): number {
 interface VariableSource { id: string; label: string }
 
 // Every ancestor reachable via any incoming edge (flow or data — see the
-// walk below, unchanged from the function this replaces), surfaced as an
-// insertable source: its own raw node id (e.g. "weather", "http1") always,
-// PLUS a Set node's custom alias name (its config.name) if it has one — a
-// Set node is reachable under BOTH its id and its friendly name, since
-// flow_executor.py's Set-node branch writes the value under both keys in
-// `outputs`. Get nodes contribute no separate alias: referencing a Get
-// node's own id resolves to whatever it aliased, exactly like any other
-// node's id would.
+// walk below), surfaced as an insertable source: its own raw node id (e.g.
+// "weather", "http1") for most node types, PLUS a Set node's custom alias
+// name (its config.name) if it has one — a Set node is reachable under BOTH
+// its id and its friendly name, since flow_executor.py's Set-node branch
+// writes the value under both keys in `outputs`.
+//
+// Two node types are exceptions, because their raw id is NEVER a key in
+// `outputs` at flow-run time and would only ever resolve to
+// "[missing: ...]" if offered:
+//   - Start: FlowExecutor.run() initializes `outputs = {}` and moves
+//     straight to Start's successor — Start's own id is never written.
+//   - Get: has no flow-in/flow-out handles at all (see GetNode's comment in
+//     node-types.tsx) so it's never flow-walked, and `outputs[get_id]` is
+//     never populated. What a Get node actually surfaces is whatever name
+//     it aliases (its config.name), so that alias — not the Get node's own
+//     id — is offered instead, same as a Set node's alias.
 function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: string): VariableSource[] {
   const incomingBySource: Record<string, string[]> = {};
   for (const e of edges) {
@@ -268,14 +310,14 @@ function availableVariableSources(nodes: Node[], edges: Edge[], selectedNodeId: 
     if (visited.has(currentId)) continue;
     visited.add(currentId);
     const node = nodes.find(n => n.id === currentId);
-    if (node && !seen.has(node.id)) {
+    if (node && node.type !== 'start' && node.type !== 'get' && !seen.has(node.id)) {
       seen.add(node.id);
       sources.push({ id: node.id, label: node.id });
     }
-    const setName = node?.type === 'set' ? (node.data.name as string | undefined) : undefined;
-    if (setName && !seen.has(setName)) {
-      seen.add(setName);
-      sources.push({ id: setName, label: setName });
+    const aliasName = (node?.type === 'set' || node?.type === 'get') ? (node.data.name as string | undefined) : undefined;
+    if (aliasName && !seen.has(aliasName)) {
+      seen.add(aliasName);
+      sources.push({ id: aliasName, label: aliasName });
     }
     queue.push(...(incomingBySource[currentId] || []));
   }
@@ -292,6 +334,28 @@ function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outp
   outputs: Record<string, unknown> | null;
 }) {
   const sources = availableVariableSources(nodes, edges, nodeId);
+  // `sources` is a fresh array every render (nodes/edges change identity on
+  // every keystroke elsewhere in the Inspector, via updateSelectedNodeData
+  // → setNodes), so memoizing directly on it would still re-run every
+  // keystroke. Its actual CONTENT — the list of source ids — only changes
+  // when the ancestor topology or an alias name changes, so that's what
+  // enumeratePaths (a real traversal + JSON.stringify cost per source) is
+  // keyed on instead, alongside `outputs` (only changes after a genuine
+  // "Probar flujo" run). This is what keeps path enumeration from re-running
+  // on every unrelated keystroke.
+  const sourceIdsKey = sources.map(s => s.id).join('|');
+  const pathsBySource = useMemo(() => {
+    const map: Record<string, PathEntry[]> = {};
+    for (const source of sources) {
+      const val = outputs?.[source.id];
+      if (val !== null && val !== undefined && typeof val === 'object') {
+        map[source.id] = enumeratePaths(val, '');
+      }
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceIdsKey, outputs]);
+
   if (sources.length === 0) return null;
 
   const insert = (fullRef: string) => {
@@ -315,7 +379,7 @@ function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outp
         if (!expandable) {
           return <option key={source.id} value={source.id}>{source.label}</option>;
         }
-        const paths = enumeratePaths(val, '');
+        const paths = pathsBySource[source.id] || [];
         return (
           <optgroup key={source.id} label={source.label}>
             <option value={source.id}>{source.label} (todo el valor)</option>

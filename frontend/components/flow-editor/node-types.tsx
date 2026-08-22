@@ -126,7 +126,7 @@ function MergeBadge({ id }: { id: string }) {
   return <div style={mergeBadgeStyle} title="Punto de unión (varias ramas llegan aquí)">{flowIncoming.length}</div>;
 }
 
-function truncate(value: string, max = 24): string {
+function truncate(value: string, max = 40): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
@@ -268,6 +268,9 @@ export function HttpNode({ id, data, selected }: NodeProps) {
 }
 
 export function ConditionalNode({ id, data, selected }: NodeProps) {
+  const targetConnections = useNodeConnections({ id, handleType: 'target' });
+  const fieldWired = targetConnections.some(c => c.targetHandle === 'field');
+  const valueWired = targetConnections.some(c => c.targetHandle === 'value');
   const flowIn = pinProps('conditional', 'default', 'target', 'nodo anterior');
   const truePin = pinProps('conditional', 'true', 'source', 'true');
   const falsePin = pinProps('conditional', 'false', 'source', 'false');
@@ -275,8 +278,8 @@ export function ConditionalNode({ id, data, selected }: NodeProps) {
     <NodeCard type="conditional" icon="◆" title="Condicional" selected={selected}>
       <MergeBadge id={id} />
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.operator || '')}</div>
-      <PinRow nodeType="conditional" handleId="field" handleKind="target" label="field" literalPreview={data.field ? truncate(String(data.field)) : undefined} />
-      <PinRow nodeType="conditional" handleId="value" handleKind="target" label="value" literalPreview={data.value ? truncate(String(data.value)) : undefined} />
+      <PinRow nodeType="conditional" handleId="field" handleKind="target" label="field" literalPreview={fieldWired || !data.field ? undefined : truncate(String(data.field))} />
+      <PinRow nodeType="conditional" handleId="value" handleKind="target" label="value" literalPreview={valueWired || !data.value ? undefined : truncate(String(data.value))} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <div style={pinLabelStyle}>salida: result</div>
       <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
@@ -286,20 +289,25 @@ export function ConditionalNode({ id, data, selected }: NodeProps) {
           in/out — Conditional's two flow-out branches are exactly that
           case, so (unlike every other node's single flow-in/flow-out,
           which stays unlabeled per the spec) these two get a persistent
-          label instead of relying only on the Handle's hover title. */}
-      <div style={{ position: 'absolute', bottom: -14, left: '30%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)' }}>true</div>
-      <div style={{ position: 'absolute', bottom: -14, left: '70%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)' }}>false</div>
+          label instead of relying only on the Handle's hover title.
+          pointerEvents: 'none' keeps these purely visual — without it, the
+          label divs can sit on top of the diamond pins' hit-test area in
+          paint order and intercept clicks/drags meant for the Handle. */}
+      <div style={{ position: 'absolute', bottom: -14, left: '30%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)', pointerEvents: 'none' }}>true</div>
+      <div style={{ position: 'absolute', bottom: -14, left: '70%', transform: 'translateX(-50%)', fontSize: 8, color: 'var(--acm-fg-4)', pointerEvents: 'none' }}>false</div>
     </NodeCard>
   );
 }
 
 export function WooCommerceNode({ id, data, selected }: NodeProps) {
+  const targetConnections = useNodeConnections({ id, handleType: 'target' });
+  const searchTermWired = targetConnections.some(c => c.targetHandle === 'search_term');
   const flowIn = pinProps('woocommerce', 'default', 'target', 'nodo anterior');
   const flowOut = pinProps('woocommerce', 'default', 'source', 'siguiente nodo');
   return (
     <NodeCard type="woocommerce" icon="🛒" title="WooCommerce" selected={selected}>
       <MergeBadge id={id} />
-      <PinRow nodeType="woocommerce" handleId="search_term" handleKind="target" label="search_term" literalPreview={data.search_term ? truncate(String(data.search_term)) : undefined} />
+      <PinRow nodeType="woocommerce" handleId="search_term" handleKind="target" label="search_term" literalPreview={searchTermWired || !data.search_term ? undefined : truncate(String(data.search_term))} />
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
       <PinRow nodeType="woocommerce" handleId="result" handleKind="source" label="result" />
       <PinRow nodeType="woocommerce" handleId="count" handleKind="source" label="count" />
