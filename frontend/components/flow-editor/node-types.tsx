@@ -341,13 +341,11 @@ export function SetNode({ id, data, selected }: NodeProps) {
 // special case in flow_executor.py (_resolve_pin_value) for how a
 // never-walked Get node's value still gets computed on demand.
 export function GetNode({ id, data, selected }: NodeProps) {
-  const out = pinProps('get', 'default', 'source', 'value');
   return (
     <NodeCard type="get" icon="📤" title="Obtener (Get)" selected={selected}>
       <div style={{ color: 'var(--acm-fg-4)' }}>{String(data.name || '(sin nombre)')}</div>
       <div style={idStyle}>{'{{'}{id}{'}}'}</div>
-      <div style={pinLabelStyle}>salida: value</div>
-      <Handle type="source" position={Position.Bottom} id="default" style={out.style} title={out.title} />
+      <PinRow nodeType="get" handleId="default" handleKind="source" label="value" />
     </NodeCard>
   );
 }
