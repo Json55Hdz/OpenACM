@@ -141,6 +141,45 @@ class TestSubstituteTemplates:
         )
         assert result == "{'status': 'ok'}"
 
+    def test_array_index_into_a_list_output(self):
+        result = substitute_templates(
+            "{{http1.items[0]}}", params={}, outputs={"http1": {"items": ["first", "second"]}}
+        )
+        assert result == "first"
+
+    def test_nested_array_index_then_field(self):
+        result = substitute_templates(
+            "Temp: {{weather.current_condition[0].temp_C}}",
+            params={}, outputs={"weather": {"current_condition": [{"temp_C": "18"}]}},
+        )
+        assert result == "Temp: 18"
+
+    def test_multiple_array_indices_and_fields_chained(self):
+        result = substitute_templates(
+            "{{weather.nearest_area[0].areaName[0].value}}",
+            params={},
+            outputs={"weather": {"nearest_area": [{"areaName": [{"value": "Bogota"}]}]}},
+        )
+        assert result == "Bogota"
+
+    def test_out_of_range_array_index_is_missing_marker(self):
+        result = substitute_templates(
+            "{{http1.items[5]}}", params={}, outputs={"http1": {"items": ["only-one"]}}
+        )
+        assert result == "[missing: http1.items[5]]"
+
+    def test_array_index_into_a_non_list_is_missing_marker(self):
+        result = substitute_templates(
+            "{{http1.items[0]}}", params={}, outputs={"http1": {"items": "not-a-list"}}
+        )
+        assert result == "[missing: http1.items[0]]"
+
+    def test_field_access_into_a_non_dict_element_is_missing_marker(self):
+        result = substitute_templates(
+            "{{http1.items[0].name}}", params={}, outputs={"http1": {"items": ["just-a-string"]}}
+        )
+        assert result == "[missing: http1.items[0].name]"
+
 
 class TestResolveField:
     def test_no_data_edge_falls_back_to_literal_and_template(self):

@@ -14,7 +14,12 @@ from typing import Any, Callable, Coroutine
 
 import httpx
 
-_TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}")
+# Group 1: the base name (a param or an output/node id). Group 2: the rest
+# of the path, verbatim (e.g. ".current_condition[0].temp_C") — walked one
+# segment at a time by _walk_template_path, not captured segment-by-segment
+# here, since a path can mix an arbitrary number of ".field" and "[N]" hops.
+_TEMPLATE_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)((?:\.[a-zA-Z0-9_]+|\[\d+\])*)\}\}")
+_TEMPLATE_PATH_SEGMENT_RE = re.compile(r"\.([a-zA-Z0-9_]+)|\[(\d+)\]")
 
 # Every early-return string inside FlowExecutor.run() that signals failure
 # (missing Start node, missing param, cycle guard, unknown node/type, a node
@@ -200,31 +205,54 @@ def _stringify_whole_value(value: Any) -> str:
     return str(value)
 
 
+def _walk_template_path(value: Any, path: str) -> tuple[bool, Any]:
+    """Walks a dotted/bracketed path (e.g. ".current_condition[0].temp_C")
+    into `value`, one segment at a time. A ".field" segment must land on a
+    dict with that key; a "[N]" segment must land on a list with that
+    index. Returns (False, None) the instant any segment can't be
+    resolved — never a partial result."""
+    for field, index in _TEMPLATE_PATH_SEGMENT_RE.findall(path):
+        if field:
+            if not (isinstance(value, dict) and field in value):
+                return False, None
+            value = value[field]
+        else:
+            idx = int(index)
+            if not (isinstance(value, list) and 0 <= idx < len(value)):
+                return False, None
+            value = value[idx]
+    return True, value
+
+
 def substitute_templates(template: str, params: dict[str, Any], outputs: dict[str, Any]) -> str:
-    """Replace {{name}} / {{node_id.field}} references in template.
+    """Replace {{name}} / {{node_id.field}} / {{node_id.field[0].sub}}
+    references in template.
 
-    {{name}} (no dot): checks params first, then node outputs, for an exact
-    key match — substitutes the whole value (stringified) if found in
-    either, else the literal marker "[missing: name]".
+    {{name}} (no path): checks params first, then node outputs, for an
+    exact key match — substitutes the whole value (stringified) if found
+    in either, else the literal marker "[missing: name]".
 
-    {{node_id.field}} (with a dot): only looks in node outputs. If that
-    node's output is a dict and field is one of its keys, substitutes that
-    key's value (stringified); in every other case (unknown node_id,
-    non-dict output, or field not a key), substitutes
-    "[missing: node_id.field]" — never a silent empty string.
+    {{node_id<path>}} (with a dotted/bracketed path): only looks in node
+    outputs, walking each ".field" as a dict-key lookup and each "[N]" as a
+    list-index lookup (see _walk_template_path). If any segment along the
+    path can't be resolved (unknown node_id, wrong container type, missing
+    key, out-of-range index), substitutes "[missing: node_id<path>]" —
+    never a silent empty string or partial value.
     """
     def _replace(match: re.Match) -> str:
-        name, field = match.group(1), match.group(2)
-        if field is None:
+        name, path = match.group(1), match.group(2)
+        if not path:
             if name in params:
                 return str(params[name])
             if name in outputs:
                 return _stringify_whole_value(outputs[name])
             return f"[missing: {name}]"
-        value = outputs.get(name)
-        if isinstance(value, dict) and field in value:
-            return str(value[field])
-        return f"[missing: {name}.{field}]"
+        if name not in outputs:
+            return f"[missing: {name}{path}]"
+        found, value = _walk_template_path(outputs[name], path)
+        if not found:
+            return f"[missing: {name}{path}]"
+        return str(value)
 
     return _TEMPLATE_RE.sub(_replace, template)
 

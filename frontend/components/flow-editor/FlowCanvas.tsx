@@ -94,26 +94,50 @@ function stringifyWholeValue(value: unknown): string {
   return String(value);
 }
 
+// Walks a dotted/bracketed path (e.g. ".current_condition[0].temp_C") into
+// `value`, one segment at a time — mirrors flow_executor.py's
+// _walk_template_path exactly: a ".field" segment must land on a plain
+// object with that key (arrays excluded, matching Python's isinstance(...,
+// dict)); a "[N]" segment must land on an array with that index.
+function walkTemplatePath(value: unknown, path: string): { found: boolean; value: unknown } {
+  const segments = path.match(/\.[a-zA-Z0-9_]+|\[\d+\]/g) || [];
+  for (const seg of segments) {
+    if (seg.startsWith('.')) {
+      const field = seg.slice(1);
+      if (value === null || typeof value !== 'object' || Array.isArray(value) || !(field in (value as Record<string, unknown>))) {
+        return { found: false, value: undefined };
+      }
+      value = (value as Record<string, unknown>)[field];
+    } else {
+      const idx = Number(seg.slice(1, -1));
+      if (!Array.isArray(value) || idx < 0 || idx >= value.length) {
+        return { found: false, value: undefined };
+      }
+      value = value[idx];
+    }
+  }
+  return { found: true, value };
+}
+
 // Local re-implementation of flow_executor.py's substitute_templates rule
 // (bare {{name}} whole-value — params checked BEFORE outputs, matching
-// substitute_templates(template, params, outputs) in flow_executor.py:79-84,
+// substitute_templates(template, params, outputs) in flow_executor.py,
 // since Start parameters are never written into the outputs dict returned
 // by /test — it's keyed by node id and Set-node names only;
-// {{node_id.field}} one-level dict lookup against outputs; "[missing: ...]"
-// marker) so the Inspector can preview a resolved value without a network
-// round-trip per keystroke.
+// {{node_id<path>}} walks any number of ".field"/"[N]" hops against
+// outputs via walkTemplatePath; "[missing: ...]" marker) so the Inspector
+// can preview a resolved value without a network round-trip per keystroke.
 function previewTemplate(template: string, params: Record<string, string>, outputs: Record<string, unknown>): string {
-  return template.replace(/\{\{([a-zA-Z0-9_]+)(?:\.([a-zA-Z0-9_]+))?\}\}/g, (_match, name, field) => {
-    if (field === undefined) {
+  return template.replace(/\{\{([a-zA-Z0-9_]+)((?:\.[a-zA-Z0-9_]+|\[\d+\])*)\}\}/g, (_match, name, path) => {
+    if (!path) {
       if (name in params) return String(params[name]);
       if (name in outputs) return stringifyWholeValue(outputs[name]);
       return `[missing: ${name}]`;
     }
-    const value = outputs[name];
-    if (value && typeof value === 'object' && field in (value as Record<string, unknown>)) {
-      return String((value as Record<string, unknown>)[field]);
-    }
-    return `[missing: ${name}.${field}]`;
+    if (!(name in outputs)) return `[missing: ${name}${path}]`;
+    const { found, value } = walkTemplatePath(outputs[name], path);
+    if (!found) return `[missing: ${name}${path}]`;
+    return String(value);
   });
 }
 
