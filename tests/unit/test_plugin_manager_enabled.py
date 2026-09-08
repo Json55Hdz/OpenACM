@@ -18,6 +18,13 @@ class _NavPlugin(Plugin):
         return router
 
 
+class _WebhookPlugin(Plugin):
+    name = "webhook_plugin"
+
+    def get_public_api_paths(self):
+        return ["/v1/webhook-plugin/events"]
+
+
 class TestPluginManagerEnabledState:
     async def test_plugins_property_lists_disabled_plugins_too(self):
         pm = PluginManager()
@@ -86,3 +93,40 @@ class TestPluginManagerEnabledState:
         [item] = pm.get_nav_items()
         assert item["plugin"] == "nav_plugin"
         assert item["path"] == "/nav-plugin"
+
+    def test_get_public_api_paths_defaults_to_empty(self):
+        pm = PluginManager()
+        pm.register(_NavPlugin())
+        assert pm.get_public_api_paths() == set()
+
+    async def test_get_public_api_paths_adds_api_prefix(self):
+        pm = PluginManager()
+        pm.register(_WebhookPlugin())
+        mock_db = AsyncMock()
+        mock_db.is_plugin_enabled.return_value = True
+        await pm.load_enabled_state(mock_db)
+        assert pm.get_public_api_paths() == {"/api/v1/webhook-plugin/events"}
+
+    async def test_get_public_api_paths_excludes_disabled_plugin(self):
+        pm = PluginManager()
+        pm.register(_WebhookPlugin())
+        mock_db = AsyncMock()
+        mock_db.is_plugin_enabled.return_value = False
+        await pm.load_enabled_state(mock_db)
+        assert pm.get_public_api_paths() == set()
+
+    async def test_get_public_api_paths_survives_a_plugin_raising(self):
+        pm = PluginManager()
+
+        class _BrokenPlugin(Plugin):
+            name = "broken_plugin"
+
+            def get_public_api_paths(self):
+                raise RuntimeError("boom")
+
+        pm.register(_BrokenPlugin())
+        pm.register(_WebhookPlugin())
+        mock_db = AsyncMock()
+        mock_db.is_plugin_enabled.return_value = True
+        await pm.load_enabled_state(mock_db)
+        assert pm.get_public_api_paths() == {"/api/v1/webhook-plugin/events"}

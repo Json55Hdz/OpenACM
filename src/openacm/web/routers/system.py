@@ -60,6 +60,16 @@ def register_routes(app: FastAPI) -> None:
             if path in ("/api/auth/check", "/api/ping", "/api/system/info", "/api/config/google/callback"):
                 return await call_next(request)
 
+            # Plugin-declared public paths — routes that verify their own
+            # request authenticity another way (e.g. an HMAC signature from
+            # a third-party webhook) instead of the dashboard token.
+            try:
+                from openacm.plugins import plugin_manager
+                if path in plugin_manager.get_public_api_paths():
+                    return await call_next(request)
+            except Exception:
+                pass
+
             # Check token for other API routes
             token = None
             auth_header = request.headers.get("Authorization", "")

@@ -108,6 +108,19 @@ class Plugin:
         """
         return None
 
+    def get_public_api_paths(self) -> list[str]:
+        """
+        Return API routes (from get_api_router(), relative to /api — e.g.
+        "/my-feature/webhook") that must bypass the dashboard's
+        TokenAuthMiddleware.
+
+        Only for routes that verify their own request authenticity another
+        way (HMAC signature, a third party's own shared secret, etc.) —
+        never to make a route genuinely unauthenticated. The dashboard
+        token still protects every other /api/* route by default.
+        """
+        return []
+
     # ── Extend LLM system prompt ───────────────────────────────
 
     def get_context_extension(self) -> str:
@@ -352,6 +365,20 @@ class PluginManager:
             if self.is_enabled(p.name):
                 items.extend({**item, "plugin": p.name} for item in p.get_nav_items())
         return items
+
+    def get_public_api_paths(self) -> set[str]:
+        """Collect public API paths (full /api/... form) from all ENABLED
+        plugins, for the dashboard's TokenAuthMiddleware to exempt."""
+        paths: set[str] = set()
+        for p in self._plugins:
+            if not self.is_enabled(p.name):
+                continue
+            try:
+                for path in p.get_public_api_paths():
+                    paths.add(f"/api{path}" if not path.startswith("/api") else path)
+            except Exception as exc:
+                log.warning("Failed to get public API paths from plugin", plugin=p.name, error=str(exc))
+        return paths
 
     def get_api_routers(self) -> list[Any]:
         """Collect FastAPI APIRouter instances from all ENABLED plugins (mounted by server.py)."""
