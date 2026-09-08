@@ -544,6 +544,19 @@ class LLMRouter:
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        if self._current_provider == "opencode_go":
+            # OpenCode Go now expects a stable per-conversation session id
+            # to enable server-side routing/prompt-caching optimizations.
+            # Prefer the active channel id (real per-conversation identity);
+            # fall back to a per-router-instance id if no stream context is set.
+            _sctx = getattr(self, "_active_stream_ctx", None)
+            if _sctx and _sctx[1]:
+                headers["x-opencode-session"] = str(_sctx[1])
+            else:
+                if not getattr(self, "_opencode_session_id", None):
+                    import uuid as _uuid_session
+                    self._opencode_session_id = str(_uuid_session.uuid4())
+                headers["x-opencode-session"] = self._opencode_session_id
 
         effective_tc = tool_choice_override or self.get_provider_profile().tool_choice_mode
 
