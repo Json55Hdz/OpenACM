@@ -153,3 +153,62 @@ class TestDedupe:
         assert resp.status_code == 200
         assert resp.json()["result"] == "hola old-body"
         _mock_state.get_flow.assert_not_awaited()
+
+
+class TestAdminCrud:
+    async def test_list_connectors(self, app_client, _mock_state):
+        _mock_state.list_webhook_connectors = AsyncMock(return_value=[CONNECTOR_ROW])
+        async with app_client as ac:
+            resp = await ac.get("/api/webhook-connectors")
+        assert resp.status_code == 200
+        assert resp.json()[0]["slug"] == "pagos"
+
+    async def test_list_masks_secrets(self, app_client, _mock_state):
+        _mock_state.list_webhook_connectors = AsyncMock(return_value=[CONNECTOR_ROW])
+        async with app_client as ac:
+            resp = await ac.get("/api/webhook-connectors")
+        auth_config = json.loads(resp.json()[0]["auth_config"])
+        assert auth_config["token"] == "***"
+
+    async def test_create_connector(self, app_client, _mock_state):
+        _mock_state.create_webhook_connector = AsyncMock(return_value=9)
+        _mock_state.get_webhook_connector = AsyncMock(return_value={**CONNECTOR_ROW, "id": 9})
+        async with app_client as ac:
+            resp = await ac.post("/api/webhook-connectors", json={
+                "slug": "pagos", "name": "Pagos", "auth_scheme": "bearer_token",
+                "auth_config": {"token": "s3cr3t", "header_name": "Authorization"}, "flow_id": 7,
+            })
+        assert resp.status_code == 200
+        assert resp.json()["id"] == 9
+
+    async def test_update_connector(self, app_client, _mock_state):
+        _mock_state.update_webhook_connector = AsyncMock(return_value=True)
+        _mock_state.get_webhook_connector = AsyncMock(return_value=CONNECTOR_ROW)
+        async with app_client as ac:
+            resp = await ac.patch("/api/webhook-connectors/1", json={"enabled": False})
+        assert resp.status_code == 200
+
+    async def test_update_missing_connector_404s(self, app_client, _mock_state):
+        _mock_state.update_webhook_connector = AsyncMock(return_value=False)
+        async with app_client as ac:
+            resp = await ac.patch("/api/webhook-connectors/999", json={"enabled": False})
+        assert resp.status_code == 404
+
+    async def test_delete_connector(self, app_client, _mock_state):
+        _mock_state.delete_webhook_connector = AsyncMock(return_value=True)
+        async with app_client as ac:
+            resp = await ac.delete("/api/webhook-connectors/1")
+        assert resp.status_code == 200
+
+    async def test_get_connector_events(self, app_client, _mock_state):
+        _mock_state.get_webhook_connector = AsyncMock(return_value=CONNECTOR_ROW)
+        _mock_state.list_webhook_connector_events = AsyncMock(return_value=[
+            {"id": 1, "status": "ok", "result": "hola", "received_at": "2026-09-09T00:00:00"}
+        ])
+        _mock_state.get_webhook_connector_stats = AsyncMock(return_value={"total": 1, "by_status": {"ok": 1}})
+        async with app_client as ac:
+            resp = await ac.get("/api/webhook-connectors/1/events")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["stats"]["total"] == 1
+        assert body["events"][0]["status"] == "ok"

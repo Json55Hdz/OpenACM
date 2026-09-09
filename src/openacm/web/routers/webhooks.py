@@ -101,3 +101,75 @@ def register_routes(app: FastAPI) -> None:
             "ok", result, duration_ms,
         )
         return JSONResponse(status_code=200, content={"result": result})
+
+    def _mask_secret(connector: dict) -> dict:
+        masked = dict(connector)
+        auth_config = json.loads(masked["auth_config"])
+        for key in ("secret", "token"):
+            if auth_config.get(key):
+                auth_config[key] = "***"
+        masked["auth_config"] = json.dumps(auth_config)
+        return masked
+
+    @app.get("/api/webhook-connectors")
+    async def list_connectors():
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        rows = await _state.database.list_webhook_connectors()
+        return [_mask_secret(r) for r in rows]
+
+    @app.get("/api/webhook-connectors/{connector_id}")
+    async def get_connector(connector_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        row = await _state.database.get_webhook_connector(connector_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        return _mask_secret(row)
+
+    @app.post("/api/webhook-connectors")
+    async def create_connector(request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        for field in ("slug", "name", "auth_scheme", "auth_config", "flow_id"):
+            if field not in data:
+                raise HTTPException(status_code=400, detail=f"Missing field: {field}")
+        connector_id = await _state.database.create_webhook_connector(
+            slug=data["slug"], name=data["name"], auth_scheme=data["auth_scheme"],
+            auth_config=data["auth_config"], flow_id=data["flow_id"],
+            dedupe_header=data.get("dedupe_header"),
+        )
+        row = await _state.database.get_webhook_connector(connector_id)
+        return _mask_secret(row)
+
+    @app.patch("/api/webhook-connectors/{connector_id}")
+    async def update_connector(connector_id: int, request: Request):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        data = await request.json()
+        ok = await _state.database.update_webhook_connector(connector_id, **data)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        row = await _state.database.get_webhook_connector(connector_id)
+        return _mask_secret(row)
+
+    @app.delete("/api/webhook-connectors/{connector_id}")
+    async def delete_connector(connector_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        ok = await _state.database.delete_webhook_connector(connector_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        return {"status": "ok", "deleted": True}
+
+    @app.get("/api/webhook-connectors/{connector_id}/events")
+    async def get_connector_events(connector_id: int):
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        connector = await _state.database.get_webhook_connector(connector_id)
+        if not connector:
+            raise HTTPException(status_code=404, detail="Connector not found")
+        events = await _state.database.list_webhook_connector_events(connector_id)
+        stats = await _state.database.get_webhook_connector_stats(connector_id)
+        return {"events": events, "stats": stats}
