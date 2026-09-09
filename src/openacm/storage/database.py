@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 36
+    _SCHEMA_VERSION = 37
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1081,6 +1081,42 @@ class Database:
             await self._db.commit()
             log.info("Migration 36: one-skill-per-flow unique index (race-condition guard)")
 
+        # ── Migration 37: webhook connectors ──────────────────────────────
+        # A connector = a dashboard-configured, publicly reachable webhook
+        # (POST /api/webhooks/{slug}) that verifies its own request per
+        # auth_scheme/auth_config and runs flow_id on a valid request. See
+        # docs/superpowers/specs/2026-09-09-webhook-connectors-and-agent-flow-node-design.md.
+        if current < 37:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS webhook_connectors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    slug TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL,
+                    auth_scheme TEXT NOT NULL,
+                    auth_config TEXT NOT NULL,
+                    flow_id INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+                    dedupe_header TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS webhook_connector_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    connector_id INTEGER NOT NULL REFERENCES webhook_connectors(id) ON DELETE CASCADE,
+                    dedupe_key TEXT,
+                    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    body TEXT,
+                    status TEXT NOT NULL,
+                    result TEXT,
+                    duration_ms INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS idx_webhook_connector_events_connector
+                    ON webhook_connector_events(connector_id);
+                CREATE INDEX IF NOT EXISTS idx_webhook_connector_events_dedupe
+                    ON webhook_connector_events(connector_id, dedupe_key);
+            """)
+            await self._db.commit()
+            log.info("Migration 37: webhook connectors (webhook_connectors, webhook_connector_events)")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1721,6 +1757,138 @@ class Database:
         cursor = await self._db.execute(query, params)
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # ─── Webhook Connectors ───────────────────────────────────
+
+    async def create_webhook_connector(
+        self,
+        slug: str,
+        name: str,
+        auth_scheme: str,
+        auth_config: dict[str, Any],
+        flow_id: int,
+        dedupe_header: str | None = None,
+    ) -> int:
+        if not self._db:
+            return 0
+        import json
+        cursor = await self._db.execute(
+            "INSERT INTO webhook_connectors (slug, name, auth_scheme, auth_config, flow_id, dedupe_header) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (slug, name, auth_scheme, json.dumps(auth_config), flow_id, dedupe_header),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_webhook_connector(self, connector_id: int) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM webhook_connectors WHERE id = ?", (connector_id,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_webhook_connector_by_slug(self, slug: str) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute("SELECT * FROM webhook_connectors WHERE slug = ?", (slug,))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_webhook_connectors(self) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute("SELECT * FROM webhook_connectors ORDER BY name")
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def update_webhook_connector(self, connector_id: int, **kwargs: Any) -> bool:
+        if not self._db:
+            return False
+        import json
+        allowed = {"name", "auth_scheme", "auth_config", "flow_id", "enabled", "dedupe_header"}
+        updates, params = [], []
+        for key, val in kwargs.items():
+            if key not in allowed:
+                continue
+            if key == "auth_config" and isinstance(val, dict):
+                val = json.dumps(val)
+            updates.append(f"{key} = ?")
+            params.append(val)
+        if not updates:
+            return False
+        query = f"UPDATE webhook_connectors SET {', '.join(updates)} WHERE id = ?"
+        params.append(connector_id)
+        cursor = await self._db.execute(query, params)
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def delete_webhook_connector(self, connector_id: int) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute("DELETE FROM webhook_connectors WHERE id = ?", (connector_id,))
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def record_webhook_connector_event(
+        self,
+        connector_id: int,
+        dedupe_key: str | None,
+        body: str,
+        status: str,
+        result: str | None,
+        duration_ms: int,
+    ) -> int:
+        if not self._db:
+            return 0
+        cursor = await self._db.execute(
+            "INSERT INTO webhook_connector_events "
+            "(connector_id, dedupe_key, body, status, result, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            (connector_id, dedupe_key, body, status, result, duration_ms),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def find_webhook_connector_event_by_dedupe_key(
+        self, connector_id: int, dedupe_key: str
+    ) -> dict[str, Any] | None:
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT * FROM webhook_connector_events WHERE connector_id = ? AND dedupe_key = ? "
+            "ORDER BY received_at ASC LIMIT 1",
+            (connector_id, dedupe_key),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def list_webhook_connector_events(self, connector_id: int, limit: int = 50) -> list[dict[str, Any]]:
+        if not self._db:
+            return []
+        cursor = await self._db.execute(
+            "SELECT * FROM webhook_connector_events WHERE connector_id = ? "
+            "ORDER BY received_at DESC LIMIT ?",
+            (connector_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_webhook_connector_stats(self, connector_id: int) -> dict[str, Any]:
+        if not self._db:
+            return {"total": 0, "by_status": {}}
+        total_cursor = await self._db.execute(
+            "SELECT COUNT(*) AS c FROM webhook_connector_events WHERE connector_id = ?", (connector_id,)
+        )
+        total_row = await total_cursor.fetchone()
+        by_status_cursor = await self._db.execute(
+            "SELECT status, COUNT(*) AS c FROM webhook_connector_events "
+            "WHERE connector_id = ? GROUP BY status",
+            (connector_id,),
+        )
+        by_status_rows = await by_status_cursor.fetchall()
+        return {
+            "total": total_row["c"],
+            "by_status": {r["status"]: r["c"] for r in by_status_rows},
+        }
 
     # ─── Agent Connections ────────────────────────────────────
 
