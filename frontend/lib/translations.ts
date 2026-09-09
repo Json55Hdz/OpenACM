@@ -51,6 +51,7 @@ export const translations = {
     cron: 'Cron Scheduler',
     swarms: 'Swarms',
     content: 'Auto Content',
+    webhookConnectors: 'Conectores',
     logout: 'Log out',
     menu: 'Menu',
   },

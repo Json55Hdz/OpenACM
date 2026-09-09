@@ -24,6 +24,7 @@ import {
   Puzzle,
   PanelLeftClose,
   PanelLeftOpen,
+  Webhook,
 } from 'lucide-react';
 import { useChatStore } from '@/stores/chat-store';
 import { useAuthStore } from '@/stores/auth-store';
@@ -53,6 +54,7 @@ const coreNavItems = [
   { href: '/skills', label: t.skills, icon: Brain },
   { href: '/agents', label: t.agents, icon: Bot },
   { href: '/mcp', label: t.mcp, icon: Plug },
+  { href: '/webhook-connectors', label: t.webhookConnectors, icon: Webhook },
   { href: '/debug', label: t.debug, icon: Bug },
   { href: '/config', label: t.config, icon: Settings },
   { href: '/plugins', label: t.plugins, icon: Puzzle },
