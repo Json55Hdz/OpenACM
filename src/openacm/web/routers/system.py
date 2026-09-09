@@ -70,6 +70,12 @@ def register_routes(app: FastAPI) -> None:
             except Exception:
                 pass
 
+            # Webhook connectors verify their own request authenticity per
+            # their configured auth_scheme (see webhook_auth.py) — never
+            # the dashboard token.
+            if path.startswith("/api/webhooks/"):
+                return await call_next(request)
+
             # Check token for other API routes
             token = None
             auth_header = request.headers.get("Authorization", "")
