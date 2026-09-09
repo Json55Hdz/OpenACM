@@ -8,7 +8,9 @@ export interface WebhookConnector {
   slug: string;
   name: string;
   auth_scheme: 'hmac_sha256' | 'bearer_token' | 'static_header_secret';
-  auth_config: string; // JSON string, secret fields masked as "***" except right after create
+  // JSON string. Secret fields ("secret"/"token") come back masked as "***" on
+  // every response — create included. The API never returns them unmasked.
+  auth_config: string;
   flow_id: number;
   dedupe_header: string | null;
   enabled: number;

@@ -129,6 +129,40 @@ rm data/.dashboard_token
 
 ---
 
+## Public Webhook Connectors (`/api/webhooks/*`)
+
+Every route under `/api/` requires the dashboard token, with one deliberate exception: `POST /api/webhooks/{slug}`. Third-party services (payment providers, CRMs, form backends) can't send a dashboard token, so this prefix is exempt from `TokenAuthMiddleware` and **each connector authenticates its own requests** according to the `auth_scheme` chosen when it was created. The admin routes that manage connectors — `/api/webhook-connectors*` — are *not* exempt and still require the dashboard token.
+
+A slug is therefore not a secret. The only thing protecting a connector is its configured scheme, so never create one with credentials you wouldn't put on the public internet. Every attempt — accepted or rejected — is written to `webhook_connector_events` with a status of `ok`, `auth_failed`, `bad_request` or `flow_error`; bodies stored on the `auth_failed` path are truncated to 8 KB. Secrets are masked as `"***"` on every API response; sending `"***"` back in a `PATCH` leaves the stored value untouched.
+
+### The `hmac_sha256` contract
+
+This is the scheme to prefer — it authenticates the *body*, not just the caller, so a replayed or tampered payload fails.
+
+The sender computes:
+
+```
+signature = HMAC-SHA256(secret, "<timestamp>." + <raw body bytes>)
+header value = "sha256=" + hex(signature)
+```
+
+Note that the signed message is the timestamp, a literal `.`, and the **raw** request bytes — not a re-serialized JSON object. Signing a pretty-printed or key-reordered copy of the body will not verify.
+
+`auth_config` for this scheme:
+
+| Key | Meaning |
+|---|---|
+| `secret` | Shared secret, used as the HMAC key |
+| `timestamp_header` | Header carrying the Unix timestamp (seconds), e.g. `X-Timestamp` |
+| `signature_header` | Header carrying `sha256=<hex>`, e.g. `X-Signature` |
+| `max_skew_seconds` | Accepted clock skew in either direction (default `300`) |
+
+A request is rejected if either header is missing, the timestamp isn't an integer, it is more than `max_skew_seconds` away from now, or the signature doesn't match. The comparison uses `hmac.compare_digest` (constant time). The other two schemes — `bearer_token` (an `Authorization: Bearer <token>` style header) and `static_header_secret` (a fixed header value) — use the same constant-time comparison but only authenticate the caller, not the payload.
+
+Verification never raises: any malformed header, body or stored config resolves to "rejected" (`401`) and an `auth_failed` audit row, so a malformed request can't 500 the route and slip past the audit trail.
+
+---
+
 ## Channel Security
 
 ### Telegram

@@ -9,6 +9,7 @@ Deliberately synchronous (v1): the Flow runs inline within the request.
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from typing import Any
 
@@ -19,6 +20,12 @@ from fastapi.responses import JSONResponse
 from openacm.web.state import _state
 
 log = structlog.get_logger()
+
+VALID_AUTH_SCHEMES = {"hmac_sha256", "bearer_token", "static_header_secret"}
+
+# An unauthenticated caller who guesses a slug can otherwise make us store an
+# arbitrarily large body per rejected request — cap what the audit row keeps.
+MAX_AUDIT_BODY_BYTES = 8192
 
 
 def register_routes(app: FastAPI) -> None:
@@ -37,14 +44,29 @@ def register_routes(app: FastAPI) -> None:
 
         auth_config = json.loads(connector["auth_config"])
         if not verify_request(connector["auth_scheme"], auth_config, request.headers, raw_body):
+            log.warning(
+                "webhook_connector_auth_failed",
+                slug=slug, connector_id=connector["id"], auth_scheme=connector["auth_scheme"],
+            )
             await _state.database.record_webhook_connector_event(
-                connector["id"], None, raw_body.decode("utf-8", errors="replace"), "auth_failed", None, 0,
+                connector["id"], None,
+                # Truncated: this caller has proven nothing, so the audit row
+                # only needs enough of the body to recognise the attempt.
+                raw_body[:MAX_AUDIT_BODY_BYTES].decode("utf-8", errors="replace"),
+                "auth_failed", None, 0,
             )
             return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
 
         try:
             body: dict[str, Any] = json.loads(raw_body) if raw_body else {}
         except json.JSONDecodeError:
+            # dedupe_key isn't known yet at this point (it's read below, after
+            # the body parses) — and a malformed body can't carry a meaningful
+            # one anyway, so the audit row records None for it.
+            await _state.database.record_webhook_connector_event(
+                connector["id"], None, raw_body.decode("utf-8", errors="replace"),
+                "bad_request", "Invalid JSON body", 0,
+            )
             return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
         dedupe_key = None
@@ -54,11 +76,17 @@ def register_routes(app: FastAPI) -> None:
                 existing = await _state.database.find_webhook_connector_event_by_dedupe_key(
                     connector["id"], dedupe_key
                 )
+                # Only an `ok` event is ever returned here (the DB query filters
+                # on status) — a previous failure must re-run, not be replayed.
                 if existing is not None:
-                    return JSONResponse(status_code=200, content={"result": existing["result"]})
+                    return JSONResponse(status_code=200, content={"result": existing["result"] or ""})
 
         flow = await _state.database.get_flow(connector["flow_id"])
         if not flow:
+            log.warning(
+                "webhook_connector_flow_missing",
+                slug=slug, connector_id=connector["id"], flow_id=connector["flow_id"],
+            )
             await _state.database.record_webhook_connector_event(
                 connector["id"], dedupe_key, raw_body.decode("utf-8", errors="replace"),
                 "flow_error", "Configured flow not found", 0,
@@ -78,11 +106,20 @@ def register_routes(app: FastAPI) -> None:
         # string via is_error_result() — so the distinction has to happen here.
         graph_errors = validate_graph(graph)
         if graph_errors:
+            log.warning(
+                "webhook_connector_flow_error",
+                slug=slug, connector_id=connector["id"], flow_id=connector["flow_id"],
+                errors="; ".join(graph_errors),
+            )
             await _state.database.record_webhook_connector_event(
                 connector["id"], dedupe_key, raw_body.decode("utf-8", errors="replace"),
                 "flow_error", "; ".join(graph_errors), 0,
             )
-            raise HTTPException(status_code=500, detail="Connector's flow is misconfigured: " + "; ".join(graph_errors))
+            # Generic detail on purpose: the caller here is unauthenticated in
+            # the dashboard sense, so validate_graph()'s text (node ids, node
+            # types, our internal graph shape) stays in the audit row and the
+            # application log only.
+            raise HTTPException(status_code=500, detail="Connector is misconfigured")
 
         start = time.monotonic()
         executor = FlowExecutor()
@@ -90,6 +127,11 @@ def register_routes(app: FastAPI) -> None:
         duration_ms = int((time.monotonic() - start) * 1000)
 
         if is_error_result(result):
+            log.warning(
+                "webhook_connector_flow_error",
+                slug=slug, connector_id=connector["id"], flow_id=connector["flow_id"],
+                error=result, duration_ms=duration_ms,
+            )
             await _state.database.record_webhook_connector_event(
                 connector["id"], dedupe_key, raw_body.decode("utf-8", errors="replace"),
                 "flow_error", result, duration_ms,
@@ -135,11 +177,26 @@ def register_routes(app: FastAPI) -> None:
         for field in ("slug", "name", "auth_scheme", "auth_config", "flow_id"):
             if field not in data:
                 raise HTTPException(status_code=400, detail=f"Missing field: {field}")
-        connector_id = await _state.database.create_webhook_connector(
-            slug=data["slug"], name=data["name"], auth_scheme=data["auth_scheme"],
-            auth_config=data["auth_config"], flow_id=data["flow_id"],
-            dedupe_header=data.get("dedupe_header"),
-        )
+        if data["auth_scheme"] not in VALID_AUTH_SCHEMES:
+            # An unknown scheme would make verify_request() return False for
+            # every request — a connector that can never fire. Reject it here.
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid auth_scheme. Must be one of: {', '.join(sorted(VALID_AUTH_SCHEMES))}",
+            )
+        try:
+            connector_id = await _state.database.create_webhook_connector(
+                slug=data["slug"], name=data["name"], auth_scheme=data["auth_scheme"],
+                auth_config=data["auth_config"], flow_id=data["flow_id"],
+                dedupe_header=data.get("dedupe_header"),
+            )
+        except sqlite3.IntegrityError as exc:
+            # The slug is the connector's public URL — a duplicate is a client
+            # mistake (409), not a server fault (500). Same translation
+            # agents.py does for its one-skill-per-flow index.
+            if "UNIQUE" in str(exc):
+                raise HTTPException(status_code=409, detail="A connector with that slug already exists")
+            raise
         row = await _state.database.get_webhook_connector(connector_id)
         return _mask_secret(row)
 
@@ -148,6 +205,11 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
+        if "auth_scheme" in data and data["auth_scheme"] not in VALID_AUTH_SCHEMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid auth_scheme. Must be one of: {', '.join(sorted(VALID_AUTH_SCHEMES))}",
+            )
         if isinstance(data.get("auth_config"), dict):
             existing = await _state.database.get_webhook_connector(connector_id)
             if existing:

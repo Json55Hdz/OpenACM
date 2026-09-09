@@ -42,10 +42,13 @@ class TestMigration37Schema:
             auth_config={"token": "t", "header_name": "Authorization"}, flow_id=1,
         )
         assert cid > 0
+        # flow_id=1 (the flow the fixture actually creates) on purpose: with a
+        # non-existent flow_id this would fail on the FK constraint and never
+        # exercise the UNIQUE slug index it's meant to prove.
         with pytest.raises(Exception):
             await db.create_webhook_connector(
                 slug="pagos", name="Pagos 2", auth_scheme="bearer_token",
-                auth_config={"token": "t2", "header_name": "Authorization"}, flow_id=2,
+                auth_config={"token": "t2", "header_name": "Authorization"}, flow_id=1,
             )
 
 
@@ -108,6 +111,40 @@ class TestEventsAndStats:
         found = await db.find_webhook_connector_event_by_dedupe_key(cid, "evt-1")
         assert found is not None
         assert await db.find_webhook_connector_event_by_dedupe_key(cid, "evt-2") is None
+
+    async def test_failed_event_is_not_deduped(self):
+        # A failed attempt must never be cached and replayed as a success —
+        # the retry has to actually re-run the flow.
+        db = await _make_db()
+        cid = await db.create_webhook_connector(
+            slug="pagos", name="Pagos", auth_scheme="bearer_token",
+            auth_config={"token": "t", "header_name": "Authorization"}, flow_id=1,
+        )
+        await db.record_webhook_connector_event(
+            cid, "evt-fail", "{}", "flow_error", "Error in node http1: boom", 5,
+        )
+        assert await db.find_webhook_connector_event_by_dedupe_key(cid, "evt-fail") is None
+
+        # ...while a successful one with the same key IS found.
+        await db.record_webhook_connector_event(cid, "evt-ok", "{}", "ok", "done", 5)
+        found = await db.find_webhook_connector_event_by_dedupe_key(cid, "evt-ok")
+        assert found is not None
+        assert found["status"] == "ok"
+
+    async def test_ok_event_is_found_even_after_an_earlier_failure(self):
+        # Same key, failed first then succeeded: the `ok` row is the one that
+        # counts (the status filter must not just take the oldest row).
+        db = await _make_db()
+        cid = await db.create_webhook_connector(
+            slug="pagos", name="Pagos", auth_scheme="bearer_token",
+            auth_config={"token": "t", "header_name": "Authorization"}, flow_id=1,
+        )
+        await db.record_webhook_connector_event(cid, "evt-1", "{}", "flow_error", "boom", 5)
+        await db.record_webhook_connector_event(cid, "evt-1", "{}", "ok", "done", 7)
+        found = await db.find_webhook_connector_event_by_dedupe_key(cid, "evt-1")
+        assert found is not None
+        assert found["status"] == "ok"
+        assert found["result"] == "done"
 
     async def test_stats(self):
         db = await _make_db()

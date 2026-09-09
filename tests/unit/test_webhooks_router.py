@@ -87,6 +87,37 @@ class TestAuth:
         assert call.args[3] == "auth_failed"
 
 
+    async def test_verifier_raising_still_401s_and_is_logged(self, app_client, _mock_state):
+        # verify_request() must never let an exception escape: if it did, the
+        # 500 would land BEFORE the auth_failed row is written and an
+        # unauthenticated caller could suppress their own audit trail.
+        from unittest.mock import patch
+
+        with patch(
+            "openacm.core.webhook_auth._VERIFIERS",
+            {"bearer_token": lambda cfg, headers, raw_body: (_ for _ in ()).throw(RuntimeError("boom"))},
+        ):
+            async with app_client as ac:
+                resp = await ac.post(
+                    "/api/webhooks/pagos", headers={"Authorization": "Bearer s3cr3t"}, json={},
+                )
+        assert resp.status_code == 401
+        _mock_state.record_webhook_connector_event.assert_awaited_once()
+        assert _mock_state.record_webhook_connector_event.call_args.args[3] == "auth_failed"
+
+    async def test_auth_failed_body_is_truncated(self, app_client, _mock_state):
+        # An unauthenticated caller who guesses a slug shouldn't be able to
+        # make us store an unbounded body per rejected request.
+        big = b'{"pad":"' + b"x" * 40000 + b'"}'
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/webhooks/pagos", headers={"Authorization": "Bearer wrong"}, content=big,
+            )
+        assert resp.status_code == 401
+        stored_body = _mock_state.record_webhook_connector_event.call_args.args[2]
+        assert len(stored_body) <= 8192
+
+
 class TestBody:
     async def test_invalid_json_body_400s(self, app_client, _mock_state):
         async with app_client as ac:
@@ -94,6 +125,17 @@ class TestBody:
                 "/api/webhooks/pagos", headers={"Authorization": "Bearer s3cr3t"}, content=b"not json",
             )
         assert resp.status_code == 400
+
+    async def test_invalid_json_body_is_recorded_as_bad_request(self, app_client, _mock_state):
+        async with app_client as ac:
+            await ac.post(
+                "/api/webhooks/pagos", headers={"Authorization": "Bearer s3cr3t"}, content=b"not json",
+            )
+        _mock_state.record_webhook_connector_event.assert_awaited_once()
+        call = _mock_state.record_webhook_connector_event.call_args
+        assert call.args[0] == 1        # connector_id
+        assert call.args[1] is None     # dedupe_key — not computable from a malformed body
+        assert call.args[3] == "bad_request"
 
 
 class TestFlowError:
@@ -110,6 +152,13 @@ class TestFlowError:
         async with app_client as ac:
             resp = await ac.post("/api/webhooks/pagos", headers={"Authorization": "Bearer s3cr3t"}, json={})
         assert resp.status_code == 500
+        # The response body stays generic — validate_graph()'s text describes
+        # our internal graph shape and the caller is unauthenticated.
+        assert resp.json()["detail"] == "Connector is misconfigured"
+        # ...but the real reason is still recorded for the operator.
+        call = _mock_state.record_webhook_connector_event.call_args
+        assert call.args[3] == "flow_error"
+        assert call.args[4]  # non-empty graph_errors text
 
     async def test_runtime_flow_failure_502s(self, app_client, _mock_state):
         # Structurally valid (has Start, Http, End) but the Http node's
@@ -154,6 +203,74 @@ class TestDedupe:
         assert resp.json()["result"] == "hola old-body"
         _mock_state.get_flow.assert_not_awaited()
 
+    async def test_null_saved_result_becomes_empty_string(self, app_client, _mock_state):
+        # `result` is nullable in the events table; the response contract says
+        # "result" is always a string.
+        connector = {**CONNECTOR_ROW, "dedupe_header": "X-Event-Id"}
+        _mock_state.get_webhook_connector_by_slug.return_value = connector
+        _mock_state.find_webhook_connector_event_by_dedupe_key.return_value = {
+            "result": None, "status": "ok",
+        }
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/webhooks/pagos",
+                headers={"Authorization": "Bearer s3cr3t", "X-Event-Id": "evt-1"},
+                json={"a": 1},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["result"] == ""
+
+    async def test_failed_delivery_is_not_replayed_on_retry(self, app_client, _mock_state):
+        # Regression: a first attempt that fails must NOT be cached and served
+        # back to every retry as a 200. The retry has to re-run the flow.
+        from unittest.mock import patch
+
+        connector = {**CONNECTOR_ROW, "dedupe_header": "X-Event-Id"}
+        _mock_state.get_webhook_connector_by_slug.return_value = connector
+
+        # Stand in for the real DB: record_ appends, find_ mirrors the query's
+        # `AND status = 'ok'` filter.
+        recorded: list[tuple] = []
+
+        async def _record(*args, **kwargs):
+            recorded.append(args)
+            return len(recorded)
+
+        async def _find(connector_id, dedupe_key):
+            for args in recorded:
+                if args[0] == connector_id and args[1] == dedupe_key and args[3] == "ok":
+                    return {"result": args[4], "status": "ok"}
+
+            return None
+
+        _mock_state.record_webhook_connector_event.side_effect = _record
+        _mock_state.find_webhook_connector_event_by_dedupe_key.side_effect = _find
+
+        http_graph = json.dumps({
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": []}},
+                {"id": "http1", "type": "http", "config": {"url": "https://example.invalid", "method": "GET"}},
+                {"id": "end", "type": "end", "config": {"template": "{{http1}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "http1", "fromHandle": "default"},
+                {"from": "http1", "to": "end", "fromHandle": "default"},
+            ],
+        })
+        _mock_state.get_flow.return_value = {"id": 7, "graph_json": http_graph}
+
+        headers = {"Authorization": "Bearer s3cr3t", "X-Event-Id": "evt-retry"}
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", side_effect=RuntimeError("connection refused")):
+            async with app_client as ac:
+                first = await ac.post("/api/webhooks/pagos", headers=headers, json={"a": 1})
+                second = await ac.post("/api/webhooks/pagos", headers=headers, json={"a": 1})
+
+        assert first.status_code == 502
+        # A fresh 502 — not a cached failure replayed as a 200.
+        assert second.status_code == 502
+        assert _mock_state.get_flow.await_count == 2
+        assert [args[3] for args in recorded] == ["flow_error", "flow_error"]
+
 
 class TestAdminCrud:
     async def test_list_connectors(self, app_client, _mock_state):
@@ -180,6 +297,36 @@ class TestAdminCrud:
             })
         assert resp.status_code == 200
         assert resp.json()["id"] == 9
+
+    async def test_create_with_invalid_auth_scheme_400s(self, app_client, _mock_state):
+        _mock_state.create_webhook_connector = AsyncMock(return_value=9)
+        async with app_client as ac:
+            resp = await ac.post("/api/webhook-connectors", json={
+                "slug": "pagos", "name": "Pagos", "auth_scheme": "totally_made_up",
+                "auth_config": {}, "flow_id": 7,
+            })
+        assert resp.status_code == 400
+        _mock_state.create_webhook_connector.assert_not_awaited()
+
+    async def test_create_with_duplicate_slug_409s(self, app_client, _mock_state):
+        import sqlite3
+
+        _mock_state.create_webhook_connector = AsyncMock(
+            side_effect=sqlite3.IntegrityError("UNIQUE constraint failed: webhook_connectors.slug")
+        )
+        async with app_client as ac:
+            resp = await ac.post("/api/webhook-connectors", json={
+                "slug": "pagos", "name": "Pagos", "auth_scheme": "bearer_token",
+                "auth_config": {"token": "t", "header_name": "Authorization"}, "flow_id": 7,
+            })
+        assert resp.status_code == 409
+
+    async def test_update_with_invalid_auth_scheme_400s(self, app_client, _mock_state):
+        _mock_state.update_webhook_connector = AsyncMock(return_value=True)
+        async with app_client as ac:
+            resp = await ac.patch("/api/webhook-connectors/1", json={"auth_scheme": "nope"})
+        assert resp.status_code == 400
+        _mock_state.update_webhook_connector.assert_not_awaited()
 
     async def test_update_connector(self, app_client, _mock_state):
         _mock_state.update_webhook_connector = AsyncMock(return_value=True)

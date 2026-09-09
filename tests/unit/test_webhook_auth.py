@@ -107,3 +107,49 @@ class TestVerifyRequestDispatch:
 
     def test_unknown_scheme_returns_false(self):
         assert verify_request("something_else", {}, {}, b"{}") is False
+
+
+class TestVerifyRequestNeverRaises:
+    """verify_request() is the public route's gate. If it raises, the 500
+    escapes BEFORE the `auth_failed` audit event is recorded — an
+    unauthenticated caller could erase their own trail. So every malformed
+    combination must come back as a plain False."""
+
+    def test_non_ascii_bearer_header_returns_false(self):
+        # Starlette decodes headers as latin-1, so a non-ASCII byte reaches us
+        # as a non-ASCII str — hmac.compare_digest() raises TypeError on that.
+        assert verify_request(
+            "bearer_token", {"header_name": "Authorization", "token": "x"},
+            {"Authorization": "Bearer ñ"}, b"",
+        ) is False
+
+    def test_non_ascii_static_header_returns_false(self):
+        assert verify_request(
+            "static_header_secret", {"header_name": "X-Api-Secret", "secret": "x"},
+            {"X-Api-Secret": "ñ"}, b"",
+        ) is False
+
+    def test_empty_hmac_auth_config_returns_false(self):
+        # An admin saved a malformed config: no timestamp_header key at all.
+        assert verify_request("hmac_sha256", {}, {}, b"{}") is False
+
+    def test_hmac_auth_config_missing_secret_returns_false(self):
+        ts = str(int(time.time()))
+        headers = {"X-Timestamp": ts, "X-Signature": "sha256=" + "0" * 64}
+        assert verify_request(
+            "hmac_sha256",
+            {"timestamp_header": "X-Timestamp", "signature_header": "X-Signature"},
+            headers, b"{}",
+        ) is False
+
+    def test_bearer_auth_config_missing_token_returns_false(self):
+        assert verify_request(
+            "bearer_token", {"header_name": "Authorization"},
+            {"Authorization": "Bearer whatever"}, b"",
+        ) is False
+
+    def test_non_dict_auth_config_returns_false(self):
+        assert verify_request("bearer_token", None, {"Authorization": "Bearer x"}, b"") is False
+
+    def test_headers_object_without_get_returns_false(self):
+        assert verify_request("static_header_secret", {"header_name": "X", "secret": "y"}, None, b"") is False

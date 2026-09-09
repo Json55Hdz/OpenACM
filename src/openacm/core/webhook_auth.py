@@ -4,9 +4,10 @@ docs/superpowers/specs/2026-09-09-webhook-connectors-and-agent-flow-node-design.
 
 Each function takes a connector's `auth_config` dict (shape depends on the
 scheme — see the spec) plus the incoming request's headers (and raw body,
-for HMAC) and returns a plain bool. No exceptions for "invalid" — only for
-genuinely malformed input the caller couldn't have avoided (there is none
-here; every failure mode returns False).
+for HMAC) and returns a plain bool. `verify_request()` — the only entry point
+the web layer should call — never raises for any combination of
+scheme/config/headers/body: every failure mode, malformed input included,
+comes back as False.
 """
 from __future__ import annotations
 
@@ -14,6 +15,10 @@ import hashlib
 import hmac
 import time
 from typing import Any
+
+import structlog
+
+log = structlog.get_logger()
 
 
 def verify_hmac_sha256(
@@ -66,7 +71,26 @@ _VERIFIERS = {
 
 
 def verify_request(auth_scheme: str, auth_config: dict[str, Any], headers: Any, raw_body: bytes) -> bool:
+    """Single entry point for every scheme. Structurally incapable of raising.
+
+    Both the headers and the body are attacker-controlled, and auth_config is
+    whatever an admin saved — so any combination can be malformed (a non-ASCII
+    header value makes hmac.compare_digest raise TypeError; a missing
+    auth_config key raises KeyError). Letting any of that escape would 500 the
+    public route BEFORE the caller records an `auth_failed` audit event, i.e.
+    an unauthenticated caller could suppress their own audit trail. Everything
+    is therefore funnelled into a plain False.
+    """
     verifier = _VERIFIERS.get(auth_scheme)
     if verifier is None:
         return False
-    return verifier(auth_config, headers, raw_body)
+    try:
+        return bool(verifier(auth_config, headers, raw_body))
+    except Exception as exc:
+        log.warning(
+            "webhook_auth_verifier_error",
+            auth_scheme=auth_scheme,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        return False

@@ -1853,9 +1853,13 @@ class Database:
     ) -> dict[str, Any] | None:
         if not self._db:
             return None
+        # Only a successful delivery counts as "already processed". A failed
+        # attempt (auth_failed / bad_request / flow_error) must NOT suppress a
+        # retry — otherwise the very first failure would be cached forever and
+        # replayed to every retry as if it had succeeded.
         cursor = await self._db.execute(
             "SELECT * FROM webhook_connector_events WHERE connector_id = ? AND dedupe_key = ? "
-            "ORDER BY received_at ASC LIMIT 1",
+            "AND status = 'ok' ORDER BY received_at ASC LIMIT 1",
             (connector_id, dedupe_key),
         )
         row = await cursor.fetchone()
