@@ -148,6 +148,18 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
+        if isinstance(data.get("auth_config"), dict):
+            existing = await _state.database.get_webhook_connector(connector_id)
+            if existing:
+                # "***" means "leave this field unchanged" — same convention
+                # save_plugin_config() uses for masked password fields — so a
+                # client that round-trips the masked read-back response
+                # (list/get always return "***" for secret/token) can never
+                # clobber the real stored secret.
+                existing_auth_config = json.loads(existing["auth_config"])
+                for key in ("secret", "token"):
+                    if data["auth_config"].get(key) == "***":
+                        data["auth_config"][key] = existing_auth_config.get(key)
         ok = await _state.database.update_webhook_connector(connector_id, **data)
         if not ok:
             raise HTTPException(status_code=404, detail="Connector not found")

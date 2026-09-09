@@ -194,6 +194,36 @@ class TestAdminCrud:
             resp = await ac.patch("/api/webhook-connectors/999", json={"enabled": False})
         assert resp.status_code == 404
 
+    async def test_update_with_masked_placeholder_preserves_real_secret(self, app_client, _mock_state):
+        # A client that GETs a connector (masked "***" secret) and PATCHes
+        # it straight back must never overwrite the real stored secret with
+        # the literal placeholder string.
+        _mock_state.update_webhook_connector = AsyncMock(return_value=True)
+        _mock_state.get_webhook_connector = AsyncMock(return_value=CONNECTOR_ROW)
+        async with app_client as ac:
+            resp = await ac.patch("/api/webhook-connectors/1", json={
+                "auth_config": {"token": "***", "header_name": "X-Other"},
+            })
+        assert resp.status_code == 200
+        call = _mock_state.update_webhook_connector.call_args
+        written_auth_config = call.kwargs["auth_config"]
+        assert written_auth_config["token"] == "s3cr3t"  # real secret from CONNECTOR_ROW, not "***"
+        assert written_auth_config["header_name"] == "X-Other"  # non-secret field still updates
+
+    async def test_update_with_new_secret_writes_it_through(self, app_client, _mock_state):
+        # A genuinely new secret (not the "***" placeholder) must be written
+        # as-is — the guard only intercepts the literal placeholder.
+        _mock_state.update_webhook_connector = AsyncMock(return_value=True)
+        _mock_state.get_webhook_connector = AsyncMock(return_value=CONNECTOR_ROW)
+        async with app_client as ac:
+            resp = await ac.patch("/api/webhook-connectors/1", json={
+                "auth_config": {"token": "brand-new-secret", "header_name": "Authorization"},
+            })
+        assert resp.status_code == 200
+        call = _mock_state.update_webhook_connector.call_args
+        written_auth_config = call.kwargs["auth_config"]
+        assert written_auth_config["token"] == "brand-new-secret"
+
     async def test_delete_connector(self, app_client, _mock_state):
         _mock_state.delete_webhook_connector = AsyncMock(return_value=True)
         async with app_client as ac:
