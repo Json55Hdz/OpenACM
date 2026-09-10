@@ -11,7 +11,6 @@ import {
   usePluginNav,
 } from '@/hooks/use-plugins';
 import { PluginConfigForm } from '@/components/plugins/plugin-config-form';
-import { useAuthStore } from '@/stores/auth-store';
 import { AppLayout } from '@/components/layout/app-layout';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -60,7 +59,6 @@ export default function PluginsPage() {
   const { data: navItems } = usePluginNav();
   const togglePlugin = useTogglePlugin();
   const restartSystem = useRestartSystem();
-  const token = useAuthStore((s) => s.token);
   const [configOpen, setConfigOpen] = useState<string | null>(null);
   const [showDocs, setShowDocs] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
@@ -85,16 +83,9 @@ export default function PluginsPage() {
     if (route) {
       router.push(route);
     } else if (hasCustomUi) {
-      // window.open's windowFeatures 'noreferrer' token isn't reliably honored
-      // across browsers — a real <a referrerPolicy="no-referrer"> click is the
-      // only cross-browser way to suppress the Referer header for a
-      // token-bearing URL, matching the visible link below.
-      const a = document.createElement('a');
-      a.href = `/api/plugins/${pluginName}/ui?token=${encodeURIComponent(token ?? '')}`;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.referrerPolicy = 'no-referrer';
-      a.click();
+      // Embedded inside the app shell (sidebar, header) via the generic
+      // /plugins/view route, not a bare new tab — see that page for the iframe.
+      router.push(`/plugins/view?name=${encodeURIComponent(pluginName)}`);
     }
   };
 
@@ -218,16 +209,15 @@ export default function PluginsPage() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {p.has_custom_ui && (
-                        <a
-                          href={`/api/plugins/${p.name}/ui?token=${encodeURIComponent(token ?? '')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          referrerPolicy="no-referrer"
-                          onClick={(e) => e.stopPropagation()}
-                          title="Abrir vista completa"
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex' }}
+                          onClick={(e) => { e.stopPropagation(); router.push(`/plugins/view?name=${encodeURIComponent(p.name)}`); }}
+                          title="Abrir dashboard del plugin"
                         >
                           <ExternalLink size={15} style={{ color: 'var(--acm-fg-4)' }} />
-                        </a>
+                        </button>
                       )}
                       {p.has_config_schema && (
                         <button
@@ -255,7 +245,10 @@ export default function PluginsPage() {
             onClick={() => setConfigOpen(null)}
           >
             <div
-              style={{ background: 'var(--acm-card)', borderRadius: 12, padding: 28, width: 480 }}
+              style={{
+                background: 'var(--acm-card)', borderRadius: 12, padding: 28, width: 480,
+                maxHeight: '90vh', overflowY: 'auto',
+              }}
               onClick={(e) => e.stopPropagation()}
             >
               <h3 style={{ marginBottom: 16, color: 'var(--acm-fg)' }}>Configurar {configOpen}</h3>
