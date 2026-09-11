@@ -92,6 +92,12 @@ def detect_cycle(graph: dict) -> list[str] | None:
     return None
 
 
+# How many WooCommerce search results the node fetches and hands to the
+# agent. Deliberately not a curated shortlist — the calling agent already
+# has the user's actual request in its conversation context, so it (not
+# this node) is what narrows this down to the few that actually fit.
+_WOOCOMMERCE_CANDIDATE_LIMIT = 10
+
 # Mirrors classifyPin() in frontend/components/flow-editor/node-types.tsx —
 # keep both in sync when either changes. Target = a node's flow-in/data-in
 # handle ids; source = its flow-out/data-out handle ids.
@@ -515,7 +521,11 @@ class FlowExecutor:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 woo_url,
-                params={"search": search_term},
+                # Explicit per_page rather than relying on WooCommerce's own
+                # default (also 10, but implicit) — this is the actual
+                # candidate pool the calling agent reasons over, so make it
+                # a number, not an assumption.
+                params={"search": search_term, "per_page": _WOOCOMMERCE_CANDIDATE_LIMIT},
                 auth=(conn_config["consumer_key"], conn_config["consumer_secret"]),
             )
             response.raise_for_status()
@@ -524,8 +534,14 @@ class FlowExecutor:
         if not products:
             return {"result": f"No products found for query: '{search_term}'.", "count": 0}
 
-        output = [f"Search results for '{search_term}':"]
-        for p in products[:5]:
+        candidates = products[:_WOOCOMMERCE_CANDIDATE_LIMIT]
+        output = [
+            f"Search results for '{search_term}' ({len(candidates)} candidates found). "
+            "These are ALL matches for the search term, not a curated shortlist — "
+            "select and mention only the ones that actually fit what the user asked "
+            "for; do not just relay the entire list."
+        ]
+        for p in candidates:
             stock = p.get("stock_quantity")
             stock_text = str(stock) if stock is not None else ("In stock" if p.get("manage_stock") is False else "Out of stock")
 
@@ -541,7 +557,7 @@ class FlowExecutor:
                 output.append(f"  Description: {shortened}")
             output.append(f"  Link: {p.get('permalink')}")
 
-        return {"result": "\n".join(output), "count": len(products[:5])}
+        return {"result": "\n".join(output), "count": len(candidates)}
 
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         # Normalize once, here: the spec's global constraint says a node with

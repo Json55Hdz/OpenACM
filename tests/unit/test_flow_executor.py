@@ -705,10 +705,15 @@ class TestWooCommerceStructuredOutput:
         assert outputs["woo1"]["count"] == 2
         assert isinstance(outputs["woo1"]["result"], str)
 
-    async def test_count_reflects_the_top_5_slice_not_the_full_result_set(self):
+    async def test_count_reflects_the_top_10_slice_not_the_full_result_set(self):
+        # The node fetches per_page=10 candidates and hands ALL of them to
+        # the agent (no 5-item shortlisting on our side) — the agent, which
+        # already knows what the user actually asked for, is what narrows
+        # this down when it replies. If WooCommerce ever ignores per_page
+        # and returns more anyway, the node still caps defensively at 10.
         products = [
             {"name": f"P{i}", "price": "1", "stock_quantity": 1, "manage_stock": True, "short_description": "", "permalink": "https://x"}
-            for i in range(8)
+            for i in range(15)
         ]
         mock_response = MagicMock()
         mock_response.json.return_value = products
@@ -728,7 +733,48 @@ class TestWooCommerceStructuredOutput:
             executor = FlowExecutor(get_connection=get_connection)
             result, _ = await executor.run(graph, params={"producto": "zapatos"})
 
-        assert result == "5"
+        assert result == "10"
+
+    async def test_requests_ten_candidates_per_page(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        _, call_kwargs = mock_client.get.call_args
+        assert call_kwargs["params"]["per_page"] == 10
+
+    async def test_result_text_tells_the_agent_to_select_relevant_ones(self):
+        products = [
+            {"name": f"P{i}", "price": "1", "stock_quantity": 1, "manage_stock": True, "short_description": "", "permalink": "https://x"}
+            for i in range(3)
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(_woo_graph(), params={"producto": "zapatos"})
+
+        assert "select and mention only the ones" in result
 
     async def test_bare_reference_still_resolves_to_the_formatted_result_text(self):
         """{{woo1}} (no dot) must keep behaving exactly as it did before
