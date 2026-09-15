@@ -10,6 +10,8 @@ Covers:
 """
 
 import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 import pytest_asyncio
 
@@ -157,3 +159,59 @@ class TestGetOrCreate:
         await mem.get_or_create("u1", "web", "old prompt")
         msgs = await mem.get_or_create("u1", "web", "new prompt")
         assert msgs[0]["content"] == "new prompt"
+
+    async def test_ttl_none_ignores_elapsed_time(self, db, app_config):
+        """Default/persistent mode (ttl_hours=None) never resets, no matter how old."""
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "old message")
+        mem._last_activity[mem._key("u1", "web")] = datetime.now(timezone.utc) - timedelta(days=999)
+        msgs = await mem.get_or_create("u1", "web", "system prompt")
+        contents = [m["content"] for m in msgs]
+        assert "old message" in contents
+
+    async def test_ttl_not_expired_keeps_context_hot_cache(self, db, app_config):
+        """Within the TTL window, an already-cached conversation keeps its history."""
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "recent message")
+        msgs = await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
+        contents = [m["content"] for m in msgs]
+        assert "recent message" in contents
+
+    async def test_ttl_expired_resets_hot_cache(self, db, app_config):
+        """Past the TTL window, a live in-memory conversation resets to just the system prompt."""
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "old message")
+        mem._last_activity[mem._key("u1", "web")] = datetime.now(timezone.utc) - timedelta(hours=25)
+        msgs = await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "system"
+        assert msgs[0]["content"] == "system prompt"
+
+    async def test_ttl_expired_does_not_delete_db_history(self, db, app_config):
+        """Reset only affects what's loaded into context — SQLite history is untouched."""
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "old message")
+        mem._last_activity[mem._key("u1", "web")] = datetime.now(timezone.utc) - timedelta(hours=25)
+        await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
+        rows = await db.get_conversation("u1", "web")
+        assert any(r["content"] == "old message" for r in rows)
+
+    async def test_ttl_expired_cold_start_skips_restoring_db_history(self, db, app_config):
+        """Cache miss (e.g. after restart) + expired TTL: don't restore old DB messages either."""
+        past = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        await db.log_message("u1", "web", "user", "old message", timestamp=past)
+
+        mem = MemoryManager(database=db, config=app_config.assistant)  # fresh cache
+        msgs = await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
+        assert len(msgs) == 1
+        assert msgs[0]["role"] == "system"
+
+    async def test_ttl_cold_start_restores_recent_db_history(self, db, app_config):
+        """Cache miss but last message is within the TTL window: restore as usual."""
+        recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        await db.log_message("u1", "web", "user", "recent message", timestamp=recent)
+
+        mem = MemoryManager(database=db, config=app_config.assistant)  # fresh cache
+        msgs = await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
+        contents = [m["content"] for m in msgs]
+        assert "recent message" in contents

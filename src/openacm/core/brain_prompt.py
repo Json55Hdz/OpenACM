@@ -99,7 +99,8 @@ class BrainPromptMixin:
         _sp_key = f"{channel_id}:{user_id}"
         _sp_hash = hash(system_prompt)
         if _sp_hash != self._system_prompt_hash.get(_sp_key):
-            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt)
+            ttl_hours = getattr(self.config, "memory_ttl_hours", None)
+            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt, ttl_hours=ttl_hours)
             self._system_prompt_hash[_sp_key] = _sp_hash
         else:
             messages = await self.memory.get_messages(user_id, channel_id)

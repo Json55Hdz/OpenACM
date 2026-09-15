@@ -216,12 +216,17 @@ class AgentRunner:
         if extra_system_context:
             system_prompt = f"{system_prompt}\n\n{extra_system_context}"
 
+        memory_ttl_hours = (
+            agent.get("memory_ttl_hours") if agent.get("memory_mode") == "session_ttl" else None
+        )
+
         config = AssistantConfig(
             name=agent["name"],
             system_prompt=system_prompt,
             max_tool_iterations=10,
             onboarding_completed=True,
             is_agent=True,
+            memory_ttl_hours=memory_ttl_hours,
         )
 
         if channel_id is None:

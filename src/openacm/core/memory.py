@@ -8,7 +8,7 @@ user/channel combination, with automatic truncation and compaction.
 import asyncio
 import json
 from typing import Any
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import structlog
 
@@ -64,6 +64,10 @@ class MemoryManager:
         self._context_window: dict[str, int] = {}
         # Accumulated prompt tokens per conversation (from actual LLM usage).
         self._tokens_used: dict[str, int] = {}
+        # Timestamp of the last message added per conversation — used to
+        # decide, when an agent has a memory_ttl_hours policy, whether a
+        # conversation has gone stale and should restart with a clean context.
+        self._last_activity: dict[str, datetime] = {}
 
     def _key(self, user_id: str, channel_id: str) -> str:
         """Generate a unique key for a user/channel pair."""
@@ -193,13 +197,15 @@ class MemoryManager:
         
         # Persist to database — serialize multimodal content to readable text
         db_content = self._content_for_db(content)
+        now = datetime.now(timezone.utc)
         await self.database.log_message(
             user_id=user_id,
             channel_id=channel_id,
             role=role,
             content=db_content,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=now.isoformat(),
         )
+        self._last_activity[key] = now
 
         # Trigger compaction when estimated tokens exceed compact_ratio × context_window.
         # Using the actual model window means a 128k model won't compact every 10 messages,
@@ -223,7 +229,7 @@ class MemoryManager:
         return self._cache.get(key, [])
 
     async def get_or_create(
-        self, user_id: str, channel_id: str, system_prompt: str
+        self, user_id: str, channel_id: str, system_prompt: str, ttl_hours: int | None = None
     ) -> list[dict[str, Any]]:
         """
         Get existing conversation or create a new one with system prompt.
@@ -232,14 +238,37 @@ class MemoryManager:
         from SQLite so context survives across restarts.
         On existing conversations the system prompt (messages[0]) is always
         refreshed so that context optimizations take effect on every request.
+
+        ttl_hours (per-agent memory policy): if the last message in this
+        conversation is older than ttl_hours, the conversation restarts with
+        just the system prompt — old messages stay in SQLite for history/
+        audit, they're just not loaded back into context. ttl_hours=None
+        (default) means "remember forever", matching the historical behavior.
         """
         key = self._key(user_id, channel_id)
 
         if key not in self._cache or not self._cache[key]:
-            # Restore from DB — SQLite is the source of truth for history
-            restored = await self._load_from_db(user_id, channel_id)
+            expired = False
+            last_activity = None
+            if ttl_hours is not None:
+                last_activity = await self._last_activity_for(user_id, channel_id)
+                if last_activity is not None:
+                    expired = (datetime.now(timezone.utc) - last_activity) > timedelta(hours=ttl_hours)
+
+            # Restore from DB — SQLite is the source of truth for history —
+            # unless the conversation went stale past its TTL.
+            restored = [] if expired else await self._load_from_db(user_id, channel_id)
             self._cache[key] = [{"role": "system", "content": system_prompt}] + restored
+            if last_activity is not None and not expired:
+                self._last_activity[key] = last_activity
         else:
+            if ttl_hours is not None:
+                last_activity = self._last_activity.get(key)
+                if last_activity is not None and (datetime.now(timezone.utc) - last_activity) > timedelta(hours=ttl_hours):
+                    self._cache[key] = [{"role": "system", "content": system_prompt}]
+                    self._last_activity.pop(key, None)
+                    return self._cache[key]
+
             # Refresh system prompt on every call
             if self._cache[key][0]["role"] == "system":
                 self._cache[key][0]["content"] = system_prompt
@@ -247,6 +276,19 @@ class MemoryManager:
                 self._cache[key].insert(0, {"role": "system", "content": system_prompt})
 
         return self._cache[key]
+
+    async def _last_activity_for(self, user_id: str, channel_id: str) -> datetime | None:
+        """Timestamp of the most recent DB message for this conversation, parsed to a datetime."""
+        ts = await self.database.get_last_message_timestamp(user_id, channel_id)
+        if not ts:
+            return None
+        try:
+            parsed = datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
     async def _load_from_db(self, user_id: str, channel_id: str) -> list[dict[str, Any]]:
         """

@@ -86,6 +86,8 @@ def register_routes(app: FastAPI) -> None:
             allowed_tools=data.get("allowed_tools", "all"),
             webhook_secret=_secrets.token_urlsafe(32),
             telegram_token=data.get("telegram_token", ""),
+            memory_mode=data.get("memory_mode", "persistent"),
+            memory_ttl_hours=data.get("memory_ttl_hours", 24),
         )
         agent = await _state.database.get_agent(agent_id)
         return agent  # include secret on creation so user can copy it
@@ -104,7 +106,10 @@ def register_routes(app: FastAPI) -> None:
         if not _state.database:
             raise HTTPException(status_code=503, detail="Database not available")
         data = await request.json()
-        allowed_fields = {"name", "description", "system_prompt", "allowed_tools", "is_active"}
+        allowed_fields = {
+            "name", "description", "system_prompt", "allowed_tools", "is_active",
+            "memory_mode", "memory_ttl_hours",
+        }
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
         ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:

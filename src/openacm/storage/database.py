@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 37
+    _SCHEMA_VERSION = 38
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1117,6 +1117,18 @@ class Database:
             await self._db.commit()
             log.info("Migration 37: webhook connectors (webhook_connectors, webhook_connector_events)")
 
+        # ── Migration 38: per-agent memory TTL policy ─────────────────────
+        # memory_mode: 'persistent' (default, remember forever) or
+        # 'session_ttl' (reset context after memory_ttl_hours of inactivity).
+        # Old messages are never deleted by this — see MemoryManager.get_or_create.
+        if current < 38:
+            await self._db.executescript("""
+                ALTER TABLE agents ADD COLUMN memory_mode TEXT NOT NULL DEFAULT 'persistent';
+                ALTER TABLE agents ADD COLUMN memory_ttl_hours INTEGER NOT NULL DEFAULT 24;
+            """)
+            await self._db.commit()
+            log.info("Migration 38: added memory_mode/memory_ttl_hours to agents")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1175,6 +1187,18 @@ class Database:
                 pass  # leave as-is if decryption fails (e.g. pre-encryption rows)
             result.append(r)
         return result
+
+    async def get_last_message_timestamp(self, user_id: str, channel_id: str) -> str | None:
+        """Timestamp (ISO string) of the most recent message in this conversation, if any."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT timestamp FROM messages WHERE user_id = ? AND channel_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id, channel_id),
+        )
+        row = await cursor.fetchone()
+        return row["timestamp"] if row else None
 
     @property
     def messages_encrypted(self) -> bool:
@@ -2064,13 +2088,16 @@ class Database:
         allowed_tools: str = "all",
         webhook_secret: str = "",
         telegram_token: str = "",
+        memory_mode: str = "persistent",
+        memory_ttl_hours: int = 24,
     ) -> int:
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token),
+            "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, "
+            "telegram_token, memory_mode, memory_ttl_hours) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token,
+             memory_mode, memory_ttl_hours),
         )
         await self._db.commit()
         return cursor.lastrowid or 0
@@ -2092,7 +2119,10 @@ class Database:
     async def update_agent(self, agent_id: int, **kwargs: Any) -> bool:
         if not self._db:
             return False
-        allowed = {"name", "description", "system_prompt", "allowed_tools", "is_active", "telegram_token"}
+        allowed = {
+            "name", "description", "system_prompt", "allowed_tools", "is_active",
+            "telegram_token", "memory_mode", "memory_ttl_hours",
+        }
         updates, params = [], []
         for key, val in kwargs.items():
             if key in allowed:

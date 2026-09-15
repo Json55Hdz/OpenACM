@@ -37,6 +37,7 @@ class AssistantConfig(BaseModel):
     rag_relevance_threshold: float = 0.5  # Cosine distance cutoff for RAG recall (0=identical, 1=unrelated)
     compact_ratio: float = 0.60       # Compact when context reaches this fraction of the model's context window (0.0–1.0)
     compact_keep_recent: int = 6      # Number of recent messages to keep verbatim after compaction
+    memory_ttl_hours: int | None = None  # None = remember forever; N = reset context after N hours of inactivity
 
 
 class LLMConfig(BaseModel):

@@ -12,6 +12,8 @@ export interface Agent {
   allowed_tools: string;
   is_active: boolean;
   telegram_token: string;
+  memory_mode: 'persistent' | 'session_ttl';
+  memory_ttl_hours: number;
   created_at: string;
   updated_at: string;
   // only returned on create
@@ -24,6 +26,8 @@ export interface AgentFormData {
   system_prompt: string;
   allowed_tools: string;
   telegram_token: string;
+  memory_mode: 'persistent' | 'session_ttl';
+  memory_ttl_hours: number;
 }
 
 export interface KnowledgeItem {

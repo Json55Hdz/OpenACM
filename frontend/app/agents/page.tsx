@@ -57,6 +57,8 @@ const DEFAULT_FORM: AgentFormData = {
   system_prompt: '',
   allowed_tools: 'all',
   telegram_token: '',
+  memory_mode: 'persistent',
+  memory_ttl_hours: 24,
 };
 
 // ── Knowledge Tab ─────────────────────────────────────────────────────────────
@@ -647,7 +649,7 @@ function AgentFormModal({
   const [isDragging, setIsDragging] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const set = (field: keyof AgentFormData, val: string) =>
+  const set = (field: keyof AgentFormData, val: string | number) =>
     setForm((f) => ({ ...f, [field]: val }));
 
   const handleGenerate = async () => {
@@ -879,17 +881,21 @@ function AgentFormModal({
           </button>
 
           {showAdvanced && (
-            <div>
-              <label className="label block mb-2">Telegram Bot Token (optional)</label>
-              <input
-                value={form.telegram_token}
-                onChange={(e) => set('telegram_token', e.target.value)}
-                placeholder="1234567890:ABCdef..."
-                className="acm-input mono w-full"
-              />
-              <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
-                Connect this agent to its own Telegram bot (coming soon).
-              </p>
+            <div className="space-y-4">
+              <div>
+                <label className="label block mb-2">Telegram Bot Token (optional)</label>
+                <input
+                  value={form.telegram_token}
+                  onChange={(e) => set('telegram_token', e.target.value)}
+                  placeholder="1234567890:ABCdef..."
+                  className="acm-input mono w-full"
+                />
+                <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
+                  Connect this agent to its own Telegram bot (coming soon).
+                </p>
+              </div>
+
+              <MemoryModeField form={form} set={set} />
             </div>
           )}
         </div>
@@ -922,6 +928,62 @@ function AgentFormModal({
   );
 }
 
+// ── Memory mode field (shared by create + edit forms) ─────────────────────────
+
+function MemoryModeField({
+  form,
+  set,
+}: {
+  form: AgentFormData;
+  set: (key: keyof AgentFormData, value: string | number) => void;
+}) {
+  return (
+    <div>
+      <label className="label block mb-2">Memory</label>
+      <select
+        value={form.memory_mode}
+        onChange={(e) => set('memory_mode', e.target.value)}
+        className="w-full appearance-none text-[14px] outline-none py-2 px-0 transition-colors"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          borderBottom: '1px solid var(--acm-border)',
+          color: 'var(--acm-fg)',
+        }}
+        onFocus={e => (e.currentTarget.style.borderBottomColor = 'var(--acm-accent)')}
+        onBlur={e => (e.currentTarget.style.borderBottomColor = 'var(--acm-border)')}
+      >
+        <option value="persistent" style={{ background: 'var(--acm-card)' }}>
+          Persistent — always remember this conversation
+        </option>
+        <option value="session_ttl" style={{ background: 'var(--acm-card)' }}>
+          Reset after inactivity
+        </option>
+      </select>
+
+      {form.memory_mode === 'session_ttl' && (
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            value={form.memory_ttl_hours}
+            onChange={(e) => set('memory_ttl_hours', Math.max(1, parseInt(e.target.value, 10) || 1))}
+            className="acm-input w-24"
+          />
+          <span className="text-[13px]" style={{ color: 'var(--acm-fg-3)' }}>
+            hours of inactivity before starting a new conversation
+          </span>
+        </div>
+      )}
+      <p className="text-[11px] mt-1.5" style={{ color: 'var(--acm-fg-4)' }}>
+        {form.memory_mode === 'persistent'
+          ? "This agent never forgets a chat, no matter how much time passes between messages."
+          : "If a chat goes quiet past this window, the agent starts fresh on the next message. Old messages stay visible in history — they're just no longer used as context."}
+      </p>
+    </div>
+  );
+}
+
 // ── Agent Detail View (in-place, replaces the grid — not an overlay) ──────────
 
 function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void }) {
@@ -932,13 +994,15 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
     system_prompt: agent.system_prompt,
     allowed_tools: agent.allowed_tools,
     telegram_token: agent.telegram_token ?? '',
+    memory_mode: agent.memory_mode ?? 'persistent',
+    memory_ttl_hours: agent.memory_ttl_hours ?? 24,
   });
   const [genDescription, setGenDescription] = useState('');
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills' | 'flows'>('config');
 
-  const set = (field: keyof AgentFormData, val: string) =>
+  const set = (field: keyof AgentFormData, val: string | number) =>
     setForm((f) => ({ ...f, [field]: val }));
 
   const handleGenerate = async () => {
@@ -986,7 +1050,13 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
       // snapshot here would silently overwrite whatever was saved there since.
       await update.mutateAsync({
         id: agent.id,
-        data: { name: form.name, description: form.description, system_prompt: form.system_prompt },
+        data: {
+          name: form.name,
+          description: form.description,
+          system_prompt: form.system_prompt,
+          memory_mode: form.memory_mode,
+          memory_ttl_hours: form.memory_ttl_hours,
+        },
       });
       toast.success('Agent updated');
     } catch {
@@ -1101,6 +1171,8 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
               <label className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-3)' }}>System Prompt</label>
               <textarea value={form.system_prompt} onChange={(e) => set('system_prompt', e.target.value)} rows={8} className="acm-input w-full text-[13px] resize-y" />
             </div>
+
+            <MemoryModeField form={form} set={set} />
 
             <button onClick={handleSave} disabled={update.isPending || !form.name.trim() || !form.system_prompt.trim()} className="btn-primary">
               {update.isPending && <Loader2 size={13} className="animate-spin" />}
