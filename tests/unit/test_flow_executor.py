@@ -380,6 +380,19 @@ class TestHttpNode:
         assert result.startswith("Error in node 'http1'")
         assert "connection refused" in result
 
+    async def test_exception_with_empty_str_falls_back_to_type_name(self):
+        graph = _http_graph()
+        mock_client = AsyncMock()
+        mock_client.request.side_effect = TimeoutError()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor()
+            result, _ = await executor.run(graph, params={})
+
+        assert result == "Error in node 'http1' (http): TimeoutError"
+
     async def test_url_and_body_support_template_substitution(self):
         graph = _http_graph(url="https://example.com/{{producto}}", body='{"q": "{{producto}}"}')
         graph["nodes"][0]["config"]["parameters"] = [{"name": "producto", "type": "string", "required": True}]

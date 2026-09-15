@@ -710,7 +710,8 @@ class FlowExecutor:
             try:
                 result = await handler(self, node, params, outputs, data_edges_by_target, nodes)
             except Exception as exc:
-                return f"Error in node '{node['id']}' ({node['type']}): {exc}", outputs
+                detail = str(exc) or type(exc).__name__
+                return f"Error in node '{node['id']}' ({node['type']}): {detail}", outputs
 
             if node["type"] == "conditional":
                 outputs[node["id"]] = result["passthrough"]
