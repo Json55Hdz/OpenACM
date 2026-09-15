@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 38
+    _SCHEMA_VERSION = 39
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1129,6 +1129,23 @@ class Database:
             await self._db.commit()
             log.info("Migration 38: added memory_mode/memory_ttl_hours to agents")
 
+        # ── Migration 39: persistent customer names ───────────────────────
+        # A conversation's customer name survives independently of memory_ttl
+        # resets — it's the one thing an agent is told to remember forever
+        # even when its conversation context resets every N hours.
+        if current < 39:
+            await self._db.executescript("""
+                CREATE TABLE IF NOT EXISTS customer_names (
+                    user_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, channel_id)
+                );
+            """)
+            await self._db.commit()
+            log.info("Migration 39: added customer_names table")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1199,6 +1216,29 @@ class Database:
         )
         row = await cursor.fetchone()
         return row["timestamp"] if row else None
+
+    async def get_customer_name(self, user_id: str, channel_id: str) -> str | None:
+        """The customer's name for this conversation, if one has been saved."""
+        if not self._db:
+            return None
+        cursor = await self._db.execute(
+            "SELECT name FROM customer_names WHERE user_id = ? AND channel_id = ?",
+            (user_id, channel_id),
+        )
+        row = await cursor.fetchone()
+        return row["name"] if row else None
+
+    async def set_customer_name(self, user_id: str, channel_id: str, name: str) -> None:
+        """Save (or overwrite) the customer's name for this conversation."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "INSERT INTO customer_names (user_id, channel_id, name, updated_at) "
+            "VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT(user_id, channel_id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+            (user_id, channel_id, name),
+        )
+        await self._db.commit()
 
     @property
     def messages_encrypted(self) -> bool:

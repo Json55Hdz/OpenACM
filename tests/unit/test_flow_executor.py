@@ -676,6 +676,75 @@ class TestWooCommerceNode:
         _, call_kwargs = mock_client.get.call_args
         assert call_kwargs["auth"] == ("my_key", "my_secret")
 
+    async def test_search_only_requests_published_products(self):
+        """A private/draft product isn't meant to be customer-facing yet —
+        don't let it leak into search results the bot recites to a customer."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            await executor.run(_woo_graph(), params={"producto": "x"})
+
+        _, call_kwargs = mock_client.get.call_args
+        assert call_kwargs["params"]["status"] == "publish"
+
+    async def test_stock_without_price_reported_as_out_of_stock(self):
+        """WordPress/WooCommerce sometimes reports stock_quantity for a product
+        that has no price set — that's not real availability, treat it as
+        out of stock regardless of what stock_quantity says."""
+        products = [
+            {"name": "Fantasma", "price": "", "stock_quantity": 5, "manage_stock": True,
+             "permalink": "https://tienda.example.com/fantasma"},
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(_woo_graph(), params={"producto": "fantasma"})
+
+        assert "Stock: Out of stock" in result
+        assert "Stock: 5" not in result
+
+    async def test_stock_with_price_reports_actual_quantity(self):
+        products = [
+            {"name": "Real", "price": "10.00", "stock_quantity": 5, "manage_stock": True,
+             "permalink": "https://tienda.example.com/real"},
+        ]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(_woo_graph(), params={"producto": "real"})
+
+        assert "Stock: 5" in result
+
 
 class TestWooCommerceStructuredOutput:
     async def test_returns_a_dict_with_result_and_count(self):

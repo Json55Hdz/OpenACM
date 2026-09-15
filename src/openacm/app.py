@@ -286,6 +286,7 @@ class OpenACM:
             skill_creator,
             add_resurrection_path,
             onboarding_tools,
+            customer_profile_tool,
         )
 
         self.tool_registry.register_module(system_cmd)
@@ -305,6 +306,7 @@ class OpenACM:
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(add_resurrection_path)
         self.tool_registry.register_module(onboarding_tools)
+        self.tool_registry.register_module(customer_profile_tool)
 
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)

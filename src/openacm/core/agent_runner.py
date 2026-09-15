@@ -133,6 +133,21 @@ class AgentRunner:
 
         return f"{block}\n\n{base_prompt}"
 
+    @staticmethod
+    def _apply_customer_name(system_prompt: str, customer_name: str | None) -> str:
+        """Append the saved customer name to the system prompt, if any.
+
+        This is deliberately separate from `memory_ttl_hours` — the name
+        survives every conversation reset (see database.customer_names +
+        the save_customer_name tool), it's never cleared by MemoryManager.
+        """
+        if not customer_name:
+            return system_prompt
+        return (
+            f"{system_prompt}\n\n"
+            f"El nombre de este cliente es {customer_name}. Salúdalo por su nombre de forma natural."
+        )
+
     async def run(
         self,
         agent: dict[str, Any],
@@ -231,6 +246,14 @@ class AgentRunner:
 
         if channel_id is None:
             channel_id = f"agent_{agent['id']}"
+
+        if self.database:
+            try:
+                customer_name = await self.database.get_customer_name(user_id, channel_id)
+            except Exception as exc:
+                log.warning("AgentRunner: failed to fetch customer name", agent_id=agent["id"], error=str(exc))
+                customer_name = None
+            system_prompt = self._apply_customer_name(system_prompt, customer_name)
 
         brain = Brain(
             config=config,

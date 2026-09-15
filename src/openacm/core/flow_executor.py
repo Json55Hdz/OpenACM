@@ -525,7 +525,9 @@ class FlowExecutor:
                 # default (also 10, but implicit) — this is the actual
                 # candidate pool the calling agent reasons over, so make it
                 # a number, not an assumption.
-                params={"search": search_term, "per_page": _WOOCOMMERCE_CANDIDATE_LIMIT},
+                # status=publish: a private/draft product isn't customer-facing
+                # yet — never let it leak into what the bot recites to a customer.
+                params={"search": search_term, "per_page": _WOOCOMMERCE_CANDIDATE_LIMIT, "status": "publish"},
                 auth=(conn_config["consumer_key"], conn_config["consumer_secret"]),
             )
             response.raise_for_status()
@@ -544,6 +546,10 @@ class FlowExecutor:
         for p in candidates:
             stock = p.get("stock_quantity")
             stock_text = str(stock) if stock is not None else ("In stock" if p.get("manage_stock") is False else "Out of stock")
+            # WordPress/WooCommerce sometimes reports stock_quantity for a
+            # product with no price set — that's not real availability.
+            if not p.get("price"):
+                stock_text = "Out of stock"
 
             raw_desc = p.get("short_description") or p.get("description", "")
             clean_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()
