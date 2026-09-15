@@ -28,9 +28,17 @@ interface GraphJson {
   edges: Array<{ from: string; to: string; fromHandle: string; toHandle: string; kind: 'flow' | 'data' }>;
 }
 
+// A graph_json authored programmatically (e.g. by the AI or an import) may
+// omit `position` entirely, so every read of a raw graph node's position
+// must fall back to the origin instead of dereferencing undefined and
+// crashing the whole editor.
+function nodePosition(position: { x: number; y: number } | undefined | null): { x: number; y: number } {
+  return { x: position?.x ?? 0, y: position?.y ?? 0 };
+}
+
 function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
   return {
-    nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: n.position, data: n.config || {} })),
+    nodes: graph.nodes.map(n => ({ id: n.id, type: n.type, position: nodePosition(n.position), data: n.config || {} })),
     edges: graph.edges.map(e => ({
       id: `${e.from}-${e.to}-${e.fromHandle}-${e.toHandle || 'default'}`,
       source: e.from,
@@ -65,7 +73,7 @@ function toReactFlow(graph: GraphJson): { nodes: Node[]; edges: Edge[] } {
 
 function toGraphJson(nodes: Node[], edges: Edge[]): GraphJson {
   return {
-    nodes: nodes.map(n => ({ id: n.id, type: n.type || 'http', config: n.data as Record<string, unknown>, position: n.position })),
+    nodes: nodes.map(n => ({ id: n.id, type: n.type || 'http', config: n.data as Record<string, unknown>, position: nodePosition(n.position) })),
     edges: edges.map(e => ({
       from: e.source,
       to: e.target,
@@ -549,7 +557,8 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
     const pastedNodes: Node[] = clip.nodes.map(n => {
       const newId = nextNodeId((n.type || 'http') as string);
       idMap[n.id] = newId;
-      return { ...n, id: newId, selected: false, position: { x: n.position.x + offset, y: n.position.y + offset } };
+      const base = nodePosition(n.position);
+      return { ...n, id: newId, selected: false, position: { x: base.x + offset, y: base.y + offset } };
     });
     const pastedEdges: Edge[] = clip.edges.map(e => ({
       id: `${idMap[e.source]}-${idMap[e.target]}-${e.sourceHandle || 'default'}-${e.targetHandle || 'default'}`,
