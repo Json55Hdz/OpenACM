@@ -14,8 +14,8 @@ from typing import Any, AsyncIterator
 import litellm
 import structlog
 
-from openacm.constants import TRUNCATE_LLM_ERROR_CHARS, DEFAULT_OLLAMA_BASE_URL
-from openacm.utils.text import truncate
+from openacm.constants import TRUNCATE_LLM_ERROR_CHARS
+from openacm.utils.text import truncate, extract_and_strip_thinking
 from openacm.core.config import LLMConfig
 from openacm.core.events import EventBus, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
 
@@ -740,14 +740,11 @@ class LLMRouter:
         captured_reasoning = "".join(reasoning_parts)
         full_content = "".join(content_parts)
 
-        # If no dedicated reasoning field was found, try extracting <think>…</think> from content.
-        # Some models (DeepSeek, QwQ via certain proxies) embed thinking in the content stream.
-        if not captured_reasoning and full_content:
-            import re as _re
-            _think_match = _re.search(r"<think(?:ing)?>(.*?)</think(?:ing)?>", full_content, _re.DOTALL)
-            if _think_match:
-                captured_reasoning = _think_match.group(1).strip()
-                full_content = _re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>\s*", "", full_content, flags=_re.DOTALL).strip()
+        # Extract thinking/reasoning and strip all thinking tags and blocks from content.
+        # Some models embed thinking in content with or without opening tags.
+        full_content, captured_reasoning = extract_and_strip_thinking(
+            full_content, existing_reasoning=captured_reasoning
+        )
 
         log.debug(
             "Custom provider stream assembled",
@@ -1076,19 +1073,16 @@ class LLMRouter:
                     api_tt = api_pt + api_ct
 
                 _raw_content = message.content or ""
-                # Extract reasoning from dedicated field or <think> tags in content
+                # Extract reasoning from dedicated field or think tags in content
                 _reasoning = (
                     getattr(message, "reasoning_content", None)
                     or getattr(message, "thinking_content", None)
                     or getattr(message, "thinking", None)
                     or ""
                 )
-                if not _reasoning and _raw_content:
-                    import re as _re2
-                    _tm = _re2.search(r"<think(?:ing)?>(.*?)</think(?:ing)?>", _raw_content, _re2.DOTALL)
-                    if _tm:
-                        _reasoning = _tm.group(1).strip()
-                        _raw_content = _re2.sub(r"<think(?:ing)?>.*?</think(?:ing)?>\s*", "", _raw_content, flags=_re2.DOTALL).strip()
+                _raw_content, _reasoning = extract_and_strip_thinking(
+                    _raw_content, existing_reasoning=_reasoning
+                )
 
                 result = {
                     "content": _raw_content,

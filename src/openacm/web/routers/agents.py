@@ -88,6 +88,8 @@ def register_routes(app: FastAPI) -> None:
             telegram_token=data.get("telegram_token", ""),
             memory_mode=data.get("memory_mode", "persistent"),
             memory_ttl_hours=data.get("memory_ttl_hours", 24),
+            inactivity_timeout_minutes=int(data.get("inactivity_timeout_minutes", 0) or 0),
+            inactivity_message=data.get("inactivity_message", ""),
         )
         agent = await _state.database.get_agent(agent_id)
         return agent  # include secret on creation so user can copy it
@@ -109,6 +111,7 @@ def register_routes(app: FastAPI) -> None:
         allowed_fields = {
             "name", "description", "system_prompt", "allowed_tools", "is_active",
             "memory_mode", "memory_ttl_hours",
+            "inactivity_timeout_minutes", "inactivity_message",
         }
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
         ok = await _state.database.update_agent(agent_id, **kwargs)

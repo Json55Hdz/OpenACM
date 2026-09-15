@@ -1,6 +1,5 @@
 """Tests for AgentWhatsAppChannel."""
 from unittest.mock import AsyncMock, MagicMock, patch
-import pytest
 
 
 def _make_wa_config(phone_id="12345"):
@@ -36,7 +35,7 @@ class TestAgentWhatsAppChannel:
         ch._http = MagicMock()
         ch._connected = True
 
-        with patch.object(ch, "_deliver", new=AsyncMock()) as mock_deliver:
+        with patch.object(ch, "_deliver", new=AsyncMock()):
             await ch._respond("5214155552671", "Hola")
 
         runner.run.assert_awaited_once()
@@ -92,3 +91,13 @@ class TestAgentWhatsAppChannel:
             await ch._deliver("521111", "Texto\nATTACHMENT: noexists.pdf")
 
         mock_send.assert_awaited_once_with("521111", "Texto")
+
+    async def test_deliver_strips_thinking_tags(self):
+        ch, _ = _make_channel()
+        ch._http = MagicMock()
+
+        raw_response = "Pensando respuesta... </think>\n¡Hola! Esta es la respuesta final."
+        with patch.object(ch, "send_message", new=AsyncMock()) as mock_send:
+            await ch._deliver("521111", raw_response)
+
+        mock_send.assert_awaited_once_with("521111", "¡Hola! Esta es la respuesta final.")

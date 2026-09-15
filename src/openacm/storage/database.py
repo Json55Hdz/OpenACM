@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 39
+    _SCHEMA_VERSION = 40
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1144,7 +1144,16 @@ class Database:
                 );
             """)
             await self._db.commit()
-            log.info("Migration 39: added customer_names table")
+        # ── Migration 40: per-agent inactivity follow-up nudges ───────────
+        # inactivity_timeout_minutes: 0 = disabled, >0 = minutes of silence before sending follow-up
+        # inactivity_message: template message sent to user on timeout (supports {name})
+        if current < 40:
+            await self._db.executescript("""
+                ALTER TABLE agents ADD COLUMN inactivity_timeout_minutes INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE agents ADD COLUMN inactivity_message TEXT NOT NULL DEFAULT '';
+            """)
+            await self._db.commit()
+            log.info("Migration 40: added inactivity_timeout_minutes and inactivity_message to agents")
 
         # Save new version
         await self._db.execute(
@@ -2130,14 +2139,17 @@ class Database:
         telegram_token: str = "",
         memory_mode: str = "persistent",
         memory_ttl_hours: int = 24,
+        inactivity_timeout_minutes: int = 0,
+        inactivity_message: str = "",
     ) -> int:
         if not self._db:
             return 0
         cursor = await self._db.execute(
             "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, "
-            "telegram_token, memory_mode, memory_ttl_hours) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "telegram_token, memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token,
-             memory_mode, memory_ttl_hours),
+             memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message),
         )
         await self._db.commit()
         return cursor.lastrowid or 0
@@ -2162,6 +2174,7 @@ class Database:
         allowed = {
             "name", "description", "system_prompt", "allowed_tools", "is_active",
             "telegram_token", "memory_mode", "memory_ttl_hours",
+            "inactivity_timeout_minutes", "inactivity_message",
         }
         updates, params = [], []
         for key, val in kwargs.items():

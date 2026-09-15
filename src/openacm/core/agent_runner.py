@@ -102,6 +102,12 @@ class AgentRunner:
         self.event_bus = event_bus
         self.database = database
         self.skill_manager = skill_manager
+        from openacm.core.inactivity_tracker import AgentInactivityTracker
+        self.inactivity_tracker = AgentInactivityTracker(
+            event_bus=self.event_bus,
+            database=self.database,
+            memory=self.memory,
+        )
 
     def _get_tools(self, allowed_tools: str) -> list[dict] | None:
         """Return the tools list for this agent based on its policy."""
@@ -247,6 +253,9 @@ class AgentRunner:
         if channel_id is None:
             channel_id = f"agent_{agent['id']}"
 
+        # Cancel any pending inactivity timer as user just sent a message
+        self.inactivity_tracker.cancel(agent["id"], channel_type, channel_id)
+
         if self.database:
             try:
                 customer_name = await self.database.get_customer_name(user_id, channel_id)
@@ -270,6 +279,13 @@ class AgentRunner:
                 user_id=user_id,
                 channel_id=channel_id,
                 channel_type=channel_type,
+            )
+            # Schedule follow-up nudge if configured
+            self.inactivity_tracker.schedule(
+                agent=agent,
+                channel_type=channel_type,
+                target_id=channel_id,
+                user_id=user_id,
             )
             return response
         except Exception as e:

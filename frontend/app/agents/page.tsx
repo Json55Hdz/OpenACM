@@ -59,6 +59,8 @@ const DEFAULT_FORM: AgentFormData = {
   telegram_token: '',
   memory_mode: 'persistent',
   memory_ttl_hours: 24,
+  inactivity_timeout_minutes: 0,
+  inactivity_message: '',
 };
 
 // ── Knowledge Tab ─────────────────────────────────────────────────────────────
@@ -896,6 +898,7 @@ function AgentFormModal({
               </div>
 
               <MemoryModeField form={form} set={set} />
+              <InactivityFollowUpField form={form} set={set} />
             </div>
           )}
         </div>
@@ -984,6 +987,51 @@ function MemoryModeField({
   );
 }
 
+// ── Inactivity follow-up field ───────────────────────────────────────────────
+
+function InactivityFollowUpField({
+  form,
+  set,
+}: {
+  form: AgentFormData;
+  set: (key: keyof AgentFormData, value: string | number) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <label className="label block">Inactivity Follow-up (Nudge)</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          value={form.inactivity_timeout_minutes}
+          onChange={(e) => set('inactivity_timeout_minutes', Math.max(0, parseInt(e.target.value, 10) || 0))}
+          className="acm-input w-24"
+        />
+        <span className="text-[13px]" style={{ color: 'var(--acm-fg-3)' }}>
+          minutes of silence before sending follow-up (0 = disabled)
+        </span>
+      </div>
+      {form.inactivity_timeout_minutes > 0 && (
+        <div className="space-y-1 mt-2">
+          <label className="text-[11px] font-medium" style={{ color: 'var(--acm-fg-3)' }}>
+            Custom message template (optional, supports {'{name}'}):
+          </label>
+          <textarea
+            value={form.inactivity_message}
+            onChange={(e) => set('inactivity_message', e.target.value)}
+            rows={2}
+            placeholder="Leave blank to use default friendly follow-up message"
+            className="acm-input w-full text-[13px] resize-y"
+          />
+        </div>
+      )}
+      <p className="text-[11px]" style={{ color: 'var(--acm-fg-4)' }}>
+        Automatically sends a proactive follow-up reminder to customers on WhatsApp if they stop responding during a conversation.
+      </p>
+    </div>
+  );
+}
+
 // ── Agent Detail View (in-place, replaces the grid — not an overlay) ──────────
 
 function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void }) {
@@ -996,6 +1044,8 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
     telegram_token: agent.telegram_token ?? '',
     memory_mode: agent.memory_mode ?? 'persistent',
     memory_ttl_hours: agent.memory_ttl_hours ?? 24,
+    inactivity_timeout_minutes: agent.inactivity_timeout_minutes ?? 0,
+    inactivity_message: agent.inactivity_message ?? '',
   });
   const [genDescription, setGenDescription] = useState('');
   const [droppedFiles, setDroppedFiles] = useState<File[]>([]);
@@ -1056,6 +1106,8 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
           system_prompt: form.system_prompt,
           memory_mode: form.memory_mode,
           memory_ttl_hours: form.memory_ttl_hours,
+          inactivity_timeout_minutes: form.inactivity_timeout_minutes,
+          inactivity_message: form.inactivity_message,
         },
       });
       toast.success('Agent updated');
@@ -1173,6 +1225,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
             </div>
 
             <MemoryModeField form={form} set={set} />
+            <InactivityFollowUpField form={form} set={set} />
 
             <button onClick={handleSave} disabled={update.isPending || !form.name.trim() || !form.system_prompt.trim()} className="btn-primary">
               {update.isPending && <Loader2 size={13} className="animate-spin" />}

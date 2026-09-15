@@ -68,6 +68,7 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             log.warning("AgentWhatsAppChannel could not reach Graph API", error=str(exc))
 
         self.ready_event.set()
+        self.event_bus.on("channel:send", self._handle_channel_send)
         if self._connected:
             await self.event_bus.emit(
                 EVENT_CHANNEL_CONNECTED,
@@ -75,6 +76,10 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             )
 
     async def stop(self):
+        try:
+            self.event_bus.off("channel:send", self._handle_channel_send)
+        except Exception:
+            pass
         if self._http:
             await self._http.aclose()
         self._connected = False
@@ -82,6 +87,18 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             EVENT_CHANNEL_DISCONNECTED,
             {"channel": "whatsapp", "agent_id": self.agent["id"]},
         )
+
+    async def _handle_channel_send(self, event_type: str, data: dict):
+        """Deliver a proactive message if this agent owns it."""
+        if data.get("agent_id") != self.agent["id"]:
+            return
+        ch = data.get("channel", "")
+        if ch and not ch.startswith("whatsapp"):
+            return
+        target_id = str(data.get("target_id", ""))
+        text = str(data.get("text", ""))
+        if target_id and text:
+            await self._deliver(target_id, text)
 
     async def _respond(self, sender: str, content: str):
         """Route to AgentRunner with scoped user_id for memory isolation."""

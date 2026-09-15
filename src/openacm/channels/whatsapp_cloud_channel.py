@@ -9,7 +9,6 @@ channel so the webhook route can reach it.
 """
 
 import asyncio
-import base64
 import hashlib
 import hmac
 import os
@@ -23,6 +22,7 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import WhatsAppConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
+from openacm.utils.text import extract_and_strip_thinking
 
 log = structlog.get_logger()
 
@@ -213,8 +213,9 @@ class WhatsAppCloudChannel(BaseChannel):
         media_dir = Path(project_root) / "data" / "media"
 
         lines = response.splitlines()
-        attachment_names = [l[len("ATTACHMENT:"):].strip() for l in lines if l.startswith("ATTACHMENT:")]
-        clean_text = "\n".join(l for l in lines if not l.startswith("ATTACHMENT:")).strip()
+        attachment_names = [line[len("ATTACHMENT:"):].strip() for line in lines if line.startswith("ATTACHMENT:")]
+        clean_text = "\n".join(line for line in lines if not line.startswith("ATTACHMENT:")).strip()
+        clean_text, _ = extract_and_strip_thinking(clean_text)
 
         for fname in attachment_names:
             fpath = media_dir / fname

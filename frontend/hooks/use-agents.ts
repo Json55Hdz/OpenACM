@@ -14,6 +14,8 @@ export interface Agent {
   telegram_token: string;
   memory_mode: 'persistent' | 'session_ttl';
   memory_ttl_hours: number;
+  inactivity_timeout_minutes: number;
+  inactivity_message: string;
   created_at: string;
   updated_at: string;
   // only returned on create
@@ -28,6 +30,8 @@ export interface AgentFormData {
   telegram_token: string;
   memory_mode: 'persistent' | 'session_ttl';
   memory_ttl_hours: number;
+  inactivity_timeout_minutes: number;
+  inactivity_message: string;
 }
 
 export interface KnowledgeItem {
