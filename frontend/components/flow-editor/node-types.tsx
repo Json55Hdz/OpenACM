@@ -18,6 +18,7 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
   loop: 'logic',
   http: 'integration',
   woocommerce: 'integration',
+  agent: 'integration',
   set: 'data',
   get: 'data',
 };
@@ -45,6 +46,9 @@ export const NODE_CATEGORY: Record<string, NodeCategory> = {
 //                 source "item"/"index"                             -> data
 //   woocommerce:  target "default" -> flow; target "search_term"  -> data;
 //                 source "default" -> flow; source "result"/"count" -> data
+//   agent:        target "default" -> flow; target "message"      -> data;
+//                 source "default" -> flow (this node's whole output is
+//                 the agent's text response)
 //   set:          NO flow handles at all — target "value" -> data;
 //                 source "value" -> data. Set is a pure node (like Get,
 //                 below): run() never flow-walks one, so it needs no
@@ -148,6 +152,7 @@ const NODE_DESCRIPTIONS: Record<string, string> = {
   conditional: 'Evalúa una condición sobre un valor y bifurca el flujo en dos ramas: true o false.',
   loop: 'Repite una cadena de nodos una vez por cada elemento de una lista. No hace falta conectar nada de vuelta: cuando la cadena del cuerpo llega a un punto muerto, sigue automáticamente con el próximo elemento.',
   woocommerce: 'Busca productos en una tienda WooCommerce conectada y devuelve los resultados.',
+  agent: 'Invoca a un Agente de OpenACM (LLM) con un mensaje y expone su respuesta de texto al resto del flujo.',
   set: 'Guarda, bajo un nombre, un valor conectado desde otro nodo — para poder reutilizarlo en cualquier punto del flujo.',
   get: 'Recupera un valor guardado previamente por un nodo Guardar (Set), en cualquier punto del flujo.',
   end: 'Punto final del flujo. Arma la respuesta final combinando texto fijo y valores de nodos anteriores.',
@@ -352,6 +357,23 @@ export function WooCommerceNode({ id, data, selected }: NodeProps) {
   );
 }
 
+export function AgentNode({ id, data, selected }: NodeProps) {
+  const targetConnections = useNodeConnections({ id, handleType: 'target' });
+  const messageWired = targetConnections.some(c => c.targetHandle === 'message');
+  const flowIn = pinProps('agent', 'default', 'target', 'nodo anterior');
+  const flowOut = pinProps('agent', 'default', 'source', 'siguiente nodo');
+  return (
+    <NodeCard type="agent" icon="🤖" title="Agente" selected={selected}>
+      <MergeBadge id={id} />
+      <div style={{ color: 'var(--acm-fg-4)' }}>{data.agent_id ? `Agente #${data.agent_id}` : '(sin agente)'}</div>
+      <PinRow nodeType="agent" handleId="message" handleKind="target" label="message" literalPreview={messageWired || !data.message ? undefined : truncate(String(data.message))} />
+      <div style={idStyle}>{'{{'}{id}{'}}'}</div>
+      <Handle type="target" position={Position.Top} id="default" style={flowIn.style} title={flowIn.title} />
+      <Handle type="source" position={Position.Bottom} id="default" style={flowOut.style} title={flowOut.title} />
+    </NodeCard>
+  );
+}
+
 // Set is a pure data node — no flow-in/flow-out handles, matching Get
 // below (and Unreal Blueprint's pure/non-exec nodes). Its "value" target
 // pin is the only way to feed it a value now: with no flow position,
@@ -404,6 +426,7 @@ export const NODE_TYPES = {
   conditional: ConditionalNode,
   loop: LoopNode,
   woocommerce: WooCommerceNode,
+  agent: AgentNode,
   set: SetNode,
   get: GetNode,
   end: EndNode,

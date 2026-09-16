@@ -9,6 +9,7 @@ import '@xyflow/react/dist/style.css';
 import { NODE_TYPES, NODE_CATEGORY, CATEGORY_COLORS, classifyPin } from './node-types';
 import type { AgentFlow } from '@/hooks/use-agent-flows';
 import { useAgentConnections, useCreateConnection } from '@/hooks/use-agent-connections';
+import { useAgents } from '@/hooks/use-agents';
 import { useAgentFlowSkill, useSaveFlowSkill, useGenerateFlowSkill } from '@/hooks/use-agent-flow-skill';
 import { useAPI } from '@/hooks/use-api';
 import { Trash2 } from 'lucide-react';
@@ -416,13 +417,13 @@ function VariablePicker({ nodeId, nodes, edges, targetRef, value, onInsert, outp
 const NODE_CATEGORIES: Array<{ label: string; types: Array<keyof typeof NODE_TYPES> }> = [
   { label: 'FLUJO', types: ['start', 'end'] },
   { label: 'LÓGICA', types: ['conditional', 'loop'] },
-  { label: 'INTEGRACIONES', types: ['http', 'woocommerce'] },
+  { label: 'INTEGRACIONES', types: ['http', 'woocommerce', 'agent'] },
   { label: 'DATOS', types: ['set', 'get'] },
 ];
 
 const NODE_LABELS: Record<keyof typeof NODE_TYPES, string> = {
   start: '▶ Inicio', end: '■ Final', conditional: '◆ Condicional', loop: '🔁 Bucle (Por cada)',
-  http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', set: '💾 Guardar (Set)', get: '📤 Obtener (Get)',
+  http: '🌐 HTTP Request', woocommerce: '🛒 WooCommerce', agent: '🤖 Agente', set: '💾 Guardar (Set)', get: '📤 Obtener (Get)',
 };
 
 function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: AgentFlow; onSave: (graphJson: string) => void }) {
@@ -461,8 +462,10 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
   const conditionalFieldRef = useRef<HTMLInputElement>(null);
   const searchTermRef = useRef<HTMLInputElement>(null);
   const templateRef = useRef<HTMLTextAreaElement>(null);
+  const agentMessageRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: connections } = useAgentConnections(agentId);
+  const { data: agents } = useAgents();
   const createConnection = useCreateConnection(agentId);
   const [showNewConnectionForm, setShowNewConnectionForm] = useState(false);
   const [newConnName, setNewConnName] = useState('');
@@ -617,6 +620,7 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
       conditional: { field: '', operator: 'contains', value: '' },
       loop: { max_iterations: 200 },
       woocommerce: { connection_id: null, search_term: '' },
+      agent: { agent_id: null, message: '' },
       set: { name: '' },
       get: { name: '' },
       end: { template: '' },
@@ -1109,6 +1113,34 @@ function FlowCanvasInner({ agentId, flow, onSave }: { agentId: number; flow: Age
               <ConnectableField nodeId={selectedNode.id} fieldName="search_term" edges={edges} setEdges={setEdges}>
                 <input ref={searchTermRef} className="acm-input w-full" value={String(selectedNode.data.search_term || '')} onChange={e => updateSelectedNodeData({ search_term: e.target.value })} />
                 <TemplatePreview value={String(selectedNode.data.search_term || '')} params={testParams} outputs={testOutputs} />
+              </ConnectableField>
+            </>
+          )}
+          {selectedNode.type === 'agent' && (
+            <>
+              <div className="label text-[var(--acm-fg-4)] mb-1">Agente</div>
+              <label>Agente a invocar</label>
+              <select
+                className="acm-input w-full mb-2"
+                value={String(selectedNode.data.agent_id ?? '')}
+                onChange={e => updateSelectedNodeData({ agent_id: Number(e.target.value) })}
+              >
+                <option value="">Seleccionar...</option>
+                {(agents || []).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              <label>Mensaje</label>
+              <VariablePicker
+                nodeId={selectedNode.id}
+                nodes={nodes}
+                edges={edges}
+                outputs={testOutputs}
+                targetRef={agentMessageRef}
+                value={String(selectedNode.data.message || '')}
+                onInsert={v => updateSelectedNodeData({ message: v })}
+              />
+              <ConnectableField nodeId={selectedNode.id} fieldName="message" edges={edges} setEdges={setEdges}>
+                <textarea ref={agentMessageRef} className="acm-input w-full" rows={3} value={String(selectedNode.data.message || '')} onChange={e => updateSelectedNodeData({ message: e.target.value })} />
+                <TemplatePreview value={String(selectedNode.data.message || '')} params={testParams} outputs={testOutputs} />
               </ConnectableField>
             </>
           )}
