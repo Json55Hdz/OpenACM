@@ -4,11 +4,12 @@
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| OS | Windows 10, macOS 12, Ubuntu 20.04 | Windows 11, macOS 14, Ubuntu 22.04 |
-| Python | 3.11+ | 3.12 |
-| RAM | 4 GB | 8 GB (16 GB with local LLM) |
-| Storage | 2 GB | 5 GB (more for local models) |
-| Node.js | 18+ | 20+ |
+| OS | Windows 10, macOS 12, Ubuntu 22.04 | Windows 11, macOS 14, Ubuntu 24.04 |
+| Python | 3.12+ | 3.12+ |
+| RAM | 8 GB (Windows) / 3 GB (Linux VPS) | 8-16 GB (16+ GB with local LLMs) |
+| CPU | 2 cores / vCPUs | 3+ cores (smooth concurrency) |
+| Storage | 5 GB | 20 GB+ |
+| Node.js | 20+ | 20+ |
 | GPU | Not required | Optional (for local LLM acceleration) |
 
 ---

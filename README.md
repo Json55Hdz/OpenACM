@@ -77,8 +77,12 @@ iwr -useb https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/install.ps1 |
 
 #### Prerequisites
 
-- Python 3.12+
-- Node.js 20+
+- **Python 3.12+**
+- **Node.js 20+**
+- **RAM**:
+  - **Windows**: 8 GB RAM minimum (el propio Windows consume ~4 GB en reposo + OpenACM ~1.8 GB).
+  - **Linux / VPS**: 3 GB RAM mínimo, 4 GB o más recomendado.
+- **CPU**: 2 núcleos mínimo, 3 núcleos o más recomendado para alta concurrencia.
 - An API key from any supported LLM provider
 
 #### Windows
