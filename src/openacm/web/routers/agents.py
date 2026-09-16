@@ -275,7 +275,21 @@ def register_routes(app: FastAPI) -> None:
         async def get_connection(connection_id: int):
             return await _state.database.get_connection(connection_id)
 
-        executor = FlowExecutor(get_connection=get_connection)
+        agent_runner = None
+        get_agent = None
+        if _state.brain:
+            from openacm.core.agent_runner import AgentRunner
+
+            agent_runner = AgentRunner(
+                llm_router=_state.brain.llm_router, tool_registry=_state.brain.tool_registry,
+                memory=_state.brain.memory, event_bus=_state.brain.event_bus,
+                database=_state.database, skill_manager=_state.brain.skill_manager,
+            )
+
+            async def get_agent(agent_id: int):
+                return await _state.database.get_agent(agent_id)
+
+        executor = FlowExecutor(get_connection=get_connection, get_agent=get_agent, agent_runner=agent_runner)
         result, outputs = await executor.run(graph, test_params)
         return {"result": result, "outputs": outputs, "error": is_error_result(result)}
 

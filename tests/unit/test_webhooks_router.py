@@ -1,6 +1,6 @@
 """Tests for the generic public webhook connector route."""
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -389,3 +389,51 @@ class TestAdminCrud:
         body = resp.json()
         assert body["stats"]["total"] == 1
         assert body["events"][0]["status"] == "ok"
+
+
+AGENT_FLOW_GRAPH = json.dumps({
+    "nodes": [
+        {"id": "start", "type": "start", "config": {"parameters": []}},
+        {"id": "agent1", "type": "agent", "config": {"agent_id": 99, "message": "{{body}}"}},
+        {"id": "end", "type": "end", "config": {"template": "{{agent1}}"}},
+    ],
+    "edges": [
+        {"from": "start", "to": "agent1", "fromHandle": "default"},
+        {"from": "agent1", "to": "end", "fromHandle": "default"},
+    ],
+})
+
+
+class TestAgentNodeThroughWebhook:
+    async def test_connector_flow_with_an_agent_node_calls_the_agent(self, app_client, _mock_state, monkeypatch):
+        _mock_state.get_flow.return_value = {"id": 7, "graph_json": AGENT_FLOW_GRAPH}
+        _mock_state.get_agent = AsyncMock(return_value={
+            "id": 99, "name": "Redactor", "system_prompt": "p", "allowed_tools": "none",
+        })
+        _mock_state.get_agent_knowledge = AsyncMock(return_value=[])
+        _mock_state.get_agent_flows = AsyncMock(return_value=[])
+
+        fake_brain = MagicMock()
+        fake_brain.llm_router = MagicMock()
+        fake_brain.tool_registry = MagicMock()
+        fake_brain.memory = MagicMock()
+        fake_brain.event_bus = MagicMock()
+        fake_brain.skill_manager = None
+        monkeypatch.setattr(_state, "brain", fake_brain)
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                pass
+
+            async def process_message(self, **kwargs):
+                return "hola " + kwargs["content"]
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            async with app_client as ac:
+                resp = await ac.post(
+                    "/api/webhooks/pagos",
+                    headers={"Authorization": "Bearer s3cr3t"},
+                    json="511659",
+                )
+        assert resp.status_code == 200
+        assert resp.json()["result"] == "hola 511659"

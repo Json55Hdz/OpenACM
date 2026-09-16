@@ -321,3 +321,46 @@ class TestFlowSkillInjection:
             await runner.run(agent=AGENT, message="hola")
 
         base_registry.is_relevant.assert_not_called()
+
+
+AGENT_FLOW_WITH_AGENT_NODE = {
+    "id": 9, "name": "redact", "description": "Uses another agent",
+    "graph_json": json.dumps({
+        "nodes": [
+            {"id": "start", "type": "start", "config": {"parameters": [{"name": "texto", "type": "string", "required": True}]}},
+            {"id": "agent1", "type": "agent", "config": {"agent_id": 99, "message": "{{texto}}"}},
+            {"id": "end", "type": "end", "config": {"template": "{{agent1}}"}},
+        ],
+        "edges": [
+            {"from": "start", "to": "agent1", "fromHandle": "default"},
+            {"from": "agent1", "to": "end", "fromHandle": "default"},
+        ],
+    }),
+}
+
+OTHER_AGENT = {"id": 99, "name": "Redactor", "system_prompt": "p", "allowed_tools": "none"}
+
+
+class TestAgentNodeInsideAFlowTool:
+    async def test_agent_node_calls_another_agent_and_its_output_flows_through(self):
+        db = MagicMock()
+        db.get_agent_knowledge = AsyncMock(return_value=[])
+        db.get_agent_flows = AsyncMock(return_value=[AGENT_FLOW_WITH_AGENT_NODE])
+        db.get_agent = AsyncMock(side_effect=lambda agent_id: OTHER_AGENT if agent_id == 99 else AGENT)
+        runner = _make_runner(database=db)
+        runner.tool_registry = _FakeToolRegistry()
+
+        captured = {}
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                captured["tool_registry"] = tool_registry
+
+            async def process_message(self, **kwargs):
+                return "redacted: " + kwargs["content"]
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            await runner.run(agent=AGENT, message="hi")
+            result = await captured["tool_registry"].execute("flow_9", {"texto": "hola"})
+
+        assert result == "redacted: hola"

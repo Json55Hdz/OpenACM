@@ -122,7 +122,22 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=500, detail="Connector is misconfigured")
 
         start = time.monotonic()
-        executor = FlowExecutor()
+
+        agent_runner = None
+        get_agent = None
+        if _state.brain:
+            from openacm.core.agent_runner import AgentRunner
+
+            agent_runner = AgentRunner(
+                llm_router=_state.brain.llm_router, tool_registry=_state.brain.tool_registry,
+                memory=_state.brain.memory, event_bus=_state.brain.event_bus,
+                database=_state.database, skill_manager=_state.brain.skill_manager,
+            )
+
+            async def get_agent(agent_id: int):
+                return await _state.database.get_agent(agent_id)
+
+        executor = FlowExecutor(get_agent=get_agent, agent_runner=agent_runner)
         result, _outputs = await executor.run(graph, {"headers": dict(request.headers), "body": body})
         duration_ms = int((time.monotonic() - start) * 1000)
 

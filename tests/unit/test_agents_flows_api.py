@@ -1,6 +1,6 @@
 """Tests for per-agent flow API endpoints under the agents router."""
 import json as _json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI
@@ -281,3 +281,48 @@ class TestTestFlowEndpoint:
             )
         assert resp.status_code == 200
         assert resp.json()["error"] is True
+
+
+class TestTestFlowEndpointAgentNode:
+    async def test_agent_node_in_a_tested_flow_calls_the_agent(self, app_client, _mock_state, monkeypatch):
+        _mock_state.get_agent = AsyncMock(return_value={
+            "id": 99, "name": "Redactor", "system_prompt": "p", "allowed_tools": "none",
+        })
+        _mock_state.get_agent_knowledge = AsyncMock(return_value=[])
+        _mock_state.get_agent_flows = AsyncMock(return_value=[])
+
+        fake_brain = MagicMock()
+        fake_brain.llm_router = MagicMock()
+        fake_brain.tool_registry = MagicMock()
+        fake_brain.memory = MagicMock()
+        fake_brain.event_bus = MagicMock()
+        fake_brain.skill_manager = None
+        monkeypatch.setattr(_state, "brain", fake_brain)
+
+        class _FakeBrain:
+            def __init__(self, config, tool_registry=None, **kwargs):
+                pass
+
+            async def process_message(self, **kwargs):
+                return "respuesta del agente: " + kwargs["content"]
+
+        graph = _json.dumps({
+            "nodes": [
+                {"id": "start", "type": "start", "config": {"parameters": [{"name": "texto", "type": "string", "required": True}]}},
+                {"id": "agent1", "type": "agent", "config": {"agent_id": 99, "message": "{{texto}}"}},
+                {"id": "end", "type": "end", "config": {"template": "{{agent1}}"}},
+            ],
+            "edges": [
+                {"from": "start", "to": "agent1", "fromHandle": "default"},
+                {"from": "agent1", "to": "end", "fromHandle": "default"},
+            ],
+        })
+
+        with patch("openacm.core.brain.Brain", _FakeBrain):
+            async with app_client as ac:
+                resp = await ac.post(
+                    "/api/agents/42/flows/7/test",
+                    json={"params": {"texto": "hola"}, "graph_json": graph},
+                )
+        assert resp.status_code == 200
+        assert resp.json()["result"] == "respuesta del agente: hola"

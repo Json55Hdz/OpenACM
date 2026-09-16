@@ -210,7 +210,10 @@ class AgentRunner:
                 async def get_connection(connection_id: int):
                     return await self.database.get_connection(connection_id)
 
-                executor = FlowExecutor(get_connection=get_connection)
+                async def get_agent(agent_id: int):
+                    return await self.database.get_agent(agent_id)
+
+                executor = FlowExecutor(get_connection=get_connection, get_agent=get_agent, agent_runner=self)
                 flow_tools = {f"flow_{f['id']}": _build_flow_tool(f, executor) for f in active_flows}
 
         agent_tool_registry = self.tool_registry if allowed != "none" else None
