@@ -25,11 +25,11 @@ SQLite  ·  config/.env  ·  data/
 | Recurso | Mínimo | Recomendado |
 |---|---|---|
 | **OS** | Ubuntu 22.04 LTS | Ubuntu 24.04 LTS |
-| **RAM** | 2 GB *(corre de maravilla)* | 4 GB |
-| **CPU** | 2 vCPUs | 3 vCPUs *(3 núcleos, de ahí en más va sobrado)* |
+| **RAM** | 3 GB *(mínimo para el host)* | 4 GB o más |
+| **CPU** | 2 vCPUs | 3 vCPUs *(3 núcleos en adelante va sobrado)* |
 | **Disco** | 20 GB SSD | 40 GB SSD |
 
-> OpenACM es sumamente eficiente: con **2 GB de RAM** corre de maravilla en producción para agentes y canales de mensajería (WhatsApp, Telegram, Web). Recomendado un procesador de **3 núcleos / vCPUs** para procesar la concurrencia con total soltura; de ahí en más, va sobrado (*easy*).
+> **Consumo de memoria:** En runtime, el contenedor de OpenACM (FastAPI + SPA + modelos de embeddings para RAG y router local) consume alrededor de **~1.8 GB de RAM**. Por ello, para un servidor Linux/VPS se requiere un mínimo de **3 GB de RAM** para dejar margen operativo a Ubuntu y Docker. Con **3 núcleos de procesador** y **4 GB de RAM** en adelante, el sistema corre con total fluidez (*easy*), incluso bajo alta concurrencia.
 > **Con Playwright/Chromium activo**: +1 GB RAM si se usa navegación web automatizada intensiva.
 > **Con Voice (Kokoro)**: necesita GPU o +4 GB RAM. Desactívalo si el VPS no tiene GPU.
 
