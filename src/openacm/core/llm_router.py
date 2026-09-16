@@ -511,7 +511,10 @@ class LLMRouter:
                     msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
                 normalized.append(msg)
 
-        return normalized
+        # Strip top-level 'name' from all messages — rejected with 400 by providers like
+        # OpenCode Go / Console Go / GLM-5.3-flash ("messages[N]: 'name' is not supported by this endpoint").
+        # Tool call function names remain intact within tool_calls[...]['function']['name'].
+        return [{k: v for k, v in m.items() if k != "name"} for m in normalized]
 
     async def _custom_chat(
         self,
@@ -634,8 +637,12 @@ class LLMRouter:
                         model=model,
                         response_body=truncate(body_text, TRUNCATE_LLM_ERROR_CHARS),
                     )
+                    error_prefix = (
+                        "Rate limit" if resp.status_code == 429
+                        else ("Server error" if resp.status_code >= 500 else "Client error")
+                    )
                     raise httpx.HTTPStatusError(
-                        f"Server error '{resp.status_code}' for url '{url}'",
+                        f"{error_prefix} '{resp.status_code}' for url '{url}'",
                         request=resp.request,
                         response=resp,
                     )
@@ -862,30 +869,69 @@ class LLMRouter:
                 # our own budget; re-sending would just double the wait.
                 _e_str = str(e)
                 _e_type = type(e).__name__.lower()
+                is_rate_limit = (
+                    "429" in _e_str
+                    or "rate limit" in error_str
+                    or "rate_limit" in error_str
+                    or "too many requests" in error_str
+                    or "ratelimit" in _e_type
+                )
+                # Client errors (400 Bad Request, 401 Unauthorized, etc.) are permanent, not transient
+                is_client_error = (
+                    any(c in _e_str for c in ("'400'", " 400 ", "401", "403", "404", "client error"))
+                    or "bad request" in error_str
+                    or "unauthorized" in error_str
+                ) and not is_rate_limit
+
                 is_retryable = (
-                    "500" in _e_str
-                    or "502" in _e_str
-                    or "503" in _e_str
-                    or "504" in _e_str
-                    or "server error" in error_str
-                    or "readerror" in _e_type          # httpx: server dropped stream
-                    or "read error" in error_str
-                    or "remotedisconnected" in _e_type  # http.client level drop
-                    or "connectionerror" in _e_type
-                    or "connectionreset" in error_str
-                    or "peer closed" in error_str
+                    not is_client_error
+                    and (
+                        is_rate_limit
+                        or "500" in _e_str
+                        or "502" in _e_str
+                        or "503" in _e_str
+                        or "504" in _e_str
+                        or "server error" in error_str
+                        or "readerror" in _e_type          # httpx: server dropped stream
+                        or "read error" in error_str
+                        or "remotedisconnected" in _e_type  # http.client level drop
+                        or "connectionerror" in _e_type
+                        or "connectionreset" in error_str
+                        or "peer closed" in error_str
+                    )
                 )
 
                 if not is_retryable or attempt == max_retries - 1:
                     raise
 
-                # Longer wait for connection drops — give the remote server time to recover
+                # Longer wait for connection drops — give the remote server time to recover.
+                # For rate limits (429), respect Retry-After header if provided, otherwise exponential backoff with jitter.
                 is_network_drop = "readerror" in _e_type or "connectionerror" in _e_type or "remotedisconnected" in _e_type
-                wait_time = (10 * (attempt + 1)) if is_network_drop else (2 ** attempt)
+                if is_rate_limit:
+                    import random
+                    retry_after = None
+                    resp = getattr(e, "response", None)
+                    if resp is not None and hasattr(resp, "headers"):
+                        try:
+                            ra_val = resp.headers.get("retry-after")
+                            if ra_val:
+                                retry_after = float(ra_val)
+                        except (ValueError, TypeError):
+                            pass
+                    if retry_after is not None:
+                        wait_time = max(retry_after, 1.0)
+                    else:
+                        wait_time = float(2 ** (attempt + 1)) + random.uniform(0.2, 0.8)
+                elif is_network_drop:
+                    wait_time = float(10 * (attempt + 1))
+                else:
+                    wait_time = float(2 ** attempt)
+
                 log.warning(
-                    f"LLM request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...",
+                    f"LLM request failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time:.1f}s...",
                     error=str(e),
                     error_type=type(e).__name__,
+                    is_rate_limit=is_rate_limit,
                 )
                 await asyncio.sleep(wait_time)
 
