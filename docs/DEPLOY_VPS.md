@@ -20,16 +20,17 @@ SQLite  ·  config/.env  ·  data/
 
 ---
 
-## Requisitos mínimos del servidor
+## Requisitos del servidor
 
 | Recurso | Mínimo | Recomendado |
 |---|---|---|
 | **OS** | Ubuntu 22.04 LTS | Ubuntu 24.04 LTS |
-| **RAM** | 2 GB | 4 GB |
-| **CPU** | 2 vCPUs | 4 vCPUs |
+| **RAM** | 2 GB *(corre de maravilla)* | 4 GB |
+| **CPU** | 2 vCPUs | 3 vCPUs *(3 núcleos, de ahí en más va sobrado)* |
 | **Disco** | 20 GB SSD | 40 GB SSD |
 
-> **Con Playwright/Chromium activo**: +1 GB RAM mínimo (el agente web descarga ~500 MB de Chromium).
+> OpenACM es sumamente eficiente: con **2 GB de RAM** corre de maravilla en producción para agentes y canales de mensajería (WhatsApp, Telegram, Web). Recomendado un procesador de **3 núcleos / vCPUs** para procesar la concurrencia con total soltura; de ahí en más, va sobrado (*easy*).
+> **Con Playwright/Chromium activo**: +1 GB RAM si se usa navegación web automatizada intensiva.
 > **Con Voice (Kokoro)**: necesita GPU o +4 GB RAM. Desactívalo si el VPS no tiene GPU.
 
 ---
