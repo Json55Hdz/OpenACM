@@ -101,7 +101,7 @@ _WOOCOMMERCE_CANDIDATE_LIMIT = 10
 # Mirrors classifyPin() in frontend/components/flow-editor/node-types.tsx —
 # keep both in sync when either changes. Target = a node's flow-in/data-in
 # handle ids; source = its flow-out/data-out handle ids.
-KNOWN_NODE_TYPES = {"start", "http", "conditional", "woocommerce", "set", "get", "end", "loop"}
+KNOWN_NODE_TYPES = {"start", "http", "conditional", "woocommerce", "set", "get", "end", "loop", "agent"}
 
 NODE_TARGET_HANDLES: dict[str, set[str]] = {
     "start": set(),
@@ -112,6 +112,7 @@ NODE_TARGET_HANDLES: dict[str, set[str]] = {
     "get": set(),
     "end": {"default"},
     "loop": {"default", "items"},
+    "agent": {"default", "message"},
 }
 
 NODE_SOURCE_HANDLES: dict[str, set[str]] = {
@@ -123,6 +124,7 @@ NODE_SOURCE_HANDLES: dict[str, set[str]] = {
     "get": {"default"},
     "end": set(),
     "loop": {"loop", "done", "item", "index"},
+    "agent": {"default"},
 }
 
 
@@ -432,12 +434,20 @@ class FlowExecutor:
     _CONDITIONAL_OPERATORS = {"contains", "equals", "is_empty", "is_error"}
     _MAX_NODE_VISITS = 2000
 
-    def __init__(self, get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None):
+    def __init__(
+        self,
+        get_connection: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None,
+        get_agent: Callable[[int], Coroutine[Any, Any, dict | None]] | None = None,
+        agent_runner: Any = None,
+    ):
         self.get_connection = get_connection
+        self.get_agent = get_agent
+        self.agent_runner = agent_runner
         self._HANDLERS: dict[str, Callable] = {
             "http": FlowExecutor._run_http_node,
             "conditional": FlowExecutor._run_conditional_node,
             "woocommerce": FlowExecutor._run_woocommerce_node,
+            "agent": FlowExecutor._run_agent_node,
         }
 
     async def _run_http_node(
@@ -564,6 +574,22 @@ class FlowExecutor:
             output.append(f"  Link: {p.get('permalink')}")
 
         return {"result": "\n".join(output), "count": len(candidates)}
+
+    async def _run_agent_node(
+        self, node: dict, params: dict, outputs: dict,
+        data_edges_by_target: dict[tuple[str, str], tuple[str, str]], nodes: dict[str, dict],
+    ) -> str:
+        cfg = node["config"]
+        message = resolve_field("message", node["id"], cfg, data_edges_by_target, nodes, params, outputs)
+
+        if not self.get_agent or not self.agent_runner:
+            raise RuntimeError("No agent lookup/runner configured for this flow executor")
+
+        agent = await self.get_agent(cfg["agent_id"])
+        if not agent:
+            raise RuntimeError(f"Agent {cfg['agent_id']} not found")
+
+        return await self.agent_runner.run(agent, message)
 
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         # Normalize once, here: the spec's global constraint says a node with
