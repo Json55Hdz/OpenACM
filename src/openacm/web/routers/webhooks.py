@@ -59,7 +59,7 @@ def register_routes(app: FastAPI) -> None:
 
         try:
             body: dict[str, Any] = json.loads(raw_body) if raw_body else {}
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             # dedupe_key isn't known yet at this point (it's read below, after
             # the body parses) — and a malformed body can't carry a meaningful
             # one anyway, so the audit row records None for it.

@@ -137,6 +137,15 @@ class TestBody:
         assert call.args[1] is None     # dedupe_key — not computable from a malformed body
         assert call.args[3] == "bad_request"
 
+    async def test_non_utf8_body_400s_instead_of_500ing(self, app_client, _mock_state):
+        # A body that isn't valid UTF-8 makes json.loads() raise UnicodeDecodeError,
+        # not json.JSONDecodeError — both must be treated as "invalid JSON body".
+        async with app_client as ac:
+            resp = await ac.post(
+                "/api/webhooks/pagos", headers={"Authorization": "Bearer s3cr3t"}, content=b"\xbf\xbf\xbf",
+            )
+        assert resp.status_code == 400
+
 
 class TestFlowError:
     async def test_malformed_graph_500s_without_running_the_flow(self, app_client, _mock_state):
