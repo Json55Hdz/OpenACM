@@ -14,6 +14,7 @@ design rationale.
 """
 import json as _json
 import re
+import uuid
 from typing import Any, Callable, Coroutine
 
 import httpx
@@ -589,7 +590,21 @@ class FlowExecutor:
         if not agent:
             raise RuntimeError(f"Agent {cfg['agent_id']} not found")
 
-        return await self.agent_runner.run(agent, message)
+        # A unique channel_id per invocation, never the shared f"agent_{id}" default
+        # AgentRunner.run() falls back to — otherwise every flow-triggered call to
+        # the same agent (different end users, different flows, an operator's own
+        # manual test chat) shares one conversation history and interleaves.
+        channel_id = f"agent_node_{node['id']}_{uuid.uuid4().hex[:8]}"
+        response = await self.agent_runner.run(agent, message, channel_id=channel_id)
+
+        # AgentRunner.run() never raises on failure — it catches internally and
+        # returns this string instead. Without this check, an agent failure would
+        # be recorded as a successful flow result (and, over the webhook connector
+        # route, cached and replayed forever if dedupe is configured).
+        if response.startswith("Error processing message:"):
+            raise RuntimeError(response)
+
+        return response
 
     async def run(self, graph: dict, params: dict) -> tuple[str, dict[str, Any]]:
         # Normalize once, here: the spec's global constraint says a node with

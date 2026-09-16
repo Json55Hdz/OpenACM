@@ -1867,7 +1867,10 @@ class TestAgentNode:
 
         assert result == "respuesta final"
         assert outputs["agent1"] == "respuesta final"
-        fake_runner.run.assert_awaited_once_with({"id": 99, "name": "Redactor"}, "hola")
+        fake_runner.run.assert_awaited_once()
+        call_args = fake_runner.run.call_args
+        assert call_args.args == ({"id": 99, "name": "Redactor"}, "hola")
+        assert "channel_id" in call_args.kwargs
 
     async def test_missing_agent_is_an_error(self):
         async def get_agent(agent_id):
@@ -1921,4 +1924,40 @@ class TestAgentNode:
             executor = FlowExecutor(get_agent=get_agent, agent_runner=fake_runner)
             await executor.run(graph, params={})
 
-        fake_runner.run.assert_awaited_once_with({"id": 1}, "texto real del http")
+        fake_runner.run.assert_awaited_once()
+        call_args = fake_runner.run.call_args
+        assert call_args.args == ({"id": 1}, "texto real del http")
+        assert "channel_id" in call_args.kwargs
+
+
+class TestAgentNodeErrorPropagation:
+    async def test_agent_runner_error_string_is_treated_as_a_node_failure(self):
+        async def get_agent(agent_id):
+            return {"id": agent_id}
+
+        fake_runner = AsyncMock()
+        fake_runner.run.return_value = "Error processing message: boom"
+
+        executor = FlowExecutor(get_agent=get_agent, agent_runner=fake_runner)
+        result, _ = await executor.run(_agent_graph(), params={"texto": "hola"})
+
+        assert result.startswith("Error in node 'agent1'")
+        assert "Error processing message: boom" in result
+
+
+class TestAgentNodeChannelIsolation:
+    async def test_each_invocation_gets_its_own_channel_id_not_the_shared_agent_default(self):
+        async def get_agent(agent_id):
+            return {"id": agent_id}
+
+        fake_runner = AsyncMock()
+        fake_runner.run.return_value = "ok"
+
+        executor = FlowExecutor(get_agent=get_agent, agent_runner=fake_runner)
+        await executor.run(_agent_graph(), params={"texto": "hola"})
+
+        call_kwargs = fake_runner.run.call_args.kwargs
+        assert "channel_id" in call_kwargs
+        # AgentRunner.run()'s own shared-namespace default for agent id 99 would be "agent_99" —
+        # confirm this call never collides with that default.
+        assert call_kwargs["channel_id"] != "agent_99"
