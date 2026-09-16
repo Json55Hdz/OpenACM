@@ -56,6 +56,7 @@ const DEFAULT_FORM: AgentFormData = {
   description: '',
   system_prompt: '',
   allowed_tools: 'all',
+  show_in_chat: true,
   telegram_token: '',
   memory_mode: 'persistent',
   memory_ttl_hours: 24,
@@ -651,7 +652,7 @@ function AgentFormModal({
   const [isDragging, setIsDragging] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const set = (field: keyof AgentFormData, val: string | number) =>
+  const set = (field: keyof AgentFormData, val: string | number | boolean) =>
     setForm((f) => ({ ...f, [field]: val }));
 
   const handleGenerate = async () => {
@@ -899,6 +900,7 @@ function AgentFormModal({
 
               <MemoryModeField form={form} set={set} />
               <InactivityFollowUpField form={form} set={set} />
+              <ShowInChatField form={form} set={set} />
             </div>
           )}
         </div>
@@ -1032,6 +1034,55 @@ function InactivityFollowUpField({
   );
 }
 
+function ShowInChatField({
+  form,
+  set,
+}: {
+  form: AgentFormData;
+  set: (key: keyof AgentFormData, value: boolean) => void;
+}) {
+  const isChecked = form.show_in_chat ?? true;
+  return (
+    <div
+      className="flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors"
+      style={{
+        border: '1px solid var(--acm-border)',
+        background: 'var(--acm-elev)',
+      }}
+      onClick={() => set('show_in_chat', !isChecked)}
+    >
+      <div className="space-y-0.5 pr-4">
+        <label className="text-[13px] font-medium block cursor-pointer" style={{ color: 'var(--acm-fg)' }}>
+          Show in chat list
+        </label>
+        <p className="text-[11px]" style={{ color: 'var(--acm-fg-4)' }}>
+          Display this agent's folder and conversations in the /chat sidebar.
+        </p>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isChecked}
+        onClick={(e) => {
+          e.stopPropagation();
+          set('show_in_chat', !isChecked);
+        }}
+        className={cn(
+          'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none',
+          isChecked ? 'bg-[var(--acm-accent)]' : 'bg-zinc-700'
+        )}
+      >
+        <span
+          className={cn(
+            'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+            isChecked ? 'translate-x-4' : 'translate-x-0'
+          )}
+        />
+      </button>
+    </div>
+  );
+}
+
 // ── Agent Detail View (in-place, replaces the grid — not an overlay) ──────────
 
 function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void }) {
@@ -1041,6 +1092,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
     description: agent.description,
     system_prompt: agent.system_prompt,
     allowed_tools: agent.allowed_tools,
+    show_in_chat: agent.show_in_chat ?? true,
     telegram_token: agent.telegram_token ?? '',
     memory_mode: agent.memory_mode ?? 'persistent',
     memory_ttl_hours: agent.memory_ttl_hours ?? 24,
@@ -1052,7 +1104,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
   const [isDragging, setIsDragging] = useState(false);
   const [activeTab, setActiveTab] = useState<'config' | 'knowledge' | 'channels' | 'tools' | 'skills' | 'flows'>('config');
 
-  const set = (field: keyof AgentFormData, val: string | number) =>
+  const set = (field: keyof AgentFormData, val: string | number | boolean) =>
     setForm((f) => ({ ...f, [field]: val }));
 
   const handleGenerate = async () => {
@@ -1108,6 +1160,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
           memory_ttl_hours: form.memory_ttl_hours,
           inactivity_timeout_minutes: form.inactivity_timeout_minutes,
           inactivity_message: form.inactivity_message,
+          show_in_chat: form.show_in_chat ?? true,
         },
       });
       toast.success('Agent updated');
@@ -1126,7 +1179,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
           className="p-1.5 rounded transition-colors"
           style={{ color: 'var(--acm-fg-4)' }}
           onMouseEnter={e => (e.currentTarget.style.color = 'var(--acm-fg)')}
-          onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)')}
+          onMouseLeave={e => (e.currentTarget.style.color = 'var(--acm-fg-4)' )}
         >
           <X size={18} />
         </button>
@@ -1226,6 +1279,7 @@ function AgentDetailView({ agent, onClose }: { agent: Agent; onClose: () => void
 
             <MemoryModeField form={form} set={set} />
             <InactivityFollowUpField form={form} set={set} />
+            <ShowInChatField form={form} set={set} />
 
             <button onClick={handleSave} disabled={update.isPending || !form.name.trim() || !form.system_prompt.trim()} className="btn-primary">
               {update.isPending && <Loader2 size={13} className="animate-spin" />}

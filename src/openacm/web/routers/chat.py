@@ -306,18 +306,97 @@ def register_routes(app: FastAPI) -> None:
     # ─── API: Conversations ───────────────────────────────────
 
     @app.get("/api/conversations")
-    async def get_conversations():
-        """Get recent conversations."""
+    async def get_conversations(include_hidden: bool = False):
+        """Get recent conversations with agent, channel, and customer metadata."""
         if not _state.database:
             return []
         stats = await _state.database.get_channel_stats()
-        # Map DB field names to what the frontend expects
+
+        agent_map: dict[int, str] = {}
+        agent_show_map: dict[int, bool] = {}
+        try:
+            agents = await _state.database.get_all_agents()
+            agent_map = {a["id"]: a["name"] for a in agents}
+            agent_show_map = {a["id"]: bool(a.get("show_in_chat", True)) for a in agents}
+        except Exception:
+            pass
+
+        import re
+        result = []
         for row in stats:
             if "last_updated" in row and "last_timestamp" not in row:
                 row["last_timestamp"] = row.pop("last_updated")
-            if "title" not in row:
-                row["title"] = f"{row.get('channel_id', '')} - {row.get('user_id', '')}"
-        return stats
+
+            uid = str(row.get("user_id", ""))
+            cid = str(row.get("channel_id", ""))
+            cust_name = row.get("customer_name")
+
+            # Detect channel_type and agent_id
+            channel_type = "web"
+            agent_id = None
+            contact_id = cid
+
+            wa_match = re.match(r"^a(\d+)_wa_(.+)$", uid)
+            tg_match = re.match(r"^a(\d+)_tg_(.+)$", uid)
+            dc_match = re.match(r"^a(\d+)_dc_(.+)$", uid)
+
+            if wa_match:
+                channel_type = "whatsapp"
+                agent_id = int(wa_match.group(1))
+                contact_id = wa_match.group(2)
+            elif tg_match:
+                channel_type = "telegram"
+                agent_id = int(tg_match.group(1))
+                contact_id = tg_match.group(2)
+            elif dc_match:
+                channel_type = "discord"
+                agent_id = int(dc_match.group(1))
+                contact_id = dc_match.group(2)
+            elif cid == "console" or uid == "console":
+                channel_type = "console"
+                contact_id = cid
+            elif cid.startswith("agent_"):
+                channel_type = "web"
+                contact_id = cid
+                try:
+                    agent_id = int(cid.split("_")[1])
+                except (IndexError, ValueError):
+                    pass
+            elif cid.isdigit() and len(cid) >= 8:
+                channel_type = "whatsapp"
+                contact_id = cid
+            else:
+                channel_type = "web"
+                contact_id = cid
+
+            row["channel_type"] = channel_type
+            row["is_agent"] = bool(agent_id or wa_match or tg_match or dc_match or cid.startswith("agent_"))
+            row["agent_id"] = agent_id
+            row["agent_name"] = agent_map.get(agent_id) if agent_id else None
+            row["show_in_chat"] = agent_show_map.get(agent_id, True) if agent_id else True
+
+            # If the agent has hidden chats and include_hidden is false, skip it
+            if not include_hidden and agent_id and not agent_show_map.get(agent_id, True):
+                continue
+
+            # Format title: if agent and has customer name -> "número + nombre"
+            if row["is_agent"]:
+                display_num = contact_id if contact_id else cid
+                if cust_name and str(cust_name).strip():
+                    row["title"] = f"{display_num} ({str(cust_name).strip()})"
+                else:
+                    row["title"] = display_num
+            else:
+                if cid == "console":
+                    row["title"] = "Console"
+                elif cid == "web":
+                    row["title"] = f"Web Chat ({uid})" if uid and uid != "web" else "Web Chat"
+                else:
+                    row["title"] = f"{cid} - {uid}"
+
+            result.append(row)
+
+        return result
 
     @app.get("/api/conversations/{channel_id}/{user_id}")
     async def get_conversation(channel_id: str, user_id: str, limit: int = 50):

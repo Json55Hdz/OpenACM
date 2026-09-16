@@ -168,7 +168,7 @@ class Database:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 40
+    _SCHEMA_VERSION = 41
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1155,6 +1155,17 @@ class Database:
             await self._db.commit()
             log.info("Migration 40: added inactivity_timeout_minutes and inactivity_message to agents")
 
+        # ── Migration 41: per-agent show_in_chat visibility flag ───────────
+        if current < 41:
+            try:
+                await self._db.executescript("""
+                    ALTER TABLE agents ADD COLUMN show_in_chat INTEGER NOT NULL DEFAULT 1;
+                """)
+                await self._db.commit()
+            except sqlite3.OperationalError:
+                pass
+            log.info("Migration 41: added show_in_chat column to agents")
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1529,24 +1540,38 @@ class Database:
         if not self._db:
             return []
 
-        # We use a subquery to fetch the content of the most recent message
+        # We use a subquery to fetch the content of the most recent message,
+        # and subquery customer_names to include saved names.
         query = """
             SELECT
-                user_id,
-                channel_id,
+                m.user_id,
+                m.channel_id,
                 COUNT(*) as message_count,
-                MAX(timestamp) as last_updated,
+                MAX(m.timestamp) as last_updated,
                 (SELECT content FROM messages m2
-                 WHERE m2.user_id = messages.user_id AND m2.channel_id = messages.channel_id
-                 ORDER BY timestamp DESC LIMIT 1) as last_message
-            FROM messages
-            WHERE user_id NOT LIKE 'swarm_%'
-            GROUP BY user_id, channel_id
+                 WHERE m2.user_id = m.user_id AND m2.channel_id = m.channel_id
+                 ORDER BY id DESC LIMIT 1) as last_message,
+                (SELECT cn.name FROM customer_names cn
+                 WHERE (cn.user_id = m.user_id AND cn.channel_id = m.channel_id)
+                    OR (cn.channel_id = m.channel_id)
+                 LIMIT 1) as customer_name
+            FROM messages m
+            WHERE m.user_id NOT LIKE 'swarm_%'
+            GROUP BY m.user_id, m.channel_id
             ORDER BY last_updated DESC
         """
         cursor = await self._db.execute(query)
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            r = dict(row)
+            if r.get("last_message"):
+                try:
+                    r["last_message"] = self._d(r["last_message"])
+                except Exception:
+                    pass
+            result.append(r)
+        return result
 
     # ─── Skills ───────────────────────────────────────────────
 
@@ -2141,15 +2166,16 @@ class Database:
         memory_ttl_hours: int = 24,
         inactivity_timeout_minutes: int = 0,
         inactivity_message: str = "",
+        show_in_chat: bool = True,
     ) -> int:
         if not self._db:
             return 0
         cursor = await self._db.execute(
             "INSERT INTO agents (name, description, system_prompt, allowed_tools, webhook_secret, "
-            "telegram_token, memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "telegram_token, memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message, show_in_chat) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, description, system_prompt, allowed_tools, webhook_secret, telegram_token,
-             memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message),
+             memory_mode, memory_ttl_hours, inactivity_timeout_minutes, inactivity_message, 1 if show_in_chat else 0),
         )
         await self._db.commit()
         return cursor.lastrowid or 0
@@ -2159,14 +2185,23 @@ class Database:
             return None
         cursor = await self._db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d["show_in_chat"] = bool(d.get("show_in_chat", 1))
+        return d
 
     async def get_all_agents(self) -> list[dict[str, Any]]:
         if not self._db:
             return []
         cursor = await self._db.execute("SELECT * FROM agents ORDER BY created_at DESC")
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["show_in_chat"] = bool(d.get("show_in_chat", 1))
+            result.append(d)
+        return result
 
     async def update_agent(self, agent_id: int, **kwargs: Any) -> bool:
         if not self._db:
@@ -2174,13 +2209,16 @@ class Database:
         allowed = {
             "name", "description", "system_prompt", "allowed_tools", "is_active",
             "telegram_token", "memory_mode", "memory_ttl_hours",
-            "inactivity_timeout_minutes", "inactivity_message",
+            "inactivity_timeout_minutes", "inactivity_message", "show_in_chat",
         }
         updates, params = [], []
         for key, val in kwargs.items():
             if key in allowed:
                 updates.append(f"{key} = ?")
-                params.append(val)
+                if key == "show_in_chat":
+                    params.append(1 if val else 0)
+                else:
+                    params.append(val)
         if not updates:
             return False
         updates.append("updated_at = CURRENT_TIMESTAMP")

@@ -11,6 +11,7 @@ export interface Agent {
   system_prompt: string;
   allowed_tools: string;
   is_active: boolean;
+  show_in_chat?: boolean;
   telegram_token: string;
   memory_mode: 'persistent' | 'session_ttl';
   memory_ttl_hours: number;
@@ -27,6 +28,7 @@ export interface AgentFormData {
   description: string;
   system_prompt: string;
   allowed_tools: string;
+  show_in_chat?: boolean;
   telegram_token: string;
   memory_mode: 'persistent' | 'session_ttl';
   memory_ttl_hours: number;

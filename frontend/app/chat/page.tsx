@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,7 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
 // useWebSocket is now initialized globally in app-layout — no need to import here
 import { useAPI, useConversations, useConversationHistory, useChatCommand, useClearConversation, useCurrentModel, useSystemInfo } from '@/hooks/use-api';
+import { useAgents } from '@/hooks/use-agents';
 import {
   Send,
   Paperclip,
@@ -38,6 +39,11 @@ import {
   ShieldCheck,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  Folder,
+  FolderOpen,
+  Gamepad2,
   DollarSign,
   ArrowUp,
   ArrowDown,
@@ -64,13 +70,72 @@ interface Conversation {
   last_message: string;
   last_timestamp: string;
   message_count: number;
+  channel_type?: 'whatsapp' | 'telegram' | 'discord' | 'web' | 'console' | string;
+  is_agent?: boolean;
+  agent_id?: number | null;
+  agent_name?: string | null;
+  customer_name?: string | null;
+  show_in_chat?: boolean;
+}
+
+function ChannelIcon({ channelType, className }: { channelType?: string; className?: string }) {
+  switch (channelType?.toLowerCase()) {
+    case 'whatsapp':
+      return (
+        <span
+          className={cn("flex items-center justify-center w-5 h-5 rounded-[4px] bg-[#25D366]/15 text-[#25D366] shrink-0", className)}
+          title="WhatsApp"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+          </svg>
+        </span>
+      );
+    case 'telegram':
+      return (
+        <span
+          className={cn("flex items-center justify-center w-5 h-5 rounded-[4px] bg-[#0088cc]/15 text-[#0088cc] shrink-0", className)}
+          title="Telegram"
+        >
+          <Send className="w-3 h-3 -translate-x-0.5" />
+        </span>
+      );
+    case 'discord':
+      return (
+        <span
+          className={cn("flex items-center justify-center w-5 h-5 rounded-[4px] bg-[#5865F2]/15 text-[#5865F2] shrink-0", className)}
+          title="Discord"
+        >
+          <Gamepad2 className="w-3 h-3" />
+        </span>
+      );
+    case 'console':
+      return (
+        <span
+          className={cn("flex items-center justify-center w-5 h-5 rounded-[4px] bg-amber-500/15 text-amber-400 shrink-0", className)}
+          title="Console"
+        >
+          <SquareTerminal className="w-3 h-3" />
+        </span>
+      );
+    case 'web':
+    default:
+      return (
+        <span
+          className={cn("flex items-center justify-center w-5 h-5 rounded-[4px] bg-[var(--acm-accent)]/15 text-[var(--acm-accent)] shrink-0", className)}
+          title="Web"
+        >
+          <MessageSquare className="w-3 h-3" />
+        </span>
+      );
+  }
 }
 
 function RouterLearningIndicator() {
   return (
     <div className="flex items-center gap-[7px] px-[10px] py-[4px] bg-[oklch(0.84_0.16_82/0.1)] border border-[var(--acm-accent)] rounded-full text-[var(--acm-accent)] text-[11px]">
       <Sparkles size={11} className="acm-pulse" />
-      <span className="mono">Aprendiendo...</span>
+      <span className="mono">Learning...</span>
     </div>
   );
 }
@@ -936,6 +1001,7 @@ export default function ChatPage() {
   const clearConversation = useClearConversation();
   const { data: modelData } = useCurrentModel();
   const { data: systemInfo } = useSystemInfo();
+  const { data: registeredAgents } = useAgents();
   const { fetchAPI } = useAPI();
   const queryClient = useQueryClient();
 
@@ -1216,6 +1282,32 @@ export default function ChatPage() {
     });
   };
 
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
+  const [folderPages, setFolderPages] = useState<Record<string, number>>({});
+  const PAGE_SIZE = 10;
+
+  const isFolderOpen = (key: string) => {
+    return openFolders[key] ?? true;
+  };
+
+  const toggleFolder = (key: string) => {
+    setOpenFolders((prev) => ({
+      ...prev,
+      [key]: !isFolderOpen(key),
+    }));
+  };
+
+  const getFolderPage = (key: string) => {
+    return folderPages[key] ?? 1;
+  };
+
+  const setFolderPage = (key: string, page: number) => {
+    setFolderPages((prev) => ({
+      ...prev,
+      [key]: page,
+    }));
+  };
+
   const startNewConversation = () => {
     const newUserId = `web_${Date.now()}`;
     loadedKeyRef.current = '';
@@ -1233,6 +1325,8 @@ export default function ChatPage() {
         last_message: '',
         last_timestamp: new Date().toISOString(),
         message_count: 0,
+        channel_type: 'web',
+        is_agent: false,
       };
       return [entry, ...(old ?? [])];
     });
@@ -1256,6 +1350,150 @@ export default function ChatPage() {
   };
 
   const conversationList: Conversation[] = conversations || [];
+  const normalConversations = useMemo(
+    () => conversationList.filter((c) => !c.is_agent),
+    [conversationList]
+  );
+  const agentConversations = useMemo(
+    () => conversationList.filter((c) => !!c.is_agent),
+    [conversationList]
+  );
+
+  // Group agent conversations: ONE FOLDER PER AGENT (honoring show_in_chat)
+  const agentGroups = useMemo(() => {
+    const map = new Map<string, { id: number | null; name: string; convs: Conversation[] }>();
+    const hiddenAgentIds = new Set<number>();
+
+    // 1. Seed with registered agents
+    if (registeredAgents && registeredAgents.length > 0) {
+      for (const ag of registeredAgents) {
+        if (ag.show_in_chat === false || (ag.show_in_chat as unknown) === 0) {
+          hiddenAgentIds.add(ag.id);
+          continue;
+        }
+        map.set(`agent_${ag.id}`, { id: ag.id, name: ag.name, convs: [] });
+      }
+    }
+
+    // 2. Map every agent conversation into its respective agent group
+    for (const conv of agentConversations) {
+      if (conv.show_in_chat === false) continue;
+      if (conv.agent_id && hiddenAgentIds.has(conv.agent_id)) continue;
+
+      if (conv.agent_id && map.has(`agent_${conv.agent_id}`)) {
+        map.get(`agent_${conv.agent_id}`)!.convs.push(conv);
+      } else if (conv.agent_id) {
+        const name = conv.agent_name || `Agent #${conv.agent_id}`;
+        map.set(`agent_${conv.agent_id}`, { id: conv.agent_id, name, convs: [conv] });
+      } else {
+        const key = 'agent_other';
+        if (!map.has(key)) {
+          map.set(key, { id: null, name: conv.agent_name || 'Other Agents', convs: [] });
+        }
+        map.get(key)!.convs.push(conv);
+      }
+    }
+
+    return Array.from(map.entries()).map(([key, data]) => ({
+      key,
+      ...data,
+    }));
+  }, [registeredAgents, agentConversations]);
+
+  const totalPagesDirect = Math.max(1, Math.ceil(normalConversations.length / PAGE_SIZE));
+  const safePageDirect = Math.min(getFolderPage('direct'), totalPagesDirect);
+  const paginatedDirect = normalConversations.slice((safePageDirect - 1) * PAGE_SIZE, safePageDirect * PAGE_SIZE);
+
+  const activeConv = conversationList.find(
+    (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
+  );
+
+  useEffect(() => {
+    if (!currentTarget.channel || !currentTarget.user) return;
+    const isDirect = normalConversations.some(
+      (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
+    );
+    if (isDirect) {
+      if (!isFolderOpen('direct')) {
+        setOpenFolders((prev) => ({ ...prev, direct: true }));
+      }
+      return;
+    }
+    for (const group of agentGroups) {
+      const match = group.convs.some(
+        (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
+      );
+      if (match) {
+        if (!isFolderOpen(group.key)) {
+          setOpenFolders((prev) => ({ ...prev, [group.key]: true }));
+        }
+        break;
+      }
+    }
+  }, [currentTarget.channel, currentTarget.user, normalConversations, agentGroups]);
+
+  const renderConversationItem = (conv: Conversation) => {
+    const convKey = `${conv.channel_id}-${conv.user_id}`;
+    const isActive = currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id;
+    const isDeleting = deletingKey === convKey;
+    const isDeletable = conv.channel_id !== 'console';
+    return (
+      <div
+        key={convKey}
+        className={cn(
+          "group relative w-full text-left px-[10px] py-[8px] rounded-[6px] transition-colors cursor-pointer",
+          isActive
+            ? "border-l-2 border-l-[var(--acm-accent)] bg-[var(--acm-elev)] pl-[8px]"
+            : "border-l-2 border-l-transparent hover:bg-[var(--acm-card)]"
+        )}
+        onClick={() => selectConversation(conv)}
+      >
+        <div className="flex items-center gap-2">
+          <ChannelIcon channelType={conv.channel_type} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <p className={cn(
+                "text-[12.5px] font-medium truncate",
+                isActive ? "text-[var(--acm-fg)]" : "text-[var(--acm-fg-2)]"
+              )}>
+                {conv.title || `${conv.channel_id} - ${conv.user_id}`}
+              </p>
+              {conv.message_count === 0 && (
+                <span className="shrink-0 mono text-[10px] px-1.5 py-0.5 bg-[oklch(0.84_0.16_82/0.1)] text-[var(--acm-accent)] rounded-full border border-[oklch(0.84_0.16_82/0.3)]">
+                  New
+                </span>
+              )}
+            </div>
+            <p className="mono text-[10px] text-[var(--acm-fg-4)] truncate mt-[1px]">
+              {conv.last_message || 'No messages yet'}
+            </p>
+          </div>
+          {conv.message_count > 0 && (
+            <span className="mono text-[10px] text-[var(--acm-fg-4)] group-hover:hidden">
+              {conv.message_count}
+            </span>
+          )}
+          {isDeletable && (
+            <button
+              onClick={(e) => handleDeleteConversation(conv, e)}
+              disabled={isDeleting}
+              className={cn(
+                "hidden group-hover:flex items-center justify-center w-6 h-6 rounded-[4px] transition-colors shrink-0",
+                "text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] hover:bg-[oklch(0.68_0.13_22/0.1)]",
+                isDeleting && "!flex"
+              )}
+              title="Delete conversation"
+            >
+              {isDeleting
+                ? <Loader2 size={12} className="animate-spin" />
+                : <Trash2 size={12} />
+              }
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <AppLayout>
@@ -1292,70 +1530,116 @@ export default function ChatPage() {
               </button>
             </div>
 
-            {/* Conversation list */}
-            <div className="flex-1 overflow-y-auto acm-scroll p-[8px] space-y-[2px]">
-              {conversationList.map((conv) => {
-                const convKey = `${conv.channel_id}-${conv.user_id}`;
-                const isActive = currentTarget.channel === conv.channel_id && currentTarget.user === conv.user_id;
-                const isDeleting = deletingKey === convKey;
-                const isDeletable = conv.channel_id !== 'console';
-                return (
-                  <div
-                    key={convKey}
-                    className={cn(
-                      "group relative w-full text-left px-[10px] py-[9px] rounded-[6px] transition-colors cursor-pointer",
-                      isActive
-                        ? "border-l-2 border-l-[var(--acm-accent)] bg-[var(--acm-elev)] pl-[8px]"
-                        : "border-l-2 border-l-transparent hover:bg-[var(--acm-card)]"
+            {/* Conversation list with folders */}
+            <div className="flex-1 overflow-y-auto acm-scroll p-[8px] space-y-[8px]">
+              {/* Folder: Direct Chats */}
+              <div className="rounded-[6px] bg-[var(--acm-card)]/40 p-1 border border-[var(--acm-border)]/50">
+                <button
+                  type="button"
+                  onClick={() => toggleFolder('direct')}
+                  className="w-full flex items-center justify-between px-2 py-1.5 text-[11px] font-semibold tracking-wider text-[var(--acm-fg-3)] uppercase hover:text-[var(--acm-fg)] hover:bg-[var(--acm-card)] rounded-[4px] transition-colors"
+                >
+                  <div className="flex items-center gap-1.5 truncate">
+                    {isFolderOpen('direct') ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+                    {isFolderOpen('direct') ? <FolderOpen size={13} className="text-[var(--acm-accent)] shrink-0" /> : <Folder size={13} className="shrink-0" />}
+                    <span className="truncate">Direct Chats</span>
+                  </div>
+                  <span className="mono text-[10px] px-1.5 py-0.2 rounded-full bg-[var(--acm-card)] border border-[var(--acm-border)] text-[var(--acm-fg-4)] shrink-0 ml-1">
+                    {normalConversations.length}
+                  </span>
+                </button>
+
+                {isFolderOpen('direct') && (
+                  <div className="mt-1 space-y-[2px]">
+                    {paginatedDirect.length === 0 ? (
+                      <p className="mono text-[10px] text-[var(--acm-fg-4)] px-3 py-2 italic">No direct conversations</p>
+                    ) : (
+                      paginatedDirect.map(renderConversationItem)
                     )}
-                    onClick={() => selectConversation(conv)}
-                  >
-                    <div className="flex items-center gap-2">
-                      <MessageSquare size={13} className={cn(
-                        "flex-shrink-0",
-                        isActive ? "text-[var(--acm-accent)]" : "text-[var(--acm-fg-4)]"
-                      )} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className={cn(
-                            "text-[13px] font-medium truncate",
-                            isActive ? "text-[var(--acm-fg)]" : "text-[var(--acm-fg-2)]"
-                          )}>
-                            {conv.title || `${conv.channel_id} - ${conv.user_id}`}
-                          </p>
-                          {conv.message_count === 0 && (
-                            <span className="shrink-0 mono text-[10px] px-1.5 py-0.5 bg-[oklch(0.84_0.16_82/0.1)] text-[var(--acm-accent)] rounded-full border border-[oklch(0.84_0.16_82/0.3)]">
-                              New
-                            </span>
-                          )}
-                        </div>
-                        <p className="mono text-[10px] text-[var(--acm-fg-4)] truncate mt-[1px]">
-                          {conv.last_message || 'No messages yet'}
-                        </p>
-                      </div>
-                      {conv.message_count > 0 && (
-                        <span className="mono text-[10px] text-[var(--acm-fg-4)] group-hover:hidden">
-                          {conv.message_count}
-                        </span>
-                      )}
-                      {isDeletable && (
+
+                    {totalPagesDirect > 1 && (
+                      <div className="flex items-center justify-between px-2 pt-2 pb-1 border-t border-[var(--acm-border)]/40 mono text-[10px] text-[var(--acm-fg-4)]">
                         <button
-                          onClick={(e) => handleDeleteConversation(conv, e)}
-                          disabled={isDeleting}
-                          className={cn(
-                            "hidden group-hover:flex items-center justify-center w-6 h-6 rounded-[4px] transition-colors shrink-0",
-                            "text-[var(--acm-fg-4)] hover:text-[var(--acm-err)] hover:bg-[oklch(0.68_0.13_22/0.1)]",
-                            isDeleting && "!flex"
-                          )}
-                          title="Delete conversation"
+                          type="button"
+                          onClick={() => setFolderPage('direct', Math.max(1, safePageDirect - 1))}
+                          disabled={safePageDirect <= 1}
+                          className="p-1 rounded hover:bg-[var(--acm-card)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                          title="Previous page"
                         >
-                          {isDeleting
-                            ? <Loader2 size={12} className="animate-spin" />
-                            : <Trash2 size={12} />
-                          }
+                          <ChevronLeft size={12} />
                         </button>
-                      )}
-                    </div>
+                        <span>Page {safePageDirect} of {totalPagesDirect}</span>
+                        <button
+                          type="button"
+                          onClick={() => setFolderPage('direct', Math.min(totalPagesDirect, safePageDirect + 1))}
+                          disabled={safePageDirect >= totalPagesDirect}
+                          className="p-1 rounded hover:bg-[var(--acm-card)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                          title="Next page"
+                        >
+                          <ChevronRight size={12} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Folders: One folder per agent */}
+              {agentGroups.map((group) => {
+                const totalPages = Math.max(1, Math.ceil(group.convs.length / PAGE_SIZE));
+                const currentPage = Math.min(getFolderPage(group.key), totalPages);
+                const paginatedConvs = group.convs.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+
+                return (
+                  <div key={group.key} className="rounded-[6px] bg-[var(--acm-card)]/40 p-1 border border-[var(--acm-border)]/50">
+                    <button
+                      type="button"
+                      onClick={() => toggleFolder(group.key)}
+                      className="w-full flex items-center justify-between px-2 py-1.5 text-[11px] font-semibold tracking-wider text-[var(--acm-fg-3)] uppercase hover:text-[var(--acm-fg)] hover:bg-[var(--acm-card)] rounded-[4px] transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5 truncate">
+                        {isFolderOpen(group.key) ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+                        {isFolderOpen(group.key) ? <FolderOpen size={13} className="text-[#25D366] shrink-0" /> : <Folder size={13} className="shrink-0" />}
+                        <span className="truncate">{group.name}</span>
+                      </div>
+                      <span className="mono text-[10px] px-1.5 py-0.2 rounded-full bg-[var(--acm-card)] border border-[var(--acm-border)] text-[var(--acm-fg-4)] shrink-0 ml-1">
+                        {group.convs.length}
+                      </span>
+                    </button>
+
+                    {isFolderOpen(group.key) && (
+                      <div className="mt-1 space-y-[2px]">
+                        {paginatedConvs.length === 0 ? (
+                          <p className="mono text-[10px] text-[var(--acm-fg-4)] px-3 py-2 italic">No conversations yet</p>
+                        ) : (
+                          paginatedConvs.map(renderConversationItem)
+                        )}
+
+                        {totalPages > 1 && (
+                          <div className="flex items-center justify-between px-2 pt-2 pb-1 border-t border-[var(--acm-border)]/40 mono text-[10px] text-[var(--acm-fg-4)]">
+                            <button
+                              type="button"
+                              onClick={() => setFolderPage(group.key, Math.max(1, currentPage - 1))}
+                              disabled={currentPage <= 1}
+                              className="p-1 rounded hover:bg-[var(--acm-card)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                              title="Previous page"
+                            >
+                              <ChevronLeft size={12} />
+                            </button>
+                            <span>Page {currentPage} of {totalPages}</span>
+                            <button
+                              type="button"
+                              onClick={() => setFolderPage(group.key, Math.min(totalPages, currentPage + 1))}
+                              disabled={currentPage >= totalPages}
+                              className="p-1 rounded hover:bg-[var(--acm-card)] hover:text-[var(--acm-fg)] disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                              title="Next page"
+                            >
+                              <ChevronRight size={12} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1390,6 +1674,7 @@ export default function ChatPage() {
               >
                 <MessageSquare size={16} />
               </button>
+              {activeConv && <ChannelIcon channelType={activeConv.channel_type} />}
               <div>
                 <h3 className="text-[13.5px] font-semibold text-[var(--acm-fg)] leading-tight">{currentTarget.title}</h3>
                 <p className="mono text-[10px] text-[var(--acm-fg-4)]">{currentTarget.channel} · {currentTarget.user}</p>

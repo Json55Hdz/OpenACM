@@ -175,6 +175,15 @@ class AgentRunner:
         from openacm.core.config import AssistantConfig
         from openacm.core.brain import Brain
 
+        # Fetch fresh agent config from DB if available so changes take effect immediately
+        if self.database and agent.get("id"):
+            try:
+                fresh_agent = await self.database.get_agent(agent["id"])
+                if fresh_agent:
+                    agent = fresh_agent
+            except Exception as exc:
+                log.warning("AgentRunner: failed to refresh agent config", agent_id=agent["id"], error=str(exc))
+
         # Fetch knowledge and build enriched system prompt
         knowledge_items: list[dict] = []
         if self.database:

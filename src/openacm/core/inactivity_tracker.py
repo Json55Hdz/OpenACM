@@ -39,7 +39,7 @@ class AgentInactivityTracker:
         task = self._timers.pop(key, None)
         if task and not task.done():
             task.cancel()
-            log.debug("Cancelled inactivity timer", agent_id=agent_id, channel=base_ch, target_id=target_id)
+            log.info("Cancelled inactivity timer", agent_id=agent_id, channel=base_ch, target_id=target_id)
 
     def schedule(
         self,
@@ -76,7 +76,14 @@ class AgentInactivityTracker:
             )
         )
         self._timers[key] = task
-        log.debug("Scheduled inactivity timer", agent_id=agent_id, channel=base_ch, target_id=target_id, seconds=seconds)
+        log.info(
+            "Scheduled inactivity timer",
+            agent_id=agent_id,
+            channel=base_ch,
+            target_id=target_id,
+            seconds=seconds,
+            minutes=round(seconds / 60, 1),
+        )
 
     async def _wait_and_nudge(
         self,

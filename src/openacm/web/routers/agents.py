@@ -60,6 +60,7 @@ def register_routes(app: FastAPI) -> None:
         """Strip webhook_secret from agent dict before sending to frontend."""
         a = dict(agent)
         a.pop("webhook_secret", None)
+        a["show_in_chat"] = bool(a.get("show_in_chat", True))
         return a
 
     @app.get("/api/agents")
@@ -90,6 +91,7 @@ def register_routes(app: FastAPI) -> None:
             memory_ttl_hours=data.get("memory_ttl_hours", 24),
             inactivity_timeout_minutes=int(data.get("inactivity_timeout_minutes", 0) or 0),
             inactivity_message=data.get("inactivity_message", ""),
+            show_in_chat=bool(data.get("show_in_chat", True)),
         )
         agent = await _state.database.get_agent(agent_id)
         return agent  # include secret on creation so user can copy it
@@ -111,9 +113,11 @@ def register_routes(app: FastAPI) -> None:
         allowed_fields = {
             "name", "description", "system_prompt", "allowed_tools", "is_active",
             "memory_mode", "memory_ttl_hours",
-            "inactivity_timeout_minutes", "inactivity_message",
+            "inactivity_timeout_minutes", "inactivity_message", "show_in_chat",
         }
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
+        if "show_in_chat" in kwargs:
+            kwargs["show_in_chat"] = bool(kwargs["show_in_chat"])
         ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")
