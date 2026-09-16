@@ -966,6 +966,8 @@ function MessageBubble({
   );
 }
 
+const CHAT_FOLDERS_STORAGE_KEY = 'openacm_chat_open_folders';
+
 export default function ChatPage() {
   const {
     messages,
@@ -1286,15 +1288,35 @@ export default function ChatPage() {
   const [folderPages, setFolderPages] = useState<Record<string, number>>({});
   const PAGE_SIZE = 10;
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(CHAT_FOLDERS_STORAGE_KEY);
+      if (stored) {
+        setOpenFolders(JSON.parse(stored));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const isFolderOpen = (key: string) => {
     return openFolders[key] ?? true;
   };
 
   const toggleFolder = (key: string) => {
-    setOpenFolders((prev) => ({
-      ...prev,
-      [key]: !isFolderOpen(key),
-    }));
+    setOpenFolders((prev) => {
+      const current = prev[key] ?? true;
+      const next = {
+        ...prev,
+        [key]: !current,
+      };
+      try {
+        localStorage.setItem(CHAT_FOLDERS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   };
 
   const getFolderPage = (key: string) => {
@@ -1408,29 +1430,6 @@ export default function ChatPage() {
     (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
   );
 
-  useEffect(() => {
-    if (!currentTarget.channel || !currentTarget.user) return;
-    const isDirect = normalConversations.some(
-      (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
-    );
-    if (isDirect) {
-      if (!isFolderOpen('direct')) {
-        setOpenFolders((prev) => ({ ...prev, direct: true }));
-      }
-      return;
-    }
-    for (const group of agentGroups) {
-      const match = group.convs.some(
-        (c) => c.channel_id === currentTarget.channel && c.user_id === currentTarget.user
-      );
-      if (match) {
-        if (!isFolderOpen(group.key)) {
-          setOpenFolders((prev) => ({ ...prev, [group.key]: true }));
-        }
-        break;
-      }
-    }
-  }, [currentTarget.channel, currentTarget.user, normalConversations, agentGroups]);
 
   const renderConversationItem = (conv: Conversation) => {
     const convKey = `${conv.channel_id}-${conv.user_id}`;
