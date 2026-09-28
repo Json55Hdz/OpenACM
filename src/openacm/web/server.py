@@ -191,20 +191,16 @@ def create_app() -> FastAPI:
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD", "POST", "OPTIONS"], response_class=HTMLResponse)
     async def serve_spa(full_path: str):
         import os as _os
-        static_root = _os.path.realpath(static_dir) + _os.sep
-        candidate_real = _os.path.realpath(static_dir / full_path)
-        # Reject any path that escapes the static directory
-        if not candidate_real.startswith(static_root):
-            candidate_real = _os.path.realpath(static_dir)
-        from pathlib import Path as _Path
-        candidate = _Path(candidate_real)
-        if candidate.exists() and candidate.is_file():
-            return FileResponse(str(candidate))
-        # Try with trailing index.html (e.g. /dashboard/ → /dashboard/index.html)
-        if candidate.is_dir():
-            idx = candidate / "index.html"
-            if idx.exists():
-                return FileResponse(str(idx))
+        static_root = _os.path.realpath(static_dir)
+        candidate_real = _os.path.realpath(_os.path.join(static_root, full_path))
+        # Only serve files that resolve inside the static directory
+        if candidate_real.startswith(static_root + _os.sep):
+            if _os.path.isfile(candidate_real):
+                return FileResponse(candidate_real)
+            # Try with trailing index.html (e.g. /dashboard/ → /dashboard/index.html)
+            idx = _os.path.join(candidate_real, "index.html")
+            if _os.path.isfile(idx):
+                return FileResponse(idx)
         # Fall back to SPA root for unknown client-side routes
         index_file = static_dir / "index.html"
         if index_file.exists():

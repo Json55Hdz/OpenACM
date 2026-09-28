@@ -34,6 +34,9 @@ MSG_MAX_ITERATIONS = (
     "⚠️ I ran several tools but reached the step limit. "
     "Check the dashboard to see the full results, or try splitting your request into smaller steps."
 )
+MSG_AGENT_PROCESSING_ERROR = (
+    "⚠️ Something went wrong while processing your message. Please try again later."
+)
 MSG_TOOL_GEN_FAILED = "Couldn't generate the tool. Try manually with 'create a tool that...'."
 # Use as: MSG_TOOL_GEN_SUCCESS.format(result=...)
 MSG_TOOL_GEN_SUCCESS = "Based on your repeated workflows, I generated this tool:\n\n{result}"

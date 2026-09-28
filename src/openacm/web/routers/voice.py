@@ -221,7 +221,8 @@ def register_routes(app: FastAPI, tts_router=None):
                 else:
                     yield f"data: __ERROR__ exit code {proc.returncode}\n\n"
             except Exception as exc:
-                yield f"data: __ERROR__ {exc}\n\n"
+                log.error("voice deps install failed", error=str(exc))
+                yield "data: __ERROR__ could not run pip — check the server logs\n\n"
 
         return _SSE(
             _generate(),
@@ -369,7 +370,7 @@ async def _save_settings(cfg: dict):
 
 def _clean_for_tts(text: str) -> str:
     """Strip markdown and code blocks before sending to TTS."""
-    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'\[([^\[\]]+)\]\([^()]+\)', r'\1', text)
     text = re.sub(r'```[\s\S]*?```', '', text)
     text = re.sub(r'`[^`]+`', '', text)
     text = re.sub(r'[*_#~>]+', '', text)

@@ -16,6 +16,13 @@ def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def tokens_match(provided: str | None, expected: str | None) -> bool:
+    """Constant-time token comparison. An unset expected token never matches."""
+    if not provided or not expected:
+        return False
+    return hmac.compare_digest(provided.encode(), expected.encode())
+
+
 def hash_password(password: str) -> str:
     """Hash a password with PBKDF2-SHA256 + random salt.
 
