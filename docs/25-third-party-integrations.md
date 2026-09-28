@@ -1,6 +1,6 @@
 # Third-Party Integrations
 
-OpenACM integrates a set of curated MIT-licensed libraries that enhance core capabilities without requiring architectural changes. All are optional — the system falls back gracefully if any are unavailable.
+OpenACM integrates a set of curated MIT-licensed libraries that enhance core capabilities without requiring architectural changes. All four are listed as regular dependencies in `pyproject.toml`, so a normal install includes them; the code still falls back gracefully if any is unavailable or fails.
 
 ---
 
@@ -12,11 +12,11 @@ OpenACM integrates a set of curated MIT-licensed libraries that enhance core cap
 
 ### What it does
 
-Converts any file format to clean Markdown optimized for LLM consumption. Used in `brain.py` as the universal file handler for attachments.
+Converts any file format to clean Markdown optimized for LLM consumption. Used as the universal file handler for chat attachments and for files uploaded to an agent's knowledge base.
 
 ### Integration point
 
-`src/openacm/core/brain.py` — attachment processing pipeline.
+`src/openacm/core/brain_multimodal.py` — attachment processing pipeline (office/binary files, and the last-resort audio transcription step); `src/openacm/utils/knowledge_file.py` — agent knowledge base uploads.
 
 | Format | Without MarkItDown | With MarkItDown |
 |---|---|---|
@@ -79,7 +79,7 @@ Layout-aware document parsing for PDFs, Word, PowerPoint, Excel, HTML, and more.
 
 ### Integration point
 
-`src/openacm/core/brain.py` — `_extract_pdf_text()` method, called when a `.pdf` attachment is processed.
+`src/openacm/core/brain_multimodal.py` — `_extract_pdf_text()` method (mixed into `Brain`), called when a `.pdf` attachment is processed. Falls back to `pypdf`.
 
 **Priority chain:**
 1. **docling** — layout-aware, handles tables and columns correctly
@@ -107,7 +107,7 @@ Structured LLM outputs with Pydantic validation and automatic retries. Wraps `li
 
 ### Integration point
 
-`src/openacm/core/brain.py` — `Brain.structured_extract()` async method.
+`src/openacm/core/brain_multimodal.py` — `Brain.structured_extract()` async method.
 
 ```python
 from pydantic import BaseModel

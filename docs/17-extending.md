@@ -1,27 +1,18 @@
 # Extending OpenACM
 
-OpenACM is designed to be extended at runtime — without restarting, without editing source code, and without deep Python knowledge.
+OpenACM is designed to be extended. Skills, agents, flows, cron jobs, swarms and MCP servers can be added at runtime from the dashboard or from chat; new tools, channels and whole features are added in Python — ideally as a [plugin](./24-plugins.md), which needs no changes to the core.
 
----
+| Want to… | Use |
+|----------|-----|
+| Change how the AI behaves in a domain | [Skill](#creating-skills) |
+| Build a specialized assistant | [Agent](#creating-agents) |
+| Chain HTTP/store calls without code | [Flow](./28-agent-flows.md) |
+| Let an external service trigger OpenACM | [Webhook connector](./29-webhook-connectors.md) |
+| Add tools written in any language | [MCP server](#connecting-mcp-servers) |
+| Add Python tools + API routes + UI + settings | [Plugin](./24-plugins.md) |
+| Add a new messaging platform | [Custom channel](#adding-custom-channels) |
 
-## Creating Tools at Runtime
-
-The most powerful extension mechanism. Ask OpenACM to create a new tool for itself:
-
-```
-You: Create a tool called "weather" that fetches current weather for any city 
-     using the Open-Meteo API (no API key required). 
-     Parameters: city (string, required), units (celsius or fahrenheit, default celsius)
-```
-
-OpenACM will:
-1. Write the Python async function
-2. Run validation (syntax check, import check, security scan)
-3. Execute a dry-run test
-4. Show you the code and results
-5. Ask for confirmation → call `create_tool(..., apply=True)` → live in registry
-
-The tool is immediately available for the next message.
+> **Runtime tool creation:** `src/openacm/tools/tool_creator.py` contains `create_tool` / `edit_tool` / `delete_tool` (a two-phase validate-then-apply flow), but in v0.4.7 that module is not registered at startup, so the agent cannot create Python tools from chat. Write a tool module or a plugin instead.
 
 ---
 
@@ -56,13 +47,8 @@ from openacm.tools.base import tool
 async def my_tool(
     param1: str,
     param2: int = 10,
-    # Context injected automatically — always use **ctx or list explicitly:
-    _sandbox=None,
-    _event_bus=None,
     _brain=None,
-    _user_id: str = "",
-    _channel_id: str = "",
-    _channel_type: str = "",
+    **kwargs,          # absorbs the other injected context and unknown params
 ) -> str:
     """Implementation here. Must return a string."""
     result = f"Got: {param1}, {param2}"
@@ -71,10 +57,11 @@ async def my_tool(
 
 **Key rules:**
 - Must be `async def`
-- Must return a `str`
+- Must return a `str` (anything else is converted with `str()`)
 - Parameters matching the schema are passed as keyword arguments
-- Context parameters (`_sandbox`, `_event_bus`, etc.) are injected automatically
-- Never raise unhandled exceptions — catch them and return an error string
+- Context is injected automatically as keyword arguments: `_sandbox`, `_event_bus`, `_brain`, `_user_id`, `_channel_id`, `_channel_type`, `_confirm_callback` — end the signature with `**kwargs`
+- Shared managers are reachable through `_brain.tool_registry` (`cron_scheduler`, `swarm_manager`, `mcp_manager`, `app_config`)
+- Exceptions are caught by the registry and returned to the LLM as `Error: ...`, but returning a clear error string yourself gives better results
 
 ---
 
@@ -91,10 +78,14 @@ Choose a category to help with semantic tool selection:
 | `ai` | Memory, embeddings, ML operations |
 | `media` | Images, audio, video, screen |
 | `google` | Google Workspace APIs |
-| `blender` | 3D modeling and rendering |
-| `meta` | Tools that manage other tools or skills |
+| `meta` | Tools that manage skills |
+| `swarm` | Multi-agent swarms |
 | `iot` | Smart home, IoT devices |
+| `content` / `social` | Content generation and social media |
 | `mcp` | MCP server tools (auto-assigned) |
+| `custom_flow` | Agent flows (auto-assigned) |
+
+Keyword fallbacks used before the embedding model is loaded live in `src/openacm/tools/intent_keywords.py` (plugins add theirs with `get_intent_keywords()`).
 
 ---
 
@@ -111,7 +102,7 @@ from openacm.tools import my_module
 self.tool_registry.register_module(my_module)
 ```
 
-The module is loaded on next startup and available forever.
+The module is loaded on next startup and available forever. To ship tools without touching `app.py`, return the module from a plugin's `get_tool_modules()` instead — see [Plugins](./24-plugins.md).
 
 ---
 
@@ -152,7 +143,7 @@ When writing Rust code:
 - Write unit tests in the same file (`#[cfg(test)]`)
 ```
 
-Restart OpenACM or trigger a skill sync to discover the new file.
+Restart OpenACM to sync the new file into the database (files must be inside a category folder such as `skills/development/`). Skills created from the dashboard or with `create_skill` are available immediately.
 
 ---
 
@@ -164,26 +155,25 @@ Agents are isolated instances with their own persona and tool set.
 1. Go to **Agents** → **New Agent**
 2. Set name, description, and system prompt
 3. Choose which tools the agent can access
-4. Optionally provide a Telegram bot token for a dedicated bot
+4. Optionally add knowledge, channels (Telegram / WhatsApp) and flows
 
 ### Via chat
 ```
-You: Create an agent called "ResearchBot" that specializes in finding 
-     and summarizing information. It should only have access to 
-     web_search, get_webpage, and remember_note tools. 
+You: Create an agent called "ResearchBot" that specializes in finding
+     and summarizing information, with access to all tools.
      Give it a concise, academic tone.
 ```
 
 ### Via API
 ```bash
 curl -X POST http://localhost:47821/api/agents \
-  -H "Authorization: Bearer acm_xxx" \
+  -H "Authorization: Bearer <dashboard-token>" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "ResearchBot",
     "description": "Finds and summarizes information",
     "system_prompt": "You are a research specialist. Be concise and cite sources.",
-    "allowed_tools": ["web_search", "get_webpage", "remember_note"]
+    "allowed_tools": "[\"web_search\", \"get_webpage\", \"remember_note\"]"
   }'
 ```
 
@@ -194,7 +184,7 @@ curl -X POST http://localhost:47821/api/agents \
 Model Context Protocol servers expose tools that OpenACM can use.
 
 ### Configuration
-Add to `config/mcp_servers.json`:
+Add an entry to the `servers` array of `config/mcp_servers.json`:
 
 ```json
 {
@@ -276,51 +266,58 @@ Then add it to OpenACM:
 
 ## Adding Custom Channels
 
-Implement the `BaseChannel` abstract class:
+Implement the `BaseChannel` abstract class (`name` and `is_connected` are abstract properties; `start`, `stop` and `send_message` are abstract methods; `ready_event` must be set once connected — or on failure — because startup waits up to 15 s for it):
 
 ```python
-# openacm/channels/my_channel.py
+# src/openacm/channels/my_channel.py
 import asyncio
 from openacm.channels.base import BaseChannel
 
 class MyChannel(BaseChannel):
-    name = "mychannel"
-    
     def __init__(self, config, brain, event_bus):
         self.config = config
         self.brain = brain
         self.event_bus = event_bus
-        self.is_connected = False
+        self._connected = False
         self.ready_event = asyncio.Event()
-    
+
+    @property
+    def name(self) -> str:
+        return "mychannel"
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
     async def start(self):
         # Connect to your platform
-        self.is_connected = True
+        self._connected = True
         self.ready_event.set()
-        
+
         # Listen for incoming messages
         async for message in self.receive_messages():
             response = await self.brain.process_message(
                 content=message.text,
                 user_id=message.user_id,
-                channel_id=self.name,
+                channel_id=message.chat_id,
                 channel_type=self.name,
             )
-            await self.send_message(message.user_id, response)
-    
+            await self.send_message(message.chat_id, response)
+
     async def stop(self):
-        self.is_connected = False
-    
-    async def send_message(self, user_id: str, content: str):
+        self._connected = False
+
+    async def send_message(self, target_id: str, content: str, **kwargs) -> bool:
         # Send response to your platform
-        pass
+        return True
 ```
 
-Register it in `app.py`:
+Register it in `OpenACM._init_channels()` in `app.py`:
 ```python
 from openacm.channels.my_channel import MyChannel
 channel = MyChannel(config, self.brain, self.event_bus)
 self._channels.append(channel)
+channel_tasks.append(asyncio.create_task(channel.start()))
 ```
 
 ---
@@ -335,8 +332,12 @@ The base OpenACM identity context is in `src/openacm/core/acm_context.py`. You c
 
 The system prompt structure on each request:
 ```
+[Pinned workspace note (if /workspace is set)]
 [OPENACM base context (short version after first message)]
 [User's custom system_prompt from config]
-[Active skill content (if any)]
-[MCP tool list (if any MCP servers connected)]
+[Matching skill content (if any)]
+[List of connected MCP servers (if any)]
+[Plugin context extensions (get_context_extension)]
 ```
+
+Relevant long-term memory fragments are added as a separate system message.

@@ -25,9 +25,9 @@ User message
     │
     ▼  [Layer 5] Old Message Stripping — null old tool results + strip arg blobs
     │
-    ▼  [Layer 6] Conversation Compaction — LLM-summarize history after 25 messages
+    ▼  [Layer 6] Conversation Compaction — LLM-summarize history at 60% of the context window
     │
-    ▼  [Layer 7] Token Budget Cap — hard limit of ~22K estimated tokens in context
+    ▼  [Layer 7] Token Budget Cap — hard ceiling at 85% of the model's context window
 ```
 
 ---
@@ -40,7 +40,7 @@ User message
 The LocalRouter classifies incoming messages against a set of learned intents. When confidence is above the threshold (default: `0.88`), the Brain skips the LLM entirely and dispatches directly to a `fast_path` handler.
 
 ```python
-# brain.py — agentic loop entry point
+# brain_loop.py — agentic loop entry point
 _router_result = await asyncio.wait_for(asyncio.shield(_router_task), timeout=0.15)
 if _router_result and _router_result.is_fast_path_eligible:
     fast_response = await self._execute_fast_path(...)
@@ -190,10 +190,10 @@ Processing...
 Done!
 ```
 
-### Integration in brain.py
+### Integration in brain_loop.py
 
 ```python
-# brain.py — after tool execution, before adding to memory
+# brain_loop.py — after tool execution, before adding to memory
 result_for_memory, _orig_len, _comp_len = compress_output(str(result), tool_name)
 if _orig_len != _comp_len:
     log.debug("Tool output compressed", tool=tool_name,
@@ -212,7 +212,7 @@ The compressor runs first. The hard cap (head+tail at 6000 chars) is a safety ne
 
 ## Layer 5: Old Message Stripping
 
-**File:** `src/openacm/core/brain.py` → `_prepare_messages_for_llm()`  
+**File:** `src/openacm/core/brain_loop.py` → `_prepare_messages_for_llm()`  
 **Token savings:** Hundreds to thousands of tokens in long conversations
 
 Before each LLM call, `_prepare_messages_for_llm()` strips redundant content from messages older than the last 6 (`_RECENT_MSG_WINDOW = 6`):
@@ -222,6 +222,8 @@ Before each LLM call, `_prepare_messages_for_llm()` strips redundant content fro
 | `tool` role (result messages) | Content set to `""` — the LLM already processed this result; only `tool_call_id` is needed to maintain conversation structure |
 | `assistant` role with tool calls | `arguments` JSON blob replaced with `{}` — only the function `name` + `id` are needed for back-reference |
 | Any message with `reasoning_content` | Reasoning content stripped entirely — thinking model outputs can be thousands of tokens per message |
+
+Additionally, base64 images in user messages other than the latest one are replaced with a short `[IMAGE: … — already processed]` placeholder.
 
 The original messages in memory are never mutated — a shallow copy is made only when a strip is needed. This means conversation history in SQLite stays complete for debugging and display.
 
@@ -237,24 +239,14 @@ _OLD_REASONING_MAX = 0   # reasoning_content stripped from all older messages
 **File:** `src/openacm/core/memory.py` → `MemoryManager._compact()`  
 **Token savings:** ~60–80% of old conversation tokens after trigger
 
-When a conversation reaches **25 non-system messages** (`COMPACT_THRESHOLD = 25`), an async background task fires that:
+When a conversation's estimated tokens reach **`compact_ratio` × the model's context window** (default `0.60`), a compaction is scheduled and runs before the next LLM call:
 
-1. Takes all messages except the system prompt and the last 6 (`COMPACT_KEEP_RECENT = 6`)
-2. Sends them to the LLM with a summarization prompt
-3. Replaces those N messages with a single `[CONVERSATION SUMMARY]` message
-4. Keeps the last 6 messages verbatim for continuity
+1. Takes all messages except the system prompt and the last `compact_keep_recent` (default 6)
+2. Sends a transcript to the LLM with a structured summarization prompt (`PROMPT_COMPACT_SYSTEM` in `core/messages.py`): what was worked on, actions taken with exact paths, key decisions, current state
+3. Replaces those messages with the summary
+4. Keeps the recent messages verbatim for continuity
 
-```python
-_COMPACT_SYSTEM_PROMPT = (
-    "You are a conversation summarizer. Summarize the following conversation "
-    "into a concise paragraph. Preserve key facts, decisions, file paths, "
-    "code snippets, tool results, and any important context..."
-)
-
-# Result: 19 messages → 1 summary (max_tokens=500) + 6 recent messages
-```
-
-Compaction runs asynchronously so it never blocks the current response. A per-conversation lock (`_compacting: set[str]`) prevents double-firing if messages arrive during compaction.
+Because the trigger is relative to the real context window, a 128K model doesn't compact every few messages while a small local model compacts early. After a compaction, auto-compaction won't re-fire until at least 10% more of the threshold (min. 1,000 tokens) has accumulated. A per-conversation lock (`_compacting: set[str]`) prevents double-firing. `/compact` forces it.
 
 ---
 
@@ -263,13 +255,13 @@ Compaction runs asynchronously so it never blocks the current response. A per-co
 **File:** `src/openacm/core/memory.py`  
 **Token savings:** Hard ceiling — prevents context window overflow
 
-After compaction, a token budget enforcer walks the message list and removes the oldest messages (never the system prompt) until the estimated total is under budget:
+On every message added, a token budget enforcer removes the oldest messages (never the system prompt) until the estimated total is under the ceiling:
 
 ```python
-MAX_CONTEXT_TOKENS = 22000  # ~66K chars at 1 token ≈ 3 chars
+TRUNCATE_RATIO = 0.85  # never exceed 85% of the model's context window
 ```
 
-This is the last line of defense. In practice, layers 1–6 keep conversations well under this ceiling for most use cases.
+`max_context_messages` (default 50) also caps the number of messages kept in context. This is the last line of defense. In practice, layers 1–6 keep conversations well under this ceiling for most use cases.
 
 ---
 
@@ -284,7 +276,7 @@ In a typical 30-minute session with moderate tool use, the savings stack like th
 | Slim schemas | 3 tools × 60% schema reduction | ~900 tokens/call |
 | Output compressor | `pip install`, verbose commands | 30–70% of result tokens |
 | Old message stripping | 10+ tool calls in history | ~5,000 tokens |
-| Conversation compaction | After 25 messages | ~8,000 tokens one-time |
+| Conversation compaction | At 60% of the context window | Most of the old history, one-time |
 
 No configuration required — all layers are active by default.
 
@@ -292,17 +284,21 @@ No configuration required — all layers are active by default.
 
 ## Tuning
 
-All thresholds are configurable in `config.yaml`:
+Thresholds are configurable in `config/local.yaml` (or from **Configuration** in the dashboard):
 
 ```yaml
 local_router:
   enabled: true
   confidence_threshold: 0.88  # lower = more fast-paths, higher = safer
 
-memory:
-  compact_threshold: 25        # messages before compaction triggers
+assistant:
+  compact_ratio: 0.60          # fraction of the context window that triggers compaction
   compact_keep_recent: 6       # messages kept verbatim after compaction
-  max_context_tokens: 22000    # hard token budget
+  max_context_messages: 50     # max messages kept in context
+
+llm:
+  model_context_overrides:     # context window for models LiteLLM doesn't know
+    kimi: 131072
 ```
 
-The output compressor and slim schemas have no configuration — they are always applied.
+The output compressor, slim schemas, semantic threshold (`SEMANTIC_TOOL_THRESHOLD` in `constants.py`) and the 85% ceiling have no config keys — they are always applied.

@@ -24,7 +24,7 @@ Every **2 seconds**, the watcher queries the OS for the currently active window:
 | **macOS** | `osascript` subprocess | Built-in, no extras |
 | **Linux** | `xdotool` + `psutil` | `xdotool` must be installed |
 
-Linux: `sudo apt install xdotool` (Debian/Ubuntu) or `sudo pacman -S xdotool` (Arch)
+Linux: `sudo apt install xdotool` (Debian/Ubuntu) or `sudo pacman -S xdotool` (Arch). `setup.sh` installs it on apt-based systems. On a headless server (or in the Docker image) there is no active window to observe, so the watcher records nothing.
 
 ### What Is Recorded
 
@@ -39,27 +39,23 @@ Each focus session stored in the database contains:
 
 ### Enabling / Disabling
 
-```yaml
-# config/default.yaml
-activity_watcher:
-  enabled: true
-```
-
-The watcher starts automatically when OpenACM starts (if enabled). Stop/start via API:
+The watcher starts automatically when OpenACM starts (there is no config key to disable it). Stop/start it at runtime from the **Routines** page or via API — `POST /api/watcher/toggle` flips the current state:
 
 ```bash
-# Stop
-curl -X POST http://localhost:47821/api/activity/stop \
-  -H "Authorization: Bearer acm_xxx"
-
-# Start
-curl -X POST http://localhost:47821/api/activity/start \
-  -H "Authorization: Bearer acm_xxx"
+# Toggle (start ↔ stop)
+curl -X POST http://localhost:47821/api/watcher/toggle \
+  -H "Authorization: Bearer <dashboard-token>"
 
 # Status
-curl http://localhost:47821/api/activity/status \
-  -H "Authorization: Bearer acm_xxx"
+curl http://localhost:47821/api/watcher/status \
+  -H "Authorization: Bearer <dashboard-token>"
+
+# Aggregated stats / recent sessions
+curl http://localhost:47821/api/activity/stats -H "Authorization: Bearer <dashboard-token>"
+curl "http://localhost:47821/api/activity/sessions?limit=30" -H "Authorization: Bearer <dashboard-token>"
 ```
+
+A toggle does not persist across restarts.
 
 ---
 
@@ -81,14 +77,14 @@ The Pattern Analyzer processes raw activity data to find **recurring app co-occu
 
 ### Running Analysis
 
-Analysis runs automatically on a schedule (every 24 hours). Trigger manually:
+Analysis runs when you trigger it — from **Routines → Analyze now**, the API, or on a schedule by creating a [cron job](./19-cron-scheduler.md) with the `analyze_patterns` action (e.g. `0 2 * * *`). Trigger manually:
 
 ```bash
-curl -X POST http://localhost:47821/api/activity/analyze \
-  -H "Authorization: Bearer acm_xxx"
+curl -X POST http://localhost:47821/api/routines/analyze \
+  -H "Authorization: Bearer <dashboard-token>"
 ```
 
-Returns the list of newly detected routines.
+Returns `{"status": "ok", "new_routines": N, "routines": [...]}`.
 
 ---
 
@@ -102,6 +98,7 @@ A Routine is a saved pattern with:
 - **Trigger data** — hour, minute, days of week (for time-based)
 - **Confidence** — `0.0–1.0` based on occurrence frequency
 - **Occurrence count** — how many times the pattern was observed
+- **Status** — `pending` (just detected), `active` (scheduled) or `inactive`
 
 ### Viewing Routines
 
@@ -111,11 +108,7 @@ A Routine is a saved pattern with:
 ```bash
 # List all
 curl http://localhost:47821/api/routines \
-  -H "Authorization: Bearer acm_xxx"
-
-# Single routine
-curl http://localhost:47821/api/routines/1 \
-  -H "Authorization: Bearer acm_xxx"
+  -H "Authorization: Bearer <dashboard-token>"
 ```
 
 Example response:
@@ -133,40 +126,32 @@ Example response:
   ],
   "confidence": 0.86,
   "occurrence_count": 8,
-  "is_active": true
+  "status": "pending",
+  "run_count": 0
 }
 ```
 
-### Creating Routines Manually
+Routines are created by the analyzer; there is no endpoint to create one by hand.
+
+### Running, Activating, Updating & Deleting
 
 ```bash
-curl -X POST http://localhost:47821/api/routines \
-  -H "Authorization: Bearer acm_xxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Morning Dev Session",
-    "trigger_type": "time_based",
-    "trigger_data": {"hour": 9, "minute": 0, "days_of_week": [0, 1, 2, 3, 4]},
-    "apps": [
-      {"app_name": "Terminal", "process_name": "wt"},
-      {"app_name": "VS Code", "process_name": "code"}
-    ]
-  }'
-```
+# Run now (opens the routine's apps)
+curl -X POST http://localhost:47821/api/routines/3/execute \
+  -H "Authorization: Bearer <dashboard-token>"
 
-### Updating & Deleting
-
-```bash
-# Update (e.g., rename or change trigger time)
+# Update: name, status, trigger_type, trigger_data, apps
 curl -X PUT http://localhost:47821/api/routines/3 \
-  -H "Authorization: Bearer acm_xxx" \
+  -H "Authorization: Bearer <dashboard-token>" \
   -H "Content-Type: application/json" \
   -d '{"name": "New Name", "trigger_data": {"hour": 10, "minute": 30, "days_of_week": [1, 3]}}'
 
 # Delete
 curl -X DELETE http://localhost:47821/api/routines/3 \
-  -H "Authorization: Bearer acm_xxx"
+  -H "Authorization: Bearer <dashboard-token>"
 ```
+
+**Activating a routine** (`"status": "active"`) that has a `time_based` trigger automatically creates a cron job ("Rutina: …") that runs it at that time; setting it back to `inactive`/`pending` deletes that job. From chat, the agent can use `list_routines` and `execute_routine`.
 
 ---
 
@@ -176,7 +161,7 @@ Separate from the activity watcher, the **Workflow Tracker** observes the agent'
 
 ### How It Works
 
-After each agentic turn (one user message → one agent response), the tool sequence used is recorded. If the same sequence of tool calls is used **3 or more times**, the tracker suggests creating a skill or a dedicated workflow:
+After each agentic turn (one user message → one agent response), the tool sequence used is recorded. If the same sequence of tool calls is used **3 or more times** (and the conversation has at least 5 turns of history), the tracker suggests automating it:
 
 ```
 [Workflow Suggestion]
@@ -186,11 +171,11 @@ You've run this sequence 3 times:
 Want me to create a "research and save" skill that automates this?
 ```
 
-Suggestions are fire-and-forget — dismissed automatically if the user doesn't act on them.
+Suggestions expire after 3 turns if the user doesn't act on them.
 
-**Cooldown:** 30 minutes between suggestions for the same pattern.
+**Cooldown:** at most one suggestion every 24 hours per user/channel; a dismissed pattern is not suggested again for 7 days.
 
-**Filtered operations:** Simple/single-tool calls are ignored. Only sequences of 2+ meaningful tools trigger analysis.
+**Filtered operations:** Noise tools (e.g. `system_info`, list tools) are ignored.
 
 ---
 
@@ -199,8 +184,9 @@ Suggestions are fire-and-forget — dismissed automatically if the user doesn't 
 - Activity data (app names, window titles, focus times) is stored in the local SQLite database only
 - Window titles can contain sensitive information — be aware of this if you share your `data/openacm.db`
 - The watcher never reads file contents, keystrokes, or screen content — only what OS window management APIs expose (active app name and window title)
-- To disable entirely: set `activity_watcher.enabled: false` in config
-- To clear all history: `DELETE FROM app_activity` in the SQLite database, or delete `data/openacm.db`
+- App names, window titles and process names are encrypted at rest with the local key in `config/activity.key`
+- To stop recording: toggle the watcher off (**Routines** page or `POST /api/watcher/toggle`) — it restarts with OpenACM
+- To clear all history: `DELETE FROM app_activities` in the SQLite database, or delete `data/openacm.db`
 
 ---
 

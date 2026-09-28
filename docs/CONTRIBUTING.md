@@ -13,17 +13,28 @@ All contributions are welcome, but the project direction is ultimately the autho
 git clone https://github.com/Json55Hdz/OpenACM.git
 cd OpenACM
 
-# Backend (Python)
-uv sync
-uv run python -m openacm
+# Backend (Python 3.12)
+uv venv --seed
+uv pip install -e ".[dev]"
+uv run python -m openacm        # or: uv run openacm
 
-# Frontend (in a separate terminal)
+# Tests
+uv run pytest                   # asyncio_mode = auto
+
+# Frontend (Next.js, static export)
 cd frontend
 npm install
-npm run dev
+npm run lint
+npm run deploy                  # next build + copy dist/ into src/openacm/web/static
 ```
 
-The frontend dev server runs on `http://localhost:3000` and proxies API calls to the backend on `http://localhost:47821`.
+The dashboard calls the API with relative URLs and there is no dev proxy configured, so the simplest loop is `npm run deploy` and reload `http://localhost:47821`. (`npm run dev` serves the UI on `:3000`, but its API/WebSocket calls go to `:3000` too.)
+
+Useful project conventions (see `CLAUDE.md` / `AGENTS.md` in the repo root):
+- New tools are `async`, end with `**kwargs`, and get shared managers from `_brain.tool_registry`
+- User-facing strings and LLM prompts live in `src/openacm/core/messages.py`
+- Keyword fallbacks for tool selection live in `src/openacm/tools/intent_keywords.py`
+- Tests use the mocked fixtures in `tests/conftest.py`
 
 ## How to contribute
 
@@ -35,7 +46,7 @@ The frontend dev server runs on `http://localhost:3000` and proxies API calls to
 ## What we're looking for
 
 - Bug fixes
-- New built-in tools (add them in `src/openacm/tools/`)
+- New built-in tools (add them in `src/openacm/tools/`) or new plugins (`src/openacm/plugins/`)
 - New MCP integrations or examples
 - Frontend improvements
 - Better documentation
@@ -44,7 +55,8 @@ The frontend dev server runs on `http://localhost:3000` and proxies API calls to
 ## Guidelines
 
 - Keep PRs focused — one thing at a time
-- Follow the existing code style (Python: ruff/black, TypeScript: ESLint)
+- Follow the existing code style (Python: ruff, line length 100; TypeScript: ESLint)
+- New API endpoints should be documented in `docs/10-api-reference.md`
 - Don't commit `config/.env`, `data/`, or any API keys
 - Add a brief description in the PR of how to test the change
 
@@ -75,5 +87,5 @@ Releases follow [Semantic Versioning](https://semver.org/) (`vMAJOR.MINOR.PATCH`
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same [MIT License](LICENSE) that covers this project.
+By contributing, you agree that your contributions will be licensed under the same [MIT License](../LICENSE) that covers this project.
 The copyright of the original codebase remains with Jeison David Hernandez Pena.

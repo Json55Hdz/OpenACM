@@ -2,42 +2,49 @@
 
 OpenACM is actively developed. This document describes what's planned, what's in progress, and the long-term vision.
 
-**Current version:** v0.1.0 — functional but not yet stable for production use.
+**Current version:** v0.4.7 — functional, pre-1.0 (breaking changes may still happen between minor versions). See the [CHANGELOG](../CHANGELOG.md) for release notes.
 
 ---
 
-## Recently Shipped (v0.1.0)
+## Shipped
 
+### Foundations (v0.1)
 - ✅ Core agentic loop with multi-tool support
-- ✅ 42+ built-in tools (system, file, web, Google, Blender, IoT, browser)
-- ✅ Web dashboard (Next.js) with real-time streaming
+- ✅ Built-in tools (system, file, web, Google, browser, Python kernel)
+- ✅ Web dashboard (Next.js) with real-time updates
 - ✅ Telegram, Discord, WhatsApp channel support
-- ✅ Multi-agent system with isolated tool access
 - ✅ Skills system (markdown behavior instructions)
-- ✅ Runtime tool creation (`create_tool`)
-- ✅ MCP server integration (stdio + SSE)
+- ✅ MCP server integration (stdio, SSE, streamable HTTP)
 - ✅ LocalRouter (offline intent classifier, multilingual)
 - ✅ RAG / vector memory (ChromaDB)
 - ✅ Conversation compaction (auto-summarization)
 - ✅ Semantic tool selection (multilingual embeddings)
-- ✅ Conversation encryption at rest (AES-GCM)
-- ✅ Activity watcher (OS app usage monitoring)
-- ✅ Routine detection and automation
-- ✅ Workflow tracker (suggests automation for repeated patterns)
-- ✅ Custom LLM provider support (OpenAI-compatible endpoints)
+- ✅ Conversation encryption at rest
+- ✅ Activity watcher, routine detection and workflow tracker
+- ✅ Custom LLM provider support (OpenAI-compatible endpoints) and CLI providers
 - ✅ Dashboard: stats, charts, model switching, debug traces
-- ✅ Cron scheduler — recurring tasks with visual management UI and LLM tools (`list/create/delete/toggle/trigger_cron_job`)
-- ✅ Per-channel PTY terminal — real interactive shell (xterm.js + pywinpty/pty), one persistent session per chat channel; AI tool output streams directly into the correct channel's terminal
+- ✅ Cron scheduler with visual management UI and LLM tools
+- ✅ Per-channel PTY terminal (xterm.js + pywinpty/pty)
 - ✅ Cancel button — abort any in-progress AI request from the chat UI
+
+### Since then (v0.2 – v0.4.7)
+- ✅ Multi-agent **swarms** with planning, peer messaging, shared knowledge and templates
+- ✅ **Plugin system** (built-in + pip entry points) with settings forms and embedded plugin dashboards
+- ✅ **Home Assistant** plugin (replacing per-vendor IoT integrations), **Gmail Classifier** and **Content Automation** plugins
+- ✅ **Voice**: always-on voice daemon (faster-whisper STT, wake word, TTS) and in-browser Kokoro TTS
+- ✅ **Agents 2.0**: knowledge base, per-agent Telegram/WhatsApp channels, private skills, memory TTL policy, customer names, inactivity follow-ups, chat grouping
+- ✅ **Visual flows** with an Unreal-style node editor, data pins, variables, loops, WooCommerce node, JSON import/export and an AI chat builder
+- ✅ **Webhook connectors**: public, signed webhooks (HMAC / bearer / static header) that run a flow, with audit log
+- ✅ Official **WhatsApp Cloud API** channel
+- ✅ Surgical **code-editing tools** (`edit_file`, `grep_in_files`, `get_file_outline`, `run_linter`)
+- ✅ Persistent browser session for the browser agent
+- ✅ Terminal setup wizard (`openacm-setup`) and console manager (`openacm-manage`)
+- ✅ Docker image, versioned GHCR releases, `features` toggles and `client_profile` for client deployments
+- ✅ LLM 429 rate-limit retries with backoff
 
 ---
 
-## Short-term (v0.2.0)
-
-### Voice Input/Output
-- Whisper integration for speech-to-text in the web chat
-- TTS output option (ElevenLabs, OpenAI TTS, local Coqui)
-- Voice-only Telegram mode
+## Short-term
 
 ### Smarter Fast-Path
 - More intent categories (file operations, web search patterns)
@@ -48,41 +55,34 @@ OpenACM is actively developed. This document describes what's planned, what's in
 - Structured tool result display in chat (tables, code blocks, collapsible sections)
 - Large tool outputs stored in RAG instead of full context
 
-### Plugin System
-- Community-contributed tool packs installable via pip
-- `openacm install tool-pack-weather`
+### Plugin ecosystem
+- Community-contributed plugins installable via pip (the entry-point mechanism already exists)
 - Plugin registry
+
+### Voice
+- Voice-only Telegram mode
 
 ---
 
-## Medium-term (v0.3.0)
-
-### Multi-Modal Improvements
-- Vision: analyze images, screenshots, documents in-conversation
-- Audio transcription of uploaded audio/video files
-- PDF and document parsing (already partially implemented)
+## Medium-term
 
 ### Web Automation Improvements
-- Persistent browser session (don't restart Playwright on every call)
 - Browser profiles (saved login sessions for common sites)
 - Record-and-replay for browser workflows
 
 ### Advanced Agent Features
-- Agent-to-agent communication (main agent delegates to sub-agents)
 - Agent marketplace / template library
 - Agent health monitoring dashboard
-- Webhooks for agent events
+- More flow node types and connection types beyond WooCommerce
 
 ### Knowledge Management
-- File upload to RAG (index documents, PDFs, codebases)
+- File upload to the global RAG (index documents, PDFs, codebases)
 - Structured knowledge bases (named collections, namespaced search)
 - Knowledge graph visualization
 
 ### Better IoT
 - Matter protocol support
-- Home Assistant integration (replacing individual device APIs)
-- Unified device discovery UI
-- Scenes and automation rules
+- Automation rules built from the dashboard
 
 ---
 
@@ -118,7 +118,6 @@ OpenACM is actively developed. This document describes what's planned, what's in
 ### Developer Platform
 - OpenACM SDK for building tool packs
 - REST API for embedding OpenACM in other applications
-- Webhook triggers from external systems
 - Zapier/Make.com integration
 
 ---
@@ -137,14 +136,15 @@ OpenACM is open source and contributions are welcome.
 ```bash
 git clone https://github.com/Json55Hdz/OpenACM.git
 cd OpenACM
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[all,dev]"
+uv venv --seed && source .venv/bin/activate
+uv pip install -e ".[dev]"
 cd frontend && npm install && cd ..
+pytest
 ```
 
 **Code style:**
-- Python: `ruff` for linting, `black` for formatting
-- TypeScript: `eslint` + `prettier`
+- Python: `ruff` (line length 100, Python 3.12 target)
+- TypeScript: `eslint` (`npm run lint` in `frontend/`)
 - All new tools must have risk levels and categories annotated
 - New API endpoints must be documented in `docs/10-api-reference.md`
 

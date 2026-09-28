@@ -1,6 +1,6 @@
 # Skills System
 
-Skills are markdown files that change how OpenACM **thinks and behaves** — not what it can do. When a skill is active, its content is injected into the system prompt before the LLM call, giving it domain expertise, specialized behavior, or a custom persona.
+Skills are markdown files that change how OpenACM **thinks and behaves** — not what it can do. When an active skill is relevant to the current message, its content is injected into the system prompt before the LLM call, giving it domain expertise, specialized behavior, or a custom persona.
 
 ---
 
@@ -10,9 +10,9 @@ Skills are markdown files that change how OpenACM **thinks and behaves** — not
 |--|--------|-------|
 | What they are | Markdown instructions | Python async functions |
 | What they do | Change LLM behavior | Execute code and actions |
-| How they're stored | `.md` files + SQLite | `.py` files + registry |
+| How they're stored | `.md` files + SQLite | `.py` modules + registry |
 | Runtime effect | Injected into system prompt | Called by LLM as function |
-| Created with | `create_skill` tool | `create_tool` tool |
+| Created with | `create_skill` tool, Skills page, or a `.md` file | A `@tool` module or a plugin |
 
 ---
 
@@ -44,25 +44,26 @@ You are now a Blender expert. When the user asks about 3D modeling:
 ...
 ```
 
-The YAML frontmatter (`---`) is optional but recommended for organization.
+The frontmatter (`---`) is optional but recommended. Only simple `key: value` lines for `name`, `description` and `category` are read; without it the skill takes its name from the file name and its category from the folder.
 
 ---
 
-## Built-in Skills
+## Shipped Skills
 
-OpenACM ships with these built-in skills:
+The repository ships these skill files in `skills/`:
 
 | Name | Category | Description |
 |------|----------|-------------|
 | `agent-creator` | agents | Expertise in designing and creating autonomous agents |
-| `blender-modeling` | custom | Expert 3D modeling and Blender Python scripting |
+| `blender-modeling` | custom | 3D modeling guidance for Blender (`bpy`) |
 | `file-generator` | custom | Best practices for generating various file formats |
 | `video-capture` | custom | Screen recording and video automation workflows |
 | `flutter-app-creator` | development | Flutter/Dart app scaffolding and development |
-| `unity-mpc-skill` | development | Unity game development with Model Predictive Control |
-| `windows-file-manager` | custom | Windows file system operations and organization |
+| `unity-mpc-skill` | development | Unity game development via Unity MCP |
 
-Built-in skills are seeded from the `skills/` directory on startup and marked as `is_builtin: true` in the database. They can be activated/deactivated but not deleted.
+On startup every `skills/<category>/*.md` file that is not yet in the database is added to it. (Files placed directly in `skills/` — not in a category folder — are not synced.)
+
+`core/skill_manager_default_skills.py` also defines six default skills — `security-auditor`, `code-reviewer`, `api-designer`, `rag-optimizer`, `fastapi-expert`, `database-architect` — which are written to disk and marked `is_builtin` **only when the skills table is completely empty** at startup. Built-in skills can be deactivated but not deleted.
 
 ---
 
@@ -97,21 +98,29 @@ OpenACM syncs the `skills/` directory to the database on startup. New files are 
 
 ## Activating Skills
 
-Skills can be activated:
+A skill has an **active** flag. Turn it on or off:
 
-1. **Manually via dashboard** — toggle the skill on the Skills page
-2. **Via chat** — `toggle_skill("python-expert", active=True)`
-3. **Auto-matched** — Brain detects keywords in the message and auto-activates relevant skills
+1. **Via dashboard** — toggle the skill on the Skills page
+2. **Via chat** — `toggle_skill("python-expert")` flips it
+3. **Via API** — `POST /api/skills/{id}/toggle`
 
-When a skill is active, its full markdown content is appended to the system prompt on every request.
+Being active doesn't mean a skill is sent on every request — see matching below.
 
 ---
 
-## Auto-Matching
+## Matching (when a skill is injected)
 
-The SkillManager can automatically activate skills based on message content. If a message mentions "3D model", "Blender", "mesh", or "render", the `blender-modeling` skill activates automatically for that conversation turn.
+For each message, the SkillManager looks at the **active** skills and injects only the relevant ones:
 
-The active skill is shown in the chat UI with a purple badge: `✨ blender-modeling`.
+- The six default skills have built-in keyword lists (e.g. `code-reviewer` matches "review", "refactor", "revisa"…; `database-architect` matches "sql", "schema", "database"…).
+- Any skill is injected when the message mentions its name (e.g. "blender-modeling" or "blender modeling").
+- If nothing matches, no skill content is added.
+
+Each injected skill is capped at 1,200 characters, wrapped in a "Specialized Context (for this query only)" block. The matched skills are shown in the chat UI with a badge (`skill.active` event).
+
+### Agent, worker and flow skills
+
+Besides global skills, an **agent** can enable specific global skills and have its own private skills (Agents → Skills tab, or `POST /api/agents/{id}/skills/generate`); swarm **workers** can have private skills too; and each agent **flow** can have one skill that explains to the agent when and how to use that flow (see [Agent Flows](./28-agent-flows.md)).
 
 ---
 
@@ -120,9 +129,10 @@ The active skill is shown in the chat UI with a purple badge: `✨ blender-model
 | Category | Purpose |
 |----------|---------|
 | `agents` | Multi-agent system skills |
+| `ai` | AI/ML related skills |
 | `custom` | User-created general skills |
 | `development` | Programming language/framework expertise |
-| `generated` | Skills created by OpenACM itself |
+| `generated` | Skills generated by OpenACM for agents, workers and flows |
 | `security` | Security-focused behaviors |
 
 ---
@@ -173,29 +183,27 @@ When writing Python code:
 ## Skill Lifecycle
 
 ```
-File created in skills/     ──► Auto-discovered on startup
-     │                              │
-     ▼                              ▼
-DB row created (is_builtin=true)   DB row created (is_builtin=false)
+File created in skills/<category>/ ──► Synced to DB on next startup (is_builtin=false)
+create_skill / Skills page         ──► Written to skills/<category>/ + DB immediately
      │
      ▼
-User activates skill (dashboard or chat)
+Skill marked active (dashboard, chat or API)
      │
      ▼
-Brain injects skill content into system prompt
+Message matches the skill (keywords or name)
      │
      ▼
-LLM call made with skill context
+Brain injects skill content (≤1,200 chars) into the system prompt
      │
      ▼
-Skill active badge shown in chat UI
+LLM call made with skill context → skill badge shown in chat UI
 ```
 
 ---
 
 ## Combining Skills
 
-Multiple skills can be active simultaneously. All active skill contents are concatenated into the system prompt. Be aware of potential conflicts — two skills with contradictory instructions will confuse the LLM.
+Multiple skills can be active simultaneously. All matching skill contents are concatenated into the system prompt. Be aware of potential conflicts — two skills with contradictory instructions will confuse the LLM.
 
 **Good combination:** `python-expert` + `security-focused` — complementary domains
 

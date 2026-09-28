@@ -1,6 +1,16 @@
 # Plugin System
 
-OpenACM's plugin system lets you bundle tools, intent keywords, LLM context, and frontend nav items into a single self-contained package — without touching core source files. Plugins are auto-discovered at startup and can also be installed as regular pip packages.
+OpenACM's plugin system lets you bundle tools, skills, API routes, intent keywords, LLM context, frontend nav items, a settings form and even a custom dashboard into a single self-contained package — without touching core source files. Plugins are auto-discovered at startup and can also be installed as regular pip packages.
+
+## Built-in Plugins
+
+| Plugin | Name | What it adds |
+|--------|------|--------------|
+| Content Automation | `content_automation` | Content capture / social posting tools, `/content` approval page, background session watcher |
+| Gmail Classifier | `gmail_classifier` | AI email categorization, replies and digests, `/gmail-classifier` page and `/api/gmail-classifier/*` routes — see [Gmail Classifier](./31-gmail-classifier.md) |
+| Home Assistant | `home_assistant` | 8 `ha_*` tools, `/home-assistant` page, live device state over WebSocket, settings form (URL + token) — see [Home Assistant Setup](./HOME_ASSISTANT_SETUP.md) |
+
+All plugins are **enabled by default**; disable any of them on the `/plugins` page.
 
 ---
 
@@ -9,9 +19,12 @@ OpenACM's plugin system lets you bundle tools, intent keywords, LLM context, and
 At startup, `app.py` calls:
 
 ```
-PluginManager.load_builtin_plugins()   ← scans openacm/plugins/*/
-PluginManager.start_all(...)           ← calls on_start() on each plugin
+PluginManager.load_builtin_plugins()   ← scans openacm/plugins/*/ + "openacm.plugins" entry points
+PluginManager.load_enabled_state(db)   ← reads each plugin's enabled flag (default: enabled)
+PluginManager.start_all(...)           ← registers tools/keywords/skills, calls on_start() on each enabled plugin
 ```
+
+Plugin API routers are mounted under `/api/` when the web server is created.
 
 Each plugin subdirectory inside `src/openacm/plugins/` that exposes a module-level `PLUGIN` instance is loaded automatically. No registration code needed in `app.py`.
 
@@ -59,6 +72,12 @@ class MyPlugin(Plugin):
             return {"ok": True}
 
         return router
+
+    # ── Public (self-authenticated) routes ─────────────────
+    def get_public_api_paths(self) -> list[str]:
+        """Routes (relative to /api) that skip the dashboard token because they
+        verify the caller themselves, e.g. an HMAC-signed third-party webhook."""
+        return []
 
     # ── LLM system prompt ──────────────────────────────────
     def get_context_extension(self) -> str:
@@ -333,7 +352,7 @@ def has_custom_ui(self) -> bool:
     return True
 ```
 
-This only sets a flag the dashboard reads (via `GET /api/plugins` → `has_custom_ui`) — you're still responsible for serving the page. Your `get_api_router()` must expose a `GET /ui` route returning self-contained HTML (inline CSS/JS, no external assets), and the router's prefix must be `/plugins/{name}` so the route resolves at `/api/plugins/{name}/ui` — that's the exact URL the `/plugins` page links to (the small external-link icon next to your plugin), opened in a new tab:
+This only sets a flag the dashboard reads (via `GET /api/plugins` → `has_custom_ui`) — you're still responsible for serving the page. Your `get_api_router()` must expose a `GET /ui` route returning self-contained HTML (inline CSS/JS, no external assets), and the router's prefix must be `/plugins/{name}` so the route resolves at `/api/plugins/{name}/ui`. The button next to your plugin on `/plugins` opens `/plugins/view?name={name}`, which embeds that page in an iframe inside the normal app shell (sidebar and header stay visible; the token is never put in a visible URL):
 
 ```python
 def get_api_router(self):
@@ -369,7 +388,7 @@ Available kwargs:
 
 | Name | Type | Description |
 |---|---|---|
-| `config` | `dict` | Full app config |
+| `config` | `AppConfig` | Full app config (Pydantic model) |
 | `database` | `Database` | SQLite database instance |
 | `event_bus` | `EventBus` | Pub/sub event system |
 | `llm_router` | `LLMRouter` | LLM call interface |
@@ -387,9 +406,15 @@ Called on graceful shutdown. Stop your background tasks here.
 
 ---
 
+## Public Webhook Routes
+
+By default every plugin route under `/api/` requires the dashboard token. If a route receives calls from a third party that can't send it (e.g. a signed webhook), list it in `get_public_api_paths()` — paths are relative to `/api`, so `"/my-feature/webhook"` exempts `/api/my-feature/webhook`. Only do this for routes that verify the request themselves (HMAC signature, shared secret…). For simple cases, prefer a [webhook connector](./29-webhook-connectors.md), which needs no code.
+
+---
+
 ## Real Example: Content Automation Plugin
 
-`src/openacm/plugins/content/` is the first built-in plugin. It:
+`src/openacm/plugins/content/` (`content_automation`) is the simplest built-in plugin. It:
 
 - Registers `capture_content_moment`, `generate_content_for_moment`, `list_content_moments`, etc. from `content_gen_tool.py` and `social_media_tool.py`
 - Adds achievement keywords (`"funcionó"`, `"it works"`, `"listo"`, etc.) to trigger content tools
@@ -438,7 +463,8 @@ This keeps the backend fully plug-and-play while the frontend requires a project
 | Frontend nav | `get_nav_items()` → `/api/plugins/nav` | ✅ Plug-and-play |
 | Frontend pages | `frontend/app/my-page/page.tsx` | ⚠️ Manual (requires rebuild) |
 | Dashboard settings form | `get_config_schema()` → `/plugins` config modal | ✅ Plug-and-play |
-| Custom plugin UI | `has_custom_ui()` + `GET /ui` → opened from `/plugins` | ✅ Plug-and-play |
+| Custom plugin UI | `has_custom_ui()` + `GET /ui` → embedded at `/plugins/view` | ✅ Plug-and-play |
+| Public webhook routes | `get_public_api_paths()` | ✅ Plug-and-play |
 | Enable/disable | `/plugins` toggle → `plugin_state` table | ⚠️ Requires restart |
 | PyPI install | `entry-points."openacm.plugins"` | ✅ Supported |
 | Startup/shutdown | `on_start()` / `on_stop()` | ✅ Plug-and-play |

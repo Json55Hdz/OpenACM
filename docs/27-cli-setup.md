@@ -184,10 +184,12 @@ Configura rutas que OpenACM indexa para recuperar contexto de sesiones de trabaj
 | Parámetro | Rango | Descripción |
 |-----------|-------|-------------|
 | `rag_relevance_threshold` | 0.1–0.95 | Qué tan relevante debe ser un recuerdo para incluirlo |
-| `compact_threshold` | 5–200 | Mensajes antes de compactar automáticamente |
+| `compact_threshold` | 5–200 | Mensajes antes de compactar (ver nota) |
 | `compact_keep_recent` | 2–20 | Mensajes recientes que se conservan completos |
 
 **Valores por defecto:** threshold=0.5, compact=25, keep=6
+
+> **Nota (v0.4.7):** el wizard todavía guarda `compact_threshold`, pero el runtime ya no lo usa: la compactación se dispara cuando la conversación llega a `compact_ratio` (por defecto 0.60) de la ventana de contexto del modelo. Para cambiarlo usa **Configuración → Memory & RAG** en el dashboard o escribe `compact_ratio` en `config/local.yaml`.
 
 ---
 
@@ -201,7 +203,7 @@ Configura rutas que OpenACM indexa para recuperar contexto de sesiones de trabaj
 
 **Modos de ejecución:**
 - `confirmation` — pide OK antes de ejecutar comandos (recomendado)
-- `auto` — ejecuta automáticamente los comandos no bloqueados
+- `auto` — solo ejecuta (sin preguntar) los comandos de `whitelisted_commands`; rechaza el resto
 - `yolo` — sin restricciones (solo para desarrollo local)
 
 ---
@@ -234,7 +236,7 @@ OPENROUTER_API_KEY=sk-or-...
 OPENCODE_GO_API_KEY=...
 TELEGRAM_TOKEN=123456:ABC...
 DISCORD_TOKEN=...
-DASHBOARD_TOKEN=...  # genera con: python -c "import secrets; print(secrets.token_hex(32))"
+DASHBOARD_TOKEN=...  # opcional: si falta, OpenACM genera uno al arrancar y lo escribe aquí
 ```
 
 ### `config/local.yaml`
@@ -244,7 +246,7 @@ A:
   system_prompt: "Eres ... [USER INSTRUCTIONS - BEHAVIOR MODE]: My user's name is ..."
   onboarding_completed: true
   rag_relevance_threshold: 0.5
-  compact_threshold: 25
+  compact_ratio: 0.60
   compact_keep_recent: 6
 
 llm:
@@ -274,6 +276,7 @@ Flujo recomendado para un VPS o servidor Ubuntu sin GUI:
 ```bash
 # 1. Instalar dependencias
 sudo apt update && sudo apt install -y python3.12 python3.12-venv nodejs npm
+# (el nodejs de apt puede ser < 20; alternativa más simple: ./setup.sh instala uv, Python 3.12 y Node 20)
 
 # 2. Clonar e instalar
 git clone https://github.com/Json55Hdz/OpenACM
@@ -281,8 +284,8 @@ cd OpenACM
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 3. Buildear el frontend (solo una vez)
-cd frontend && npm install && npm run build && cd ..
+# 3. Buildear el frontend y copiarlo a src/openacm/web/static (solo una vez)
+cd frontend && npm install && npm run deploy && cd ..
 
 # 4. Correr el wizard de configuración
 openacm-setup --guided
@@ -347,9 +350,9 @@ openacm-manage swarms
 openacm-manage cron
 → [A] Crear job
 → Nombre: "Reporte diario"
-→ Expresión: 0 9 * * 1-5   (lun-vie a las 9:00)
+→ Expresión: 0 9 * * 1-5   (lun-vie a las 9:00 UTC — el scheduler usa UTC)
 → Tipo: custom_command
-→ Comando: "genera un resumen del día"
+→ Comando: python scripts/backup.py   (comando de shell real, no un prompt)
 → Activar: sí
 ```
 

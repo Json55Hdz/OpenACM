@@ -31,7 +31,7 @@ SQLite  ·  config/.env  ·  data/
 
 > **Consumo de memoria:** En runtime, el contenedor de OpenACM (FastAPI + SPA + modelos de embeddings para RAG y router local) consume alrededor de **~1.8 GB de RAM**. Por ello, para un servidor Linux/VPS se requiere un mínimo de **3 GB de RAM** para dejar margen operativo a Ubuntu y Docker. Con **3 núcleos de procesador** y **4 GB de RAM** en adelante, el sistema corre con total fluidez (*easy*), incluso bajo alta concurrencia.
 > **Con Playwright/Chromium activo**: +1 GB RAM si se usa navegación web automatizada intensiva.
-> **Con Voice (Kokoro)**: necesita GPU o +4 GB RAM. Desactívalo si el VPS no tiene GPU.
+> **Con Voice**: el daemon de voz (faster-whisper) necesita micrófono y RAM extra; en un VPS sin audio desactívalo con `features.voice: false` en `config/local.yaml` (Kokoro TTS corre en el navegador, no en el servidor).
 
 ---
 
@@ -122,12 +122,20 @@ Para acceder a la GUI después, usa un túnel SSH: `ssh -L 8181:localhost:81 usu
 ## Paso 4 — Instalar OpenACM
 
 ```bash
-git clone <tu-repo-url> /opt/openacm
+git clone https://github.com/Json55Hdz/OpenACM.git /opt/openacm
 cd /opt/openacm
 bash setup.sh
 ```
 
-El script instala todas las dependencias, crea el `.venv` y configura el `config/.env` inicial.
+El script instala todas las dependencias (uv, Python 3.12, Node 20, Chromium de Playwright), crea el `.venv` y configura el `config/.env` inicial. Al final pregunta si quieres iniciar OpenACM — responde `n`, lo arrancará systemd.
+
+El dashboard no viene compilado en el repo (`run.sh` lo compila en cada arranque). Como el servicio systemd de abajo llama directamente a `python -m openacm`, compílalo una vez a mano:
+
+```bash
+cd /opt/openacm/frontend && npm install && npm run deploy && cd ..
+```
+
+(`npm run deploy` hace `next build` y copia `frontend/dist/` a `src/openacm/web/static/`. `./update.sh` también lo recompila en cada actualización.)
 
 ---
 
@@ -140,13 +148,15 @@ nano /opt/openacm/config/.env
 Valores mínimos:
 
 ```env
-# Al menos un provider LLM
+# Al menos un provider LLM (patrón: <PROVIDER_ID>_API_KEY)
 ANTHROPIC_API_KEY=sk-ant-...
 
 # Token del dashboard — si lo dejas vacío, se auto-genera al primer arranque
-# pero DEBES pegarlo aquí después para que persista entre reinicios
+# y OpenACM lo escribe aquí automáticamente (persiste entre reinicios)
 DASHBOARD_TOKEN=
 ```
+
+Si usas un proveedor distinto al que trae `config/default.yaml` (`opencode_go`), selecciónalo en `config/local.yaml` (`llm.default_provider`) o desde el dashboard.
 
 ---
 
@@ -180,15 +190,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable openacm
 sudo systemctl start openacm
 
-# Ver logs (el token aparece aquí la primera vez)
+# Ver logs (el token aparece aquí)
 sudo journalctl -u openacm -f
 ```
 
-Copia el token que aparece en los logs y pégalo en `config/.env` como `DASHBOARD_TOKEN=<valor>`, luego reinicia:
-
-```bash
-sudo systemctl restart openacm
-```
+El token también queda guardado en `config/.env` como `DASHBOARD_TOKEN` (`grep DASHBOARD_TOKEN /opt/openacm/config/.env`). Sin TTY, OpenACM omite la consola interactiva y se queda corriendo; `systemctl stop` lo detiene limpiamente (maneja SIGTERM).
 
 ---
 
@@ -234,6 +240,7 @@ chmod 700 /opt/openacm/config /opt/openacm/data 2>/dev/null || true
 chmod 600 /opt/openacm/config/.env
 chmod 600 /opt/openacm/config/google_credentials.json 2>/dev/null || true
 chmod 600 /opt/openacm/config/google_token.json 2>/dev/null || true
+chmod 600 /opt/openacm/config/activity.key 2>/dev/null || true
 ```
 
 Reemplaza `ubuntu` con el usuario real de tu VPS.
@@ -277,10 +284,9 @@ sudo journalctl -u openacm -f
 # Reiniciar
 sudo systemctl restart openacm
 
-# Actualizar a nueva versión
+# Actualizar a nueva versión (git pull + deps + rebuild del frontend)
 cd /opt/openacm
-git pull
-uv pip install -e .          # actualizar deps si cambiaron
+./update.sh                  # responde "n" a "Restart OpenACM now?"
 sudo systemctl restart openacm
 ```
 
@@ -313,8 +319,8 @@ Estos requieren cambios en el código fuente (no en infra):
 
 | Problema | Impacto | Estado |
 |---|---|---|
-| OAuth tokens de Google en plaintext en SQLite | Medio | Pendiente |
-| Tokens de Telegram/WhatsApp en plaintext en DB | Medio | Pendiente |
+| OAuth token de Google en plaintext (`config/google_token.json`) | Medio | Pendiente — protege con `chmod 600` |
+| Tokens de canales de agentes (Telegram/WhatsApp) en plaintext en la DB | Medio | Pendiente |
 | Token del dashboard imprimido en logs de arranque | Bajo | Pendiente |
 | WebSocket auth via query param (visible en logs de nginx) | Bajo | Aceptable con HTTPS |
 
@@ -328,25 +334,16 @@ Estos requieren cambios en el código fuente (no en infra):
 
 ### Preparar el Docker setup
 
-**Crear `.dockerignore`** en la raíz del proyecto:
+El repo ya incluye un `.dockerignore` (excluye `.venv/`, `.git/`, secretos de `config/`, `data/`, `node_modules`, builds, `docs/` y `tests/`).
 
-```
-.venv/
-.git/
-__pycache__/
-*.pyc
-*.pyo
-config/.env
-config/google_token.json
-config/google_credentials.json
-data/
-*.db
-*.sqlite
-frontend/node_modules/
-frontend/.next/
-frontend/dist/
-docs/
-tests/
+**Configurar el puerto de escucha.** El compose publica el puerto `8080`, pero OpenACM escucha por defecto en `127.0.0.1:47821`. Dentro del contenedor tiene que escuchar en `0.0.0.0:8080` — créalo en `config/local.yaml` (la carpeta `config/` se monta en el contenedor):
+
+```yaml
+web:
+  host: 0.0.0.0
+  port: 8080
+features:
+  voice: false      # sin micrófono en el servidor
 ```
 
 **Editar `docker/docker-compose.yml`**:
@@ -379,15 +376,7 @@ services:
       start_period: 60s
 ```
 
-Nota: `xdotool` (herramienta de GUI X11, inútil en VPS headless) ya fue
-removido del `docker/Dockerfile` de este repo — el bloque de abajo queda
-como referencia histórica de cómo quedó la instalación de paquetes apt:
-
-```dockerfile
-RUN apt-get update && apt-get install -y \
-    curl build-essential \
-    && rm -rf /var/lib/apt/lists/*
-```
+Nota: el `docker/Dockerfile` es multi-stage: compila el dashboard con Node 20 y luego instala el backend en `python:3.12-slim` con `uv` y el Chromium de Playwright (`xdotool`, inútil en un VPS headless, ya no se instala).
 
 ### Arrancar con Docker
 
@@ -395,7 +384,7 @@ RUN apt-get update && apt-get install -y \
 cd /opt/openacm/docker
 docker compose build
 docker compose up -d
-docker logs openacm   # ver el token la primera vez
+docker logs openacm   # ver el token (también queda en config/.env)
 ```
 
 En NPM, el Forward Port sería `8080` en lugar de `47821`.

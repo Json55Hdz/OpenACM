@@ -136,14 +136,20 @@ Antes de implementar, tener en cuenta lo que **ya está resuelto**:
 
 | Capacidad | Archivo |
 |-----------|---------|
-| Creación dinámica de tools | `src/openacm/tools/tool_creator.py` |
+| Creación dinámica de tools (existe, pero no se registra por defecto en v0.4.7) | `src/openacm/tools/tool_creator.py` |
 | Creación dinámica de skills | `src/openacm/tools/skill_creator.py` |
 | Skills generadas auto-guardadas | `skills/generated/` |
-| WebSocket para UI | `src/openacm/web/server.py` |
+| WebSocket para UI | `src/openacm/web/routers/chat.py`, `src/openacm/web/server.py` |
 | Ejecución de comandos CLI | `src/openacm/tools/system_cmd.py` |
-| Operaciones de archivo | `src/openacm/tools/file_ops.py` |
-| Control de Blender vía bpy | `src/openacm/tools/blender_tool.py` |
-| Channels (Discord, Telegram, WhatsApp) | `src/openacm/channels/` |
+| Operaciones de archivo y edición de código | `src/openacm/tools/file_ops.py`, `src/openacm/tools/code_editor.py` |
+| Sistema de plugins | `src/openacm/plugins/` |
+| Flujos visuales (nodos HTTP, condicionales, loops…) | `src/openacm/core/flow_executor.py` |
+| Webhooks públicos firmados → flujo | `src/openacm/web/routers/webhooks.py`, `src/openacm/core/webhook_auth.py` |
+| Swarms multi-agente | `src/openacm/core/swarm_manager.py` |
+| Cron scheduler | `src/openacm/watchers/cron_scheduler.py` |
+| Channels (Discord, Telegram, WhatsApp + canales por agente) | `src/openacm/channels/` |
+
+> El control de Blender (`blender_tool.py`) mencionado en versiones anteriores de este documento ya no existe en el código.
 
 No reinventar estas piezas — extenderlas.
 
@@ -805,6 +811,8 @@ Hereda todo el modelo del Plan 12. Adicionalmente:
 ## Plan 14 — MQTT
 
 ### Por qué el sistema lo sigue pidiendo
+> Nota: este plan se escribió cuando OpenACM tenía drivers propios para Tuya, LG TV y Xiaomi. Hoy esos drivers fueron reemplazados por el plugin de Home Assistant (que ya soporta MQTT por su cuenta); el plan se conserva como referencia.
+
 OpenACM ya controla dispositivos IoT (Tuya, LG TV, Xiaomi) pero con protocolos propietarios. MQTT es el protocolo estándar universal de IoT — miles de dispositivos lo hablan nativamente: Arduino, ESP32, Raspberry Pi, sensores industriales, Home Assistant, Node-RED, y cualquier sistema custom.
 
 Sin MQTT, cada dispositivo nuevo requiere un driver nuevo. Con MQTT, cualquier cosa que publique en un topic ya es un ciudadano de primera clase en OpenACM.

@@ -33,6 +33,8 @@ MIN  HOUR  DOM  MONTH  DOW
 | MONTH | 1–12 | same |
 | DOW | 0–6 (0=Sun) | same |
 
+> **Time zone:** schedules are computed in **UTC** (`next_run` is stored as a UTC timestamp). Convert your local time when writing an expression — e.g. 9:00 in Bogotá (UTC-5) is `0 14 * * *`.
+
 ### Examples
 
 | Expression | Meaning |
@@ -63,7 +65,7 @@ Runs the OS activity pattern analyzer to detect new routines from recent app usa
 No configuration needed.
 
 ### `run_skill`
-Executes a named skill through the AI brain.
+Sends `/skill <skill_name>` to the main agent (conversation `cron:cron`) and stores the reply.
 
 ```json
 {
@@ -102,6 +104,33 @@ Runs an arbitrary shell command.
 | `command` | required | The command to run |
 | `shell` | `true` | Run via shell (allows pipes, env vars) |
 | `timeout` | `30` | Max seconds before killing the process |
+
+A non-zero exit code marks the run as an error. Output is truncated to 2,000 characters. Note that this runs the command directly — it does **not** go through the agent's security policy or confirmation mode.
+
+### `send_message`
+Sends a prompt to the main agent as if a user had typed it (conversation `cron:cron`) and stores the reply as the run output. Use it for "every morning, summarize…" style jobs.
+
+```json
+{
+  "action_payload": {
+    "message": "Summarize today's unread emails"
+  }
+}
+```
+
+### `run_swarm_template`
+Creates a swarm from a saved swarm template and starts it. `{date}` in the goal is replaced with today's date.
+
+```json
+{
+  "action_payload": {
+    "template_id": 2,
+    "goal_override": "Write the daily market report for {date}"
+  }
+}
+```
+
+> **Where each action can be created:** the REST API, the dashboard and `openacm-manage` accept `analyze_patterns`, `run_skill`, `run_routine` and `custom_command`. The agent's `create_cron_job` tool additionally accepts `send_message`. `run_swarm_template` jobs are executed by the scheduler but can only be created by writing the job row directly (e.g. from a plugin). Activating a time-based routine creates a `run_routine` job automatically.
 
 ---
 
@@ -144,7 +173,7 @@ All endpoints require the standard `Authorization: Bearer <token>` header.
 ```
 GET /api/cron/jobs
 ```
-Returns `{ "jobs": [...] }`.
+Returns an array of jobs.
 
 ### Create job
 ```
@@ -260,7 +289,7 @@ app.py
 | name | TEXT | Job name |
 | description | TEXT | Optional description |
 | cron_expr | TEXT | 5-field cron or @shortcut |
-| action_type | TEXT | `run_skill` / `run_routine` / `analyze_patterns` / `custom_command` |
+| action_type | TEXT | `run_skill` / `run_routine` / `analyze_patterns` / `custom_command` / `send_message` / `run_swarm_template` |
 | action_payload | TEXT | JSON configuration for the action |
 | is_enabled | INTEGER | 1 = enabled, 0 = disabled |
 | last_run | TEXT | ISO datetime of last execution |

@@ -5,7 +5,7 @@
 | Type | Location | Format | Activation |
 |------|----------|--------|------------|
 | **Skills** | `./skills/{category}/` | `.md` with frontmatter | Automatic on creation (DB + file) |
-| **Tools** | `src/openacm/tools/` | `.py` with `@tool` decorator | Restart required |
+| **Tools** | `src/openacm/tools/` or a plugin | `.py` with `@tool` decorator | Registration + restart required |
 
 ---
 
@@ -77,17 +77,17 @@ What to avoid:
 ```
 You: Create a skill to be an expert in Django
 
-[The bot automatically:]
-1. Generates content with AI
-2. Saves to: skills/generated/django-expert.md
+[The bot, via the create_skill tool:]
+1. Generates content with AI and shows you a preview
+2. After you confirm (apply=true), saves to: skills/<category>/django-expert.md (category "custom" by default)
 3. Saves metadata in SQLite
-4. Activates immediately
+4. The skill is active and is injected whenever a message is relevant to it
 ```
 
 #### Option 2: Manually (File)
 1. Create file: `skills/custom/my-skill.md`
 2. Fill in with SKILL.md format
-3. Restart OpenACM (syncs files to DB)
+3. Restart OpenACM (syncs files in category folders to the DB)
 
 #### Option 3: Web Dashboard
 - Go to "Skills" section
@@ -119,8 +119,11 @@ src/openacm/tools/
 ├── rag_tools.py          # RAG tools
 ├── system_info.py        # System information
 │
+├── code_editor.py        # edit_file, grep_in_files, get_file_outline, run_linter…
+├── agent_tool.py / flow_tool.py / cron_tool.py / swarm_tool.py / platform_tools.py
+├── intent_keywords.py    # Keyword fallback for tool selection
 ├── skill_creator.py      # Skill creator
-└── tool_creator.py       # Tool creator
+└── tool_creator.py       # Tool creator (not registered by default in v0.4.7)
 ```
 
 ### TOOL.py File Format
@@ -181,16 +184,8 @@ __all__ = ["tool_name"]
 
 ### How to Create Tools
 
-#### Option 1: From Chat (Saves file, requires restart)
-```
-You: Create a tool that calculates the factorial of a number
-
-[The bot:]
-1. Generates Python code
-2. Saves to: src/openacm/tools/factorial_calculator.py
-3. Responds with success
-4. Indicates restart is needed
-```
+#### Option 1: From Chat — not available by default
+`tool_creator.py` implements `create_tool` / `edit_tool` / `delete_tool`, but in v0.4.7 `app.py` does not register that module, so the agent cannot create tools from chat. Use option 2 or a [plugin](./24-plugins.md).
 
 #### Option 2: Manually (Development)
 1. Create file: `src/openacm/tools/my_tool.py`
