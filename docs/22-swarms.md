@@ -45,7 +45,7 @@ The Brain calls the `create_swarm` tool, which plans the team and tasks automati
    - **Name** — optional display name
    - **Global Model** — LiteLLM model string applied to all workers (e.g. `anthropic/claude-opus-4-6`)
    - **Context Files** — drag and drop any files the team needs to understand the project
-4. Click **Create** — planning happens automatically
+4. Click **Create** — the orchestrator may first ask **clarification questions** about the goal; answer them (or skip) and the team is planned
 
 ---
 
@@ -53,6 +53,7 @@ The Brain calls the `create_swarm` tool, which plans the team and tasks automati
 
 When a swarm is created, an orchestrator LLM call:
 
+0. (Optional) reviews the goal and context and asks clarification questions (`/clarify`, `/clarify/answer`)
 1. Designs a team of 3–6 specialist workers with names, roles, and descriptions
 2. Assigns a task to each worker with a title, description, and dependencies
 3. Stores workers and tasks in the database with status `planned`
@@ -68,7 +69,7 @@ Clicking **Start** (or `auto_start: true`) triggers `_run_swarm`:
 1. Tasks with no unmet dependencies are collected as "ready"
 2. All ready tasks fire **in parallel** (throttled to 3 concurrent workers via `asyncio.Semaphore`)
 3. Each worker gets its own `Brain` instance with:
-   - An isolated workspace at `workspace/swarms/{id}/workers/{name}/`
+   - An isolated workspace at `workspace/swarms/{name}_{id}/workers/{worker}/`
    - Its own model override (worker-specific > swarm global > system default)
    - Swarm communication tools injected into its tool registry
 4. Task results are saved to `swarm_tasks.result` and to the Activity Feed
@@ -78,7 +79,7 @@ Clicking **Start** (or `auto_start: true`) triggers `_run_swarm`:
 
 ### Parallel Execution
 
-Workers truly run concurrently via `asyncio.gather`. The semaphore prevents SQLite lock contention by limiting simultaneous DB writes to 3 at a time. Increase `MAX_PARALLEL` in `swarm_manager.py` if using PostgreSQL or a more concurrent backend.
+Workers truly run concurrently via `asyncio.gather`. The semaphore prevents SQLite lock contention by limiting simultaneous workers to 3. Change `SWARM_MAX_PARALLEL_WORKERS` in `src/openacm/constants.py` to tune it. Failed tasks are retried automatically (`SWARM_MAX_TASK_RETRIES = 2`); after that you can retry them with guidance or mark them complete from the dashboard.
 
 ---
 
@@ -105,10 +106,10 @@ Each swarm worker writes to its own directory:
 ```
 workspace/
   swarms/
-    {swarm_id}/
+    {swarm_name}_{swarm_id}/
+      context/            # uploaded context files
       workers/
         {worker_name}/
-          task_{task_id}_result.md
           ... (any files the worker creates)
 ```
 
@@ -118,7 +119,7 @@ This is completely separate from normal chat workspaces (`workspace/`). Workers 
 
 ## Worker Communication
 
-Workers can communicate peer-to-peer using three injected tools:
+Workers get a set of injected swarm tools for communication and coordination:
 
 ### `swarm_send_message`
 Send a direct message to a specific teammate by name.
@@ -148,6 +149,18 @@ title: "Add rate limiting"
 description: "The API endpoint needs rate limiting per the user's request"
 assign_to: "BackendDev"  # optional
 ```
+
+### Other worker tools
+
+| Tool | Purpose |
+|------|---------|
+| `swarm_post_update` | Post a progress update to the shared bulletin board all workers read at the start of their tasks |
+| `swarm_ask_user` | Ask you a question; it appears in the Activity feed for you to answer |
+| `swarm_report_bug` | Report one bug found during QA in a file owned by another worker (one call per bug); triggers a fix cycle (max 5) |
+| `swarm_store_knowledge` / `swarm_query_knowledge` | Shared knowledge base: store decisions (API shapes, schemas, file ownership) and search what teammates stored |
+| `swarm_spawn_subswarm` | Spawn a child swarm for a large sub-goal; blocks until it finishes (max 5 minutes) |
+
+Workers can also have private skills (**Workers** tab → skills), generated with the LLM.
 
 ---
 
@@ -203,12 +216,22 @@ Workers that call `swarm_read_messages` will see your feedback in their context 
 | `POST` | `/api/swarms` | Create a swarm (multipart with optional files) |
 | `GET` | `/api/swarms/{id}` | Get swarm detail with workers and tasks |
 | `DELETE` | `/api/swarms/{id}` | Delete swarm and all data |
+| `POST` | `/api/swarms/{id}/clarify` | Generate clarification questions |
+| `POST` | `/api/swarms/{id}/clarify/answer` | Submit answers, then plan |
 | `POST` | `/api/swarms/{id}/plan` | Trigger planning |
 | `POST` | `/api/swarms/{id}/start` | Start or resume execution |
 | `POST` | `/api/swarms/{id}/stop` | Pause execution |
+| `POST` | `/api/swarms/{id}/tasks/{tid}/retry` | Reset a failed task to pending (optionally with guidance) |
+| `POST` | `/api/swarms/{id}/tasks/{tid}/complete` | Mark a failed task completed with your own result |
 | `PUT` | `/api/swarms/{id}/workers/{wid}` | Update worker (e.g. change model) |
+| `GET` | `/api/swarms/{id}/workers/{wid}/skills` | Worker skills (`POST …/skills/generate`, `POST/DELETE …/skills/{skill_id}`) |
 | `GET` | `/api/swarms/{id}/messages` | Get full activity feed |
+| `GET` | `/api/swarms/{id}/conversations` | Worker conversations (and `…/conversations/{channel}/{user}`) |
 | `POST` | `/api/swarms/{id}/message` | Send user feedback to swarm |
+| `POST` | `/api/swarms/{id}/complete` | Mark the swarm completed |
+| `POST` | `/api/swarms/{id}/check-reuse` | Check if the existing team suits a new goal |
+| `POST` | `/api/swarms/{id}/reset` | Reset for re-use (keeps workers/task definitions; multipart, accepts new files) |
+| `GET/POST/DELETE` | `/api/swarm-templates` | Saved swarm templates |
 | `WS` | `/ws/swarms/{id}` | WebSocket for real-time events |
 
 ### Create Swarm (multipart)
@@ -259,12 +282,13 @@ The swarm engine emits named events on every state change. All are broadcast to 
 | `swarm:paused` | Execution paused |
 | `swarm:plan_ready` | Planning complete |
 | `swarm:stalled` | No ready tasks, possible dependency deadlock |
+| `swarm:paused_mid_run` | Paused while tasks were running |
 
 ---
 
 ## Database Schema
 
-Four tables added in migration 7:
+Core tables (plus `swarm_templates` and `worker_skills`):
 
 ```sql
 swarms          (id, name, goal, status, global_model, shared_context, context_files, ...)
@@ -279,13 +303,19 @@ swarm_messages  (id, swarm_id, from_worker_id, to_worker_id, content, message_ty
 
 ## Brain Tools
 
-The normal chat Brain has three swarm tools:
+The normal chat Brain has five swarm tools:
 
 | Tool | Description |
 |------|-------------|
-| `create_swarm` | Create and plan a swarm from a goal description |
+| `create_swarm` | Create and plan a swarm from a goal description (`auto_start` to run it right away) |
 | `start_swarm` | Start execution of a planned/paused swarm by ID |
+| `stop_swarm` | Pause a running swarm |
+| `delete_swarm` | Delete a swarm and all its data |
 | `list_swarms` | List all swarms and their current status |
+
+## Templates
+
+Save a swarm's team as a **template** (`POST /api/swarm-templates`) to re-create it later. A cron job with the `run_swarm_template` action creates and starts a swarm from a template on a schedule, replacing `{date}` in the goal with the current date (see [Cron Scheduler](./19-cron-scheduler.md)). `openacm-manage swarms` lets you drive swarms from the terminal.
 
 Example prompts:
 - *"Create a swarm to write a marketing campaign for a fitness app, start it automatically"*

@@ -58,7 +58,10 @@ Solo pagarías si activas otros servicios de pago en Google Cloud (VMs, BigQuery
 
 ### 5. Guardar el archivo en el proyecto
 
-Renombra el archivo descargado y colócalo aquí (relativo a la raíz del proyecto):
+Tienes dos opciones:
+
+- **Desde el dashboard (recomendado):** **Configuración → Google Services** → pega/sube el JSON descargado. Se guarda como `config/google_credentials.json`.
+- **A mano:** renombra el archivo descargado y colócalo aquí (relativo a la raíz del proyecto):
 
 ```
 config/google_credentials.json
@@ -68,7 +71,9 @@ config/google_credentials.json
 
 ### 6. Primera autorización
 
-La primera vez que uses cualquier herramienta de Gmail desde el chat (ej: *"lee mis emails"*), el sistema abrirá el navegador automáticamente con el flujo OAuth:
+**Desde el dashboard:** en **Configuración → Google Services** pulsa el botón de autorizar. Se abre la pantalla de consentimiento de Google y, al aceptar, Google redirige a `http://localhost:47821/api/config/google/callback`, que guarda el token. Si OpenACM corre en un servidor, abre el dashboard a través de un túnel SSH (`ssh -L 47821:localhost:47821 usuario@servidor`) para que ese `localhost` apunte al servidor.
+
+**Desde el chat:** la primera vez que uses cualquier herramienta de Gmail (ej: *"lee mis emails"*) sin token, el sistema abrirá el navegador de la máquina donde corre OpenACM con el flujo OAuth:
 
 1. Selecciona tu cuenta de Gmail
 2. Acepta los permisos solicitados

@@ -1,5 +1,14 @@
 # OpenACM Troubleshooting Guide
 
+> Most examples below are for Windows (`.bat`, `.venv\Scripts\...`). On macOS/Linux use `./setup.sh`, `./run.sh` and `.venv/bin/...`.
+
+## First checks
+
+- **Logs:** `data/logs/` (turn on **Configuration → Security → Debug mode**, or `POST /api/config/debug_mode`, for DEBUG-level logs)
+- **Traces:** the **Traces** page shows every agentic iteration, tool timing and the error of a failed request
+- **Health:** `curl http://127.0.0.1:47821/api/ping` → `{"ok": true}`
+- **Nothing happens when the agent wants to run a command?** In the default `confirmation` mode the command waits for your approval in the dashboard. In `auto` mode, commands not listed in `whitelisted_commands` are rejected.
+
 ## Problem: "Gets stuck after a command"
 
 If OpenACM executes a command or tool and then freezes (no response), try these solutions:
@@ -84,7 +93,9 @@ Page.goto: Timeout 30000ms exceeded
 
 **Reinstall Playwright:**
 ```batch
-.venv\Scripts\uv run playwright install chromium
+uv run playwright install chromium
+:: or
+.venv\Scripts\playwright install chromium
 ```
 
 **Check connection:**
@@ -113,12 +124,17 @@ A 500 error means the OpenCode.ai server had an internal issue. This may be due 
 ### Solutions:
 
 1. **Wait a few minutes** and try again
-2. **Switch models** in `config/default.yaml`:
+2. **Switch models** — in chat: `/model openai/gpt-4o`, in the dashboard (**Configuration → Model**), or in `config/local.yaml`:
    ```yaml
    llm:
-     default_model: "openai/gpt-4o"  # Try another model
+     default_provider: openai
+     providers:
+       openai:
+         default_model: "gpt-4o"
    ```
-3. **Verify your API key** in `config/.env`
+3. **Verify your API key** in `config/.env` (`OPENCODE_GO_API_KEY` for OpenCode Go)
+
+Transient 5xx errors and `429 Too Many Requests` are already retried automatically with exponential backoff; you only see the error once retries are exhausted.
 
 ---
 
@@ -131,7 +147,7 @@ RuntimeWarning: This package has been renamed to `ddgs`!
 **Solution:** Already fixed in the latest version. If it persists:
 
 ```batch
-.venv\Scripts\uv pip install ddgs>=7.0
+uv pip install "ddgs>=7.0"
 ```
 
 ---
@@ -153,6 +169,32 @@ Edit `run.bat` and ensure it uses absolute paths:
 set "PYTHON=%~dp0.venv\Scripts\python.exe"
 "%PYTHON%" -m openacm
 ```
+
+---
+
+## Problem: Dashboard shows "Unauthorized"
+
+The token in your browser doesn't match `DASHBOARD_TOKEN` in `config/.env` (e.g. after regenerating it). Log out and paste the current token — it is printed in the terminal at startup.
+
+---
+
+## Problem: Docker container is running but the dashboard doesn't load
+
+The compose file publishes port 8080, but OpenACM listens on `127.0.0.1:47821` unless told otherwise. Create `config/local.yaml` with:
+
+```yaml
+web:
+  host: 0.0.0.0
+  port: 8080
+```
+
+and restart the container. See [Docker](./32-docker.md).
+
+---
+
+## Problem: WhatsApp webhook doesn't verify / messages are ignored
+
+See the troubleshooting table in [WhatsApp Setup](./WHATSAPP_SETUP.md). The most common causes are a verify token mismatch and an empty/wrong `WHATSAPP_APP_SECRET` (logs show `signature invalid`).
 
 ---
 

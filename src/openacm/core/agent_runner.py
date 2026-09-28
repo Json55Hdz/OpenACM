@@ -13,7 +13,11 @@ from typing import Any
 import structlog
 
 from openacm.tools.base import ToolDefinition
-from openacm.core.messages import MSG_SKILL_CONTEXT_HEADER, MSG_SKILL_CONTEXT_FOOTER
+from openacm.core.messages import (
+    MSG_AGENT_PROCESSING_ERROR,
+    MSG_SKILL_CONTEXT_FOOTER,
+    MSG_SKILL_CONTEXT_HEADER,
+)
 
 log = structlog.get_logger()
 
@@ -298,5 +302,5 @@ class AgentRunner:
             )
             return response
         except Exception as e:
-            log.error("AgentRunner error", agent_id=agent["id"], error=str(e))
-            return f"Error processing message: {e}"
+            log.error("AgentRunner error", agent_id=agent["id"], error=str(e), exc_info=True)
+            return MSG_AGENT_PROCESSING_ERROR

@@ -148,11 +148,21 @@ credentials-file: C:\Users\TU_USUARIO\.cloudflared\<ID-DEL-TUNEL>.json
 
 ingress:
   - hostname: wa.tudominio.com
-    service: http://localhost:8000   # puerto del servidor web de OpenACM
+    service: http://localhost:47821   # puerto del servidor web de OpenACM
   - service: http_status:404
 ```
 
-> Ajusta `8000` al puerto real de OpenACM (revisa `config/default.yaml → web.port`).
+> Ajusta `47821` si cambiaste el puerto (`web.port` en `config/local.yaml` / `config/default.yaml`; en Docker es `8080`).
+>
+> **Recomendado:** expón solo el webhook, no todo el dashboard. Cloudflare Tunnel permite filtrar por ruta:
+>
+> ```yaml
+> ingress:
+>   - hostname: wa.tudominio.com
+>     path: ^/webhooks/whatsapp
+>     service: http://localhost:47821
+>   - service: http_status:404
+> ```
 
 ### B.4 Correrlo como servicio (siempre encendido)
 
@@ -177,7 +187,7 @@ WHATSAPP_APP_SECRET=abcd1234...tu_app_secret
 > `config/.env` está en `.gitignore` — tus credenciales **nunca** se suben a git.
 > Cada persona que instale OpenACM pone las suyas; el código es el mismo para todos.
 
-En `config/default.yaml`, asegúrate de tener:
+Opcional — en `config/local.yaml` (o `default.yaml`) puedes dejarlo explícito:
 
 ```yaml
 channels:

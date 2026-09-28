@@ -6,6 +6,8 @@
 **Tool:** skill-security-auditor (Claude Skills)
 **Verdict:** SECURE - All findings are BY DESIGN
 
+> The audit below predates many features (agents with public channels, flows, webhook connectors, plugins). For the current security model — execution modes, hardcoded blocks, authentication and public endpoints — see [Security](./12-security.md).
+
 ---
 
 ## Audit Summary
@@ -26,11 +28,11 @@
 
 ### 1. Execution Sandbox
 
-OpenACM implements a security sandbox in `src/openacm/security/sandbox.py` that:
-- Limits system commands to a configurable timeout
-- Restricts access to sensitive directories
-- Validates paths before file operations
-- Logs all executions for auditing
+OpenACM implements a security sandbox in `src/openacm/security/sandbox.py` (with policies in `security/policies.py`) that:
+- Checks every shell command against hardcoded privilege-escalation blocks, `blocked_patterns` and `blocked_paths`
+- Applies the execution mode (`confirmation` / `auto` whitelist / `yolo`)
+- Limits system commands to a configurable timeout and output size
+- Logs all tool executions for auditing
 
 **File:** `src/openacm/security/sandbox.py`
 
@@ -39,12 +41,12 @@ OpenACM implements a security sandbox in `src/openacm/security/sandbox.py` that:
 All API keys and tokens are managed through:
 - Environment variables (never hardcoded)
 - Configuration files in `config/` (excluded from git)
-- Optional encryption for persistent tokens
+- Conversation and activity data encrypted at rest with a local key (`config/activity.key`)
 
 **Involved files:**
 - `src/openacm/core/config.py` - Configuration loading
-- `src/openacm/security/crypto.py` - Token management
-- `src/openacm/web/server.py` - Dashboard authentication
+- `src/openacm/security/crypto.py` - Dashboard token generation
+- `src/openacm/web/routers/system.py` - Dashboard authentication middleware
 
 ### 3. Channel Isolation
 
@@ -73,10 +75,9 @@ OpenACM requires HTTP communication for:
 - External services (Google APIs)
 
 **Mitigation:**
-- Timeout on all requests (15-30s)
-- No unlimited automatic retries
-- URL validation (avoids localhost/private IPs)
-- All calls logged
+- Timeouts on outbound requests
+- Bounded automatic retries (LLM calls)
+- Tool calls logged to the database
 
 ### Environment Variable Access
 
@@ -89,7 +90,7 @@ OpenACM requires HTTP communication for:
 API key loading via `os.environ.get()`
 
 **Mitigation:**
-- Read-only, never write
+- Keys are read from the environment; the only writes are the ones the operator triggers (dashboard setup / wizard writing `config/.env`, and the auto-generated `DASHBOARD_TOKEN`)
 - No sensitive default values
 - Clear documentation of required variables
 - Example in `config/.env.example`
@@ -120,18 +121,15 @@ Decoding base64-encoded PNG images from the Jupyter kernel
 
 ### File Access
 
-- Allowed: Read/write in working directory
-- Allowed: Access to `data/` for persistence
-- Allowed: Access to `config/` for configuration
-- Blocked: No access to `~/.ssh`, `~/.aws`, system credentials
-- Blocked: No modification of system files
+- Allowed: Read/write wherever the OpenACM user can, except `blocked_paths`
+- Blocked by default: OpenACM's own `config/`, `data/openacm.db`, `data/vectordb`, `data/logs`, `/etc/shadow`, `/etc/passwd`, `C:\Windows\System32`
+- Add more (e.g. `~/.ssh`, `~/.aws`) to `security.blocked_paths`
 
 ### Network
 
-- Allowed: Connections to documented public APIs
-- Allowed: Webhooks for messaging channels
-- Blocked: No port scanning
-- Blocked: No connections to private IPs without authorization
+- Allowed: Connections to the LLM providers, channels and integrations you configure
+- Public inbound endpoints: `/webhooks/whatsapp` (signature-checked) and `/api/webhooks/{slug}` (per-connector auth); everything else under `/api/` requires the dashboard token
+- The agent's network access is otherwise that of the OpenACM process — use execution modes, tool allowlists and host firewalls to restrict it
 
 ---
 
@@ -141,13 +139,13 @@ To run a security audit:
 
 ```bash
 # Audit source code
-python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/
+python skills/skill_security_auditor.py src/
 
 # Audit with strict mode
-python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/ --strict
+python skills/skill_security_auditor.py src/ --strict
 
 # JSON output for CI/CD
-python .opencode/skills/skill-security-auditor/scripts/skill_security_auditor.py src/ --json
+python skills/skill_security_auditor.py src/ --json
 ```
 
 ---
@@ -177,10 +175,14 @@ If you discover a security vulnerability:
 | `GEMINI_API_KEY` | Google Gemini API | Optional |
 | `DISCORD_TOKEN` | Discord Bot | Optional |
 | `TELEGRAM_TOKEN` | Telegram Bot | Optional |
-| `DASHBOARD_TOKEN` | Web authentication | Auto-generated |
-| `GOOGLE_CREDENTIALS` | Google OAuth2 | Optional |
+| `XAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY` | Other built-in LLM providers | Optional |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | WhatsApp Cloud API | Optional |
+| `STITCH_API_KEY`, `ELEVENLABS_API_KEY` | Google Stitch, ElevenLabs TTS | Optional |
+| `DASHBOARD_TOKEN` | Web authentication | Auto-generated on first start |
 
-All variables are loaded via `os.environ.get()` with empty default values.
+Google OAuth2 credentials are files, not variables: `config/google_credentials.json` and `config/google_token.json`.
+
+All variables are loaded via `os.environ.get()` with empty default values, from `config/.env` or the process environment.
 
 ---
 
@@ -199,23 +201,29 @@ export DISCORD_TOKEN="..."
 
 ### 2. Security Sandbox
 
-The execution mode is configured in `config/default.yaml`:
+The execution mode is configured in `config/default.yaml` / `config/local.yaml` (or from the dashboard):
 
 ```yaml
 security:
-  execution_mode: strict  # strict | normal | permissive
-  max_command_timeout: 30
-  allowed_paths:
-    - ./data
-    - ./config
+  execution_mode: confirmation   # confirmation | auto | yolo
+  max_command_timeout: 120       # seconds, 0 = no limit
+  whitelisted_commands: [ls, git, python]   # used by auto mode
+  blocked_paths:
+    - config/
+    - ~/.ssh
 ```
 
-### 3. Dashboard Token
+### 3. Keep dependencies updated
+
+`pyproject.toml` pins security floors for direct dependencies (e.g. `litellm>=1.84.0`, `mcp>=1.28.1,<2`, `chromadb>=1.5.9`, `Pillow>=12.3.0`, `pypdf>=6.16.1`, `cryptography>=50`) and for vulnerable transitive packages via `[tool.uv] constraint-dependencies`. Run `./update.sh` (or `openacm update`) regularly.
+
+### 4. Dashboard Token
 
 The token is automatically generated on first launch:
-- Stored encrypted in `data/openacm.db`
-- Can be rotated from the web configuration
-- Configurable TTL (default: no expiration)
+- Stored as `DASHBOARD_TOKEN` in `config/.env` (plain text — protect the file with `chmod 600`)
+- Rotate it by changing/removing that line (or with `openacm-setup` → Dashboard Token) and restarting
+- It does not expire
+- It is compared in constant time; with no token configured, both the HTTP API and the WebSockets reject every request
 
 ---
 
@@ -224,12 +232,13 @@ The token is automatically generated on first launch:
 | Date | Tool | Result | Findings |
 |------|------|--------|----------|
 | 2025-03-27 | skill-security-auditor | PASS | 10/10 By Design |
+| 2026-09-28 | Dependabot + CodeQL review | Fixed | Vulnerable dependencies bumped (see below); SPA path traversal guard tightened; exception details no longer returned to clients; ReDoS in the TTS markdown cleaner fixed; constant-time token comparison; WebSockets reject connections when no `DASHBOARD_TOKEN` is set |
 
 ---
 
 ## References
 
-- [skill-security-auditor Documentation](.opencode/skills/skill-security-auditor/SKILL.md)
+- [skill-security-auditor Documentation](../skills/SKILL.md)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [Python Security Best Practices](https://python-security.readthedocs.io/)
 
@@ -237,4 +246,4 @@ The token is automatically generated on first launch:
 
 **Note:** This document is automatically updated after each security audit.
 
-Last updated: March 2025
+Last updated: September 2026
