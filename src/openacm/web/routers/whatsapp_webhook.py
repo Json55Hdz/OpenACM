@@ -78,7 +78,19 @@ def register_routes(app: FastAPI) -> None:
                     if channel is None:
                         channel = get_active_channel()
 
+                    for m in value.get("messages") or []:
+                        log.info(
+                            "WhatsApp inbound message",
+                            msg_id=m.get("id"),
+                            sender=m.get("from") or m.get("from_user_id"),
+                            mtype=m.get("type"),
+                            phone_id=phone_id,
+                            routed=type(channel).__name__ if channel else None,
+                        )
+
                     if channel is None:
+                        if value.get("messages"):
+                            log.warning("WhatsApp message dropped — no channel for phone_id", phone_id=phone_id)
                         continue
 
                     await channel.handle_incoming(value)

@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import hmac
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,16 @@ _active_channel: "WhatsAppCloudChannel | None" = None
 
 def get_active_channel() -> "WhatsAppCloudChannel | None":
     return _active_channel
+
+
+# Business-scoped user ID, e.g. "CO.1640468054141646". Meta sends it instead of a
+# phone number for users who enabled a WhatsApp username.
+_BSUID_RE = re.compile(r"^[A-Z]{2}(\.[A-Za-z0-9]+)+$")
+
+
+def recipient_fields(target_id: str) -> dict[str, str]:
+    """Outbound addressing: `recipient` for a BSUID, `to` for a phone number."""
+    return {"recipient": target_id} if _BSUID_RE.match(target_id) else {"to": target_id}
 
 
 def verify_signature(app_secret: str, raw_body: bytes, header: str) -> bool:
@@ -124,7 +135,7 @@ class WhatsAppCloudChannel(BaseChannel):
                 json={
                     "messaging_product": "whatsapp",
                     "recipient_type": "individual",
-                    "to": target_id,
+                    **recipient_fields(target_id),
                     "type": "text",
                     "text": {"preview_url": True, "body": content[:4096]},
                 },
@@ -157,7 +168,7 @@ class WhatsAppCloudChannel(BaseChannel):
             # 2. Send by media_id (image if it looks like one, else document)
             is_image = fpath.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}
             payload: dict[str, Any] = {
-                "messaging_product": "whatsapp", "to": target_id,
+                "messaging_product": "whatsapp", **recipient_fields(target_id),
                 "type": "image" if is_image else "document",
             }
             payload["image" if is_image else "document"] = {
@@ -179,13 +190,15 @@ class WhatsAppCloudChannel(BaseChannel):
         for msg in messages:
             msg_id = msg.get("id", "")
             if msg_id and msg_id in self._seen_ids:
+                log.info("WhatsApp message skipped — duplicate id", msg_id=msg_id)
                 continue  # Meta retried a webhook we already handled
             if msg_id:
                 self._seen_ids.add(msg_id)
                 if len(self._seen_ids) > 1000:
                     self._seen_ids = set(list(self._seen_ids)[-500:])
 
-            sender = msg.get("from", "")
+            # `from` is omitted for username users without a visible phone number
+            sender = msg.get("from") or msg.get("from_user_id", "")
             mtype = msg.get("type", "")
             if mtype == "text":
                 content = msg.get("text", {}).get("body", "")
@@ -200,6 +213,10 @@ class WhatsAppCloudChannel(BaseChannel):
                 content = f"[{mtype} recibido]"
 
             if not sender or not content:
+                log.warning(
+                    "WhatsApp message dropped — empty sender or content",
+                    msg_id=msg_id, sender=sender, mtype=mtype, keys=list(msg.keys()),
+                )
                 continue
 
             try:
