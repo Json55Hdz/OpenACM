@@ -46,17 +46,17 @@ async def db_with_threads(tmp_path):
     # Thread A — 2 messages, 1 unread
     await conn.execute(
         "INSERT INTO gmail_emails VALUES (1,'gid1','tid-A','Hello team','Carlos','carlos@co.com',"
-        "'lets meet','lets meet',NULL,1,1,0,'2026-06-10T08:00:00',0)"
+        "'lets meet','lets meet',NULL,1,1,0,'2026-06-10T08:00:00',0,NULL)"
     )
     await conn.execute(
         "INSERT INTO gmail_emails VALUES (2,'gid2','tid-A','Re: Hello team','Me','me@co.com',"
-        "'sure thing','sure thing',NULL,1,0,0,'2026-06-10T09:00:00',0)"
+        "'sure thing','sure thing',NULL,1,0,0,'2026-06-10T09:00:00',0,NULL)"
     )
 
     # Thread B — 1 message, unread, different category
     await conn.execute(
         "INSERT INTO gmail_emails VALUES (3,'gid3','tid-B','Invoice #42','Vendor','v@v.com',"
-        "'please pay','please pay',NULL,2,0,0,'2026-06-11T10:00:00',0)"
+        "'please pay','please pay',NULL,2,0,0,'2026-06-11T10:00:00',0,NULL)"
     )
 
     await conn.commit()
@@ -141,7 +141,7 @@ async def test_list_threads_null_thread_id_uses_gmail_id(db_with_threads, app):
     conn = db_with_threads
     await conn.execute(
         "INSERT INTO gmail_emails VALUES (4,'gid4',NULL,'No thread','Solo','solo@co.com',"
-        "'no thread here','no thread here',NULL,1,0,0,'2026-06-12T09:00:00',0)"
+        "'no thread here','no thread here',NULL,1,0,0,'2026-06-12T09:00:00',0,NULL)"
     )
     await conn.commit()
 

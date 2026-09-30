@@ -46,6 +46,8 @@ async def _broadcast_to_terminal(data: dict[str, Any], channel_id: str = "web") 
 
 def _verify_ws_token(websocket: WebSocket) -> bool:
     """Verify token from WebSocket query parameters."""
+    from openacm.security.auth import tokens_match
+
     token = websocket.query_params.get("token", "")
-    dashboard_token = os.environ.get("DASHBOARD_TOKEN", "")
-    return token == dashboard_token if dashboard_token else True
+    # Same policy as the HTTP middleware: no configured token means reject.
+    return tokens_match(token, os.environ.get("DASHBOARD_TOKEN", ""))

@@ -9,7 +9,7 @@ OpenACM gives the AI real, direct access to your computer. This is a deliberate 
 OpenACM is designed to be run by you, for yourself, on your own hardware. The threat model assumes:
 
 - **Trusted operator** (you) — you control the config, the tools, and the LLM
-- **Untrusted inputs** — messages from Telegram, Discord, or WhatsApp should be treated with appropriate caution if those channels are public or shared
+- **Untrusted inputs** — messages from Telegram, Discord, WhatsApp and agent channels should be treated with appropriate caution if those channels are public or shared
 - **LLM mistakes** — the LLM might misinterpret a request and take an unintended action
 
 OpenACM is **not** designed to be a multi-tenant service where untrusted users have direct access.
@@ -18,32 +18,28 @@ OpenACM is **not** designed to be a multi-tenant service where untrusted users h
 
 ## Execution Modes
 
-The `security.execution_mode` config setting controls how aggressively OpenACM executes tools.
+The `security.execution_mode` setting controls how OpenACM runs **shell commands** (the `run_command` tool). Other tools are not gated by the mode — control what an agent can do with its tool allowlist.
 
-### `auto` (default)
-OpenACM executes all tools automatically. Blocked patterns and hardcoded restrictions still apply. Best for personal use where you trust the inputs.
+### `confirmation` (default)
+Every command is sent to the dashboard for approval (`tool.confirmation_needed` event → approve/deny dialog, `POST /api/tool/confirm`). You can also approve a command for the rest of the session. Best default for most users.
 
-### `confirmation`
-Before executing `medium` or `high` risk tools, OpenACM asks for your approval. `low` risk tools always execute immediately.
-
-| Risk Level | Confirmation Required |
-|------------|----------------------|
-| low | Never |
-| medium | Yes (in confirmation mode) |
-| high | Yes (in confirmation mode) |
+### `auto`
+Only commands whose executable (first word, e.g. `git`, `ls`, `python`) is in `security.whitelisted_commands` run — without asking. Anything else is rejected with "not in the whitelist". Blocked patterns and paths still apply.
 
 ### `yolo`
-All tools execute without restriction (except hardcoded blocks). Use only in fully automated pipelines where you've reviewed the agent's behavior.
+Every command runs without asking. Hardcoded blocks, blocked patterns and blocked paths still apply. Use only in fully automated pipelines where you've reviewed the agent's behavior.
+
+The mode can be changed from the dashboard, `PATCH /api/config/security`, or the `update_security_mode` tool; it is persisted in the database and restored at startup.
 
 ---
 
 ## Hardcoded Blocks (cannot be overridden)
 
-These patterns are always blocked regardless of execution mode:
+These patterns are always blocked regardless of execution mode (they either escalate privileges — which would hang the subprocess on a UAC/sudo prompt — or touch credential files):
 
-- **Privilege escalation:** `sudo su`, `runas /priv`, UAC elevation, SUID bit manipulation
-- **Credential access:** `.ssh/id_rsa`, `/etc/shadow`, Windows SAM database, LSASS dump
-- **Security tool bypass:** UAC dialog automation, sudo prompt interception
+- **Windows privilege escalation:** `runas`, `gsudo`, `net user … /add`, `net localgroup administrators … /add`
+- **Linux/macOS privilege escalation:** `sudo -s`, `sudo -i`, `su -`, setuid/setgid `chmod` (e.g. `chmod 4755`), `chown root`
+- **Credential files:** `/etc/shadow`, `/etc/passwd`
 
 Even in `yolo` mode, these cannot be executed.
 
@@ -51,7 +47,7 @@ Even in `yolo` mode, these cannot be executed.
 
 ## Configurable Blocks
 
-Add custom patterns to block in `config/default.yaml`:
+Add custom patterns to block in `config/local.yaml` (it replaces the list from `default.yaml`, so copy the entries you want to keep):
 
 ```yaml
 security:
@@ -64,7 +60,7 @@ security:
     - "~/.ssh/config"
 ```
 
-Patterns are matched as substrings against command strings before execution.
+Patterns are matched as case-insensitive substrings against command strings before execution. Every entry of `blocked_paths` is also checked against shell commands (so `cat config/.env` is blocked when `config/` is listed) and against the paths used by file tools. The shipped defaults block OpenACM's own `config/`, `data/openacm.db`, `data/vectordb` and `data/logs`.
 
 ---
 
@@ -72,34 +68,36 @@ Patterns are matched as substrings against command strings before execution.
 
 Every tool is annotated with a risk level:
 
-| Level | Examples | Confirmation Required |
-|-------|----------|----------------------|
-| `low` | `web_search`, `read_file`, `system_info`, `search_memory`, `ha_control` | Never |
-| `medium` | `write_file`, `take_screenshot`, `gmail_send` | In confirmation mode |
-| `high` | `run_command`, `run_python`, `browser_agent`, `create_tool` | In confirmation mode |
+| Level | Examples |
+|-------|----------|
+| `low` | `list_directory`, `system_info`, `search_memory`, `ha_control` |
+| `medium` | `read_file`, `web_search`, `take_screenshot`, `calendar_create`, `ha_call_service` |
+| `high` | `run_command`, `run_python`, `write_file`, `edit_file`, `browser_agent`, `gmail_send`, `delete_agent` |
+
+Risk levels are shown in the dashboard and in `/tools` so you can decide which tools to give each agent. The approval prompt itself is driven by the execution mode (shell commands), not by the risk level.
 
 ---
 
 ## Sandbox
 
-All `high` risk tools run through the `Sandbox` component, which enforces:
+Shell commands run through the `Sandbox` component, which enforces:
 
 | Limit | Default | Config Key |
 |-------|---------|------------|
-| Execution timeout | 120s | `security.max_command_timeout` |
-| Output size | 50KB | `security.max_output_length` |
-| Environment injection | `CI=true`, stdin=`y` | Hardcoded safety net |
+| Execution timeout | 120 s built-in (the shipped `default.yaml` sets `0` = no limit) | `security.max_command_timeout` |
+| Output size | 50,000 chars | `security.max_output_length` |
+| Environment injection | `CI=true`, `npm_config_yes=true` | Hardcoded, so tools skip interactive prompts |
 
-If a command exceeds the timeout, it's forcefully terminated. Output over the size limit is truncated.
+If a command exceeds the timeout, it's forcefully terminated. Output over the size limit is truncated. The sandbox is not an OS-level jail — commands run as the OpenACM user.
 
 ---
 
 ## Encryption at Rest
 
 ### Conversation Messages
-All conversation messages are encrypted before writing to SQLite using AES-GCM. The encryption key is stored locally at `data/.activity_key`. 
+All conversation messages are encrypted before writing to SQLite using Fernet (AES-128-CBC + HMAC-SHA256). The key is generated on first start and stored locally at `config/activity.key` (git-ignored).
 
-Without the key file, the database is unreadable. If you delete the key, old messages become unrecoverable.
+Without the key file, the stored messages are unreadable. If you delete the key, old messages become unrecoverable — back it up together with `data/openacm.db`.
 
 ### Activity Data
 OS activity sessions (app names, window titles, process names) are encrypted with the same key.
@@ -107,25 +105,28 @@ OS activity sessions (app names, window titles, process names) are encrypted wit
 ### What is NOT encrypted
 - Tool execution logs (arguments, results)
 - LLM usage statistics (token counts, model names)
-- Skill definitions
-- Agent metadata
+- Skill definitions, agents, flows, knowledge base entries
+- Agent channel credentials, webhook connector secrets and plugin settings (stored in SQLite; masked in API responses)
+- The ChromaDB vector store (`data/vectordb/`)
+- Files in `data/media/`
+- `config/.env` (protect it with file permissions)
 
 ---
 
 ## Dashboard Authentication
 
-The web dashboard is protected by a randomly generated token stored at `data/.dashboard_token`. On first run, the token is printed to the terminal.
+The web dashboard and every `/api/*` route are protected by a token. On first run a random token is generated, saved as `DASHBOARD_TOKEN` in `config/.env`, and printed to the terminal. If `DASHBOARD_TOKEN` is already set, that value is used.
 
 The token can be:
-- Stored in your browser (the dashboard saves it in localStorage)
+- Stored in your browser (the dashboard saves it after login)
 - Passed as a Bearer header
-- Passed as a `?token=` query parameter
+- Passed as a `?token=` query parameter (WebSockets always use the query parameter)
 
-To reset the token:
-```bash
-rm data/.dashboard_token
-# Restart OpenACM — a new token will be generated and printed
-```
+Tokens are compared in constant time. If no `DASHBOARD_TOKEN` is configured, **both** the HTTP API and the WebSocket endpoints reject every request — the API is never silently open.
+
+To reset the token, remove the `DASHBOARD_TOKEN=` line from `config/.env` (or set a new value) and restart OpenACM.
+
+Public exceptions to the token check are listed in the [API Reference](./10-api-reference.md#authentication).
 
 ---
 
@@ -174,23 +175,20 @@ channels:
     enabled: true
     token: "${TELEGRAM_TOKEN}"
     allowed_users:
-      - 123456789   # Your Telegram user ID
-      - 987654321   # Another allowed user
+      - "123456789"   # Your Telegram user ID (as a string)
+      - "987654321"   # Another allowed user
 ```
 
 Find your Telegram user ID by messaging `@userinfobot`.
 
 ### Discord
-Restrict to specific servers:
+The config has an `allowed_guilds` list, but v0.4.7 does not enforce it — anyone who can mention the bot or DM it can talk to OpenACM. Only invite the bot to servers you control, or leave Discord disabled.
 
-```yaml
-channels:
-  discord:
-    enabled: true
-    token: "${DISCORD_TOKEN}"
-    allowed_guilds:
-      - 1234567890123456789  # Your server's guild ID
-```
+### WhatsApp
+The `/webhooks/whatsapp` endpoint is public by design (Meta must reach it). POST bodies are checked against `WHATSAPP_APP_SECRET` (`X-Hub-Signature-256`) — always set the app secret.
+
+### Agent channels
+An agent's Telegram bot / WhatsApp number is usually public. Give customer-facing agents a minimal tool allowlist — never `run_command` or `"all"`.
 
 ### Web Dashboard
 The dashboard is only accessible from `localhost` by default (`host: "127.0.0.1"`). To expose it on your network, set `host: "0.0.0.0"` — but use a reverse proxy with HTTPS and keep the token secret.
@@ -232,10 +230,23 @@ server {
 
 | Use Case | Recommended Settings |
 |----------|---------------------|
-| Personal laptop (just me) | `execution_mode: auto`, `host: 127.0.0.1` |
+| Personal laptop (just me) | `execution_mode: confirmation` (or `auto` with a curated whitelist), `host: 127.0.0.1` |
 | Shared household server | `execution_mode: confirmation`, Telegram `allowed_users`, `host: 0.0.0.0` + HTTPS |
 | Automated pipeline (no humans) | `execution_mode: yolo`, no external channels, localhost only |
 | Public Telegram bot | `execution_mode: confirmation`, `allowed_users` strictly set, limited tool set |
+| Customer-facing agent (WhatsApp/Telegram) | Agent with a minimal allowlist (or `none` + flows), `memory_mode: session_ttl` |
+
+---
+
+## Error Handling
+
+API endpoints don't echo exception details (stack traces, library error messages) back to clients — agent errors return a generic message, and the details are written to the server logs (`data/logs/`). Check the logs or the **Traces** page when something fails.
+
+---
+
+## Dependencies
+
+Security floors are pinned for vulnerable packages: direct dependencies in `pyproject.toml` (e.g. `litellm>=1.84.0`, `mcp>=1.28.1,<2`, `chromadb>=1.5.9`, `Pillow>=12.3.0`, `pypdf>=6.16.1`, `cryptography>=50`) and transitive ones through `[tool.uv] constraint-dependencies`. Keep them current with `update.sh` / `openacm update`, which re-syncs dependencies.
 
 ---
 

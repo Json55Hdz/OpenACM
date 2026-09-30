@@ -143,6 +143,15 @@ tus dispositivos.
   - "pon la luz de la sala al 50% de brillo"
   - "¿cuál es el estado del termostato?"
   - "activa la escena modo noche" (si tienes una escena configurada)
+  - "manda la aspiradora a la base" — para tipos de dispositivo que `ha_control`
+    no cubre (aspiradoras, ventiladores, cerraduras, alarmas…) el agente usa
+    `ha_list_services` para descubrir los servicios del dominio y
+    `ha_call_service` para llamarlos.
+
+Las 8 herramientas del plugin (`ha_devices`, `ha_areas`, `ha_status`,
+`ha_control`, `ha_scenes`, `ha_activate_scene`, `ha_list_services`,
+`ha_call_service`) están documentadas en la
+[referencia de herramientas](./05-tools-reference.md#iot--smart-home-tools-home-assistant-plugin).
 
 ---
 

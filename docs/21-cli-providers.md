@@ -15,8 +15,8 @@ CLI providers let you use these models at no extra cost, authenticated as your o
 ## How it works
 
 1. OpenACM formats the full conversation (messages + tool schemas) as structured text
-2. The text is piped to the CLI binary via `stdin`
-3. The CLI response is parsed — tool calls use `<tool_call>` XML tags
+2. The text is piped to the CLI binary via `stdin` (for `opencode`, only the last user message is passed as an argument)
+3. The CLI response is parsed (plain text, or a JSON event stream for `opencode`) — tool calls use `<tool_call>` XML tags
 4. The result is returned in the same format as any other provider
 
 All existing features work: tool execution, memory, file ops, browser control, cron jobs, etc.
@@ -47,7 +47,15 @@ opencode        # first-run login flow
 
 ### 2. Restart OpenACM
 
-That's it. OpenACM auto-detects binaries on PATH at startup.
+That's it. OpenACM auto-detects binaries on PATH at startup and adds these providers:
+
+| Provider id | Binary | Args |
+|-------------|--------|------|
+| `cli_claude` | `claude` | `--print` |
+| `cli_gemini` | `gemini` | `--yolo -p` |
+| `cli_opencode` | `opencode` | `run --format json` (message as argument, JSONL output) |
+
+`GET /api/cli/status?binary=claude` tells you whether a binary is on PATH.
 
 ```bash
 python -m openacm
@@ -61,7 +69,7 @@ Go to **Settings → Model** — the CLI provider appears automatically with its
 
 ## Advanced: override defaults
 
-To change timeout, args, or any other option, add an explicit entry in `config/default.yaml` under `llm.providers`. The YAML entry takes precedence over auto-detection.
+To change timeout, args, or any other option, add an explicit entry under `llm.providers` in `config/local.yaml`. A configured entry takes precedence over auto-detection.
 
 ```yaml
 llm:
@@ -86,6 +94,8 @@ llm:
 | `args` | Arguments passed to the binary | `["--print"]` |
 | `default_model` | Display name shown in the UI | binary name |
 | `timeout` | Max seconds to wait for a response | `300` |
+| `input_mode` | `stdin` (pipe the whole formatted conversation) or `arg` (pass only the last user message as a positional argument) | `stdin` |
+| `output_format` | `text` or `jsonl` (parse a JSON event stream) | `text` |
 
 ---
 

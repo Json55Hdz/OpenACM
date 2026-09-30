@@ -1,6 +1,10 @@
 # Tools Reference
 
-OpenACM ships with 42+ built-in tools across 10 categories. Tools are Python async functions decorated with `@tool`. They receive injected context (`_sandbox`, `_event_bus`, `_brain`, `_user_id`, `_channel_id`, `_channel_type`) alongside their declared parameters.
+OpenACM ships with 70+ built-in tools. Tools are Python async functions decorated with `@tool`. They receive injected context (`_sandbox`, `_event_bus`, `_brain`, `_user_id`, `_channel_id`, `_channel_type`, `_confirm_callback`) alongside their declared parameters.
+
+Which tools are available depends on what is enabled: the `browser_agent` tool can be turned off with `features.browser_agent: false`, and plugin tools (Home Assistant, Content Automation) exist only while their plugin is enabled. Tools from connected MCP servers are added at runtime. Run `/tools` in the console or open the **Tools** page to see the live list with risk levels.
+
+> The **Risk** shown below is the tool's `risk_level` annotation (low / medium / high). It is informational — the approval prompt of the `confirmation` security mode applies to shell commands run through `run_command`. See [Security](./12-security.md).
 
 ---
 
@@ -8,17 +12,19 @@ OpenACM ships with 42+ built-in tools across 10 categories. Tools are Python asy
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `system` | 2 | OS command execution |
-| `file` | 5 | File system operations |
-| `web` | 2 | Web search and browsing |
-| `media` | 1 | Screen capture |
-| `ai` | 2 | Long-term memory (RAG) |
-| `google` | 7 | Gmail, Calendar, Drive, YouTube |
-| `blender` | 6 | 3D modeling via Blender |
-| `meta` | 5 | Create tools, skills, agents |
+| `general` | `run_command`, `run_python`, `send_file_to_chat`, `create_agent`, `list_agents`, `delete_agent`, `create_or_update_agent_flow`, `stitch_generate_ui` | Core execution and agent management |
+| `system` | `system_info`, `add_resurrection_path`, `save_user_profile`, cron tools, platform tools | OS info and platform self-management |
+| `file` | `read_file`, `write_file`, `list_directory`, `search_files`, `edit_file`, `read_file_range`, `grep_in_files`, `get_file_outline`, `run_linter` | File system and code editing |
+| `web` | `web_search`, `get_webpage`, `browser_agent` | Web search and browsing |
+| `media` | `take_screenshot` | Screen capture |
+| `ai` | `remember_note`, `search_memory`, `save_customer_name` | Long-term memory (RAG) and customer memory |
+| `google` | 8 tools | Gmail, Calendar, Drive, YouTube |
+| `meta` | `create_skill`, `toggle_skill`, `list_skills`, `delete_skill` | Manage skills |
+| `swarm` | `create_swarm`, `start_swarm`, `stop_swarm`, `delete_swarm`, `list_swarms` | Multi-agent swarms |
+| `iot` | 8 tools | Smart home control via the Home Assistant plugin |
+| `content` / `social` | 12 tools | Content Automation plugin (social posts, memes, videos) |
+| `custom_flow` | `flow_<id>` | An agent's active flows (only inside that agent) |
 | `mcp` | dynamic | MCP server tools |
-| `iot` | 7 | Smart home device control via Home Assistant |
-| `general` | 2 | Always-available (system info, file to chat) |
 
 ---
 
@@ -31,18 +37,19 @@ Execute any OS command in the system shell.
 
 ```python
 run_command(
-    command: str,        # The shell command to execute
-    background: bool = False,  # Run without waiting for completion (for servers, tunnels)
-    timeout: int = 120,  # Seconds before forceful termination
+    command: str,                  # The shell command to execute
+    timeout: int = 0,              # Max seconds to wait (0 = no limit). Ignored when background=True
+    working_directory: str = None, # Optional working directory
+    background: bool = False,      # Fire-and-forget (servers, tunnels, watchers)
 )
 ```
 
 **Notes:**
+- Goes through the security policy first: always-blocked patterns, `blocked_patterns`, `blocked_paths`, and the execution mode (`confirmation` asks you, `auto` only allows whitelisted executables, `yolo` runs everything)
 - Always use non-interactive flags: `--yes`, `-y`, `-f` where applicable
 - Use `background=True` for long-running processes (dev servers, tunnels, file watchers)
-- Output is truncated to 50KB
-- Returns combined stdout + stderr
-- CI=true is auto-injected to suppress interactive prompts
+- Output is truncated to `security.max_output_length` (50,000 chars by default)
+- Output streams in real time into the conversation's terminal panel in the dashboard
 
 **Examples:**
 ```
@@ -51,42 +58,38 @@ run_command(
 
 "start a local web server"
 → run_command("python -m http.server 8000", background=True)
-
-"install requests library"
-→ run_command("pip install requests -y")
 ```
 
 ---
 
 ### `run_python`
-Execute Python code in a persistent interactive kernel.
+Execute Python code in a persistent interactive (Jupyter) kernel.
 
-**Risk:** High | **Sandbox:** Yes
+**Risk:** High
 
 ```python
 run_python(
-    code: str,           # Python code to execute
-    timeout: int = 60,   # Execution timeout in seconds
+    code: str,            # Python code to execute (can be multiple lines)
+    reset: bool = False,  # Restart the kernel (clears variables) before execution
 )
 ```
 
 **Notes:**
-- State persists between calls in the same session — imports, variables, and functions survive
+- State persists between calls — imports, variables, and functions survive
 - Has access to all installed packages
-- Can generate files and images
-- Supports async code via `asyncio.run()`
+- Matplotlib plots are captured automatically and sent to the chat as images
 
-**Examples:**
-```
-"calculate the fibonacci sequence up to 1000"
-→ run_python("fibs = [0,1]; [fibs.append(fibs[-1]+fibs[-2]) for _ in range(12)]; print(fibs)")
+---
 
-"generate a bar chart of my file sizes"
-→ run_python("""
-import matplotlib.pyplot as plt
-import os
-...
-""")
+### `system_info`
+Get information about the host system.
+
+**Risk:** Low
+
+```python
+system_info(
+    detail: str = "summary"  # "summary", "cpu", "memory", "disk", "network", "processes", "full"
+)
 ```
 
 ---
@@ -96,25 +99,25 @@ import os
 ### `read_file`
 Read the contents of a file.
 
-**Risk:** Low
+**Risk:** Medium
 
 ```python
 read_file(
-    path: str,           # Absolute or relative file path
-    max_lines: int = 500 # Limit output lines
+    path: str,            # Absolute or relative file path
+    max_lines: int = 500  # 0 = read the entire file
 )
 ```
 
 ### `write_file`
-Create or overwrite a file.
+Create or overwrite a file (parent directories are created automatically).
 
-**Risk:** Medium
+**Risk:** High
 
 ```python
 write_file(
-    path: str,           # File path to write
-    content: str,        # File content
-    mode: str = "w"      # "w" (overwrite) or "a" (append)
+    path: str,            # File path to write
+    content: str,         # File content
+    append: bool = False  # Append instead of overwrite
 )
 ```
 
@@ -125,85 +128,191 @@ List files and directories at a path.
 
 ```python
 list_directory(
-    path: str = ".",     # Directory path
-    recursive: bool = False  # Include subdirectories
+    path: str = ".",          # Directory path
+    show_hidden: bool = False # Include hidden files
 )
 ```
 
 ### `search_files`
-Find files matching a pattern.
+Find files by name pattern in a directory tree.
 
 **Risk:** Low
 
 ```python
 search_files(
-    pattern: str,        # Glob pattern (e.g., "**/*.py", "*.txt")
-    directory: str = "." # Root directory to search from
+    directory: str,       # Root directory to search from
+    pattern: str,         # File name pattern (e.g. "*.py", "config*")
+    max_results: int = 50
 )
 ```
 
 ### `send_file_to_chat`
-Attach a file to the chat response. **Always included in tool selection.**
+Upload a local file so the user can download it from the chat. **Always included in tool selection.**
 
 **Risk:** Low
 
 ```python
 send_file_to_chat(
-    file_path: str,      # Path to the file to send
-    display_name: str = "" # Optional display name for the file
+    path: str             # Path to the file to send
 )
 ```
 
 **Notes:**
 - Must be called after generating a file — the file must exist on disk
-- The frontend automatically renders image previews for `.png`, `.jpg`, `.gif`, `.webp`
+- Returns an `/api/media/...` link; the dashboard renders image previews, and Telegram/Discord/WhatsApp receive the file as an attachment
 - Always call this after generating any output file the user requested
+
+---
+
+## Code Editing Tools
+
+Surgical editing tools for working on source code without rewriting whole files.
+
+### `edit_file`
+Replace an **exact** string in a file. Fails with a clear error if `old_string` is not found or matches more than once.
+
+**Risk:** High
+
+```python
+edit_file(
+    path: str,
+    old_string: str,   # Must match character-for-character, including indentation
+    new_string: str,
+)
+```
+
+### `read_file_range`
+Read a range of lines with line numbers (use it before `edit_file`).
+
+**Risk:** Low
+
+```python
+read_file_range(
+    path: str,
+    start_line: int,     # 1-indexed
+    end_line: int = -1,  # inclusive; -1 = end of file
+)
+```
+
+### `grep_in_files`
+Regex search inside files, with context lines.
+
+**Risk:** Low
+
+```python
+grep_in_files(
+    pattern: str,               # Python regex
+    directory: str = ".",
+    file_pattern: str = "*",    # e.g. "*.py"
+    context_lines: int = 2,
+    case_sensitive: bool = True,
+    max_results: int = 30,
+)
+```
+
+### `get_file_outline`
+Structural outline of a source file (classes, functions, methods with line numbers). Python is parsed with the AST; JavaScript/TypeScript and other languages use regex.
+
+**Risk:** Low
+
+```python
+get_file_outline(path: str)
+```
+
+### `run_linter`
+Run a linter and return diagnostics — `ruff` for Python, `eslint` (if available) for JavaScript/TypeScript.
+
+**Risk:** Medium
+
+```python
+run_linter(
+    path: str,
+    fix: bool = False   # Auto-fix safe issues (ruff --fix)
+)
+```
 
 ---
 
 ## Web Tools
 
 ### `web_search`
-Search the web and return relevant results.
+Search the web with DuckDuckGo.
 
-**Risk:** Low
+**Risk:** Medium
 
 ```python
 web_search(
-    query: str,          # Search query
-    num_results: int = 5 # Number of results to return
+    query: str,
+    max_results: int = 5
 )
 ```
 
 ### `get_webpage`
-Fetch and parse the content of a webpage.
+Fetch a URL and return its readable text (HTML stripped).
 
-**Risk:** Low
+**Risk:** Medium
 
 ```python
 get_webpage(
-    url: str,            # Full URL to fetch
-    extract_text: bool = True  # Extract readable text vs raw HTML
+    url: str,
+    max_length: int = 5000   # Max characters returned
 )
 ```
+
+### `browser_agent`
+Control a persistent, headless Chromium browser (Playwright). The browser stays open between calls, so multi-step navigation works.
+
+**Risk:** High
+
+```python
+browser_agent(
+    action: str,        # "goto", "read_page", "click", "fill", "screenshot", "extract_html"
+    url: str = "",      # for "goto"
+    selector: str = "", # CSS selector for "click", "fill", "extract_html"
+    value: str = "",    # text for "fill"
+)
+```
+
+**Example:**
+```
+"find the price of the first result for 'mechanical keyboard' on example-shop.com"
+→ browser_agent(action="goto", url="https://example-shop.com")
+→ browser_agent(action="fill", selector="input[name=q]", value="mechanical keyboard")
+→ browser_agent(action="click", selector="button[type=submit]")
+→ browser_agent(action="read_page")
+```
+
+Disable it for deployments that don't need it with `features.browser_agent: false`.
 
 ---
 
 ## Media Tools
 
 ### `take_screenshot`
-Capture the current screen.
+Capture the screen and save it as a media file.
 
 **Risk:** Medium
 
 ```python
 take_screenshot(
-    region: str = "full",     # "full" or "x,y,width,height"
-    save_path: str = ""       # Optional custom save path
+    monitor: int = 0    # 0 = all monitors, 1 = primary, 2 = second…
 )
 ```
 
-**Returns:** Path to the saved screenshot file (in workspace). Use `send_file_to_chat` to deliver it.
+**Returns:** Path to the saved screenshot. Use `send_file_to_chat` to deliver it.
+
+### `stitch_generate_ui`
+Generate an HTML UI screen from a description with Google Stitch. Requires `STITCH_API_KEY` in `config/.env`.
+
+**Risk:** Low
+
+```python
+stitch_generate_ui(
+    prompt: str,                    # Detailed description of the UI
+    device: str = "DESKTOP",        # "DESKTOP", "MOBILE", "TABLET"
+    model: str = "GEMINI_3_1_PRO",  # or "GEMINI_3_FLASH"
+)
+```
 
 ---
 
@@ -216,8 +325,7 @@ Store a fact or note in long-term vector memory (RAG).
 
 ```python
 remember_note(
-    content: str,        # Text to store in memory
-    tags: list = []      # Optional tags for organization
+    note: str           # Text to store in memory
 )
 ```
 
@@ -228,305 +336,273 @@ Query long-term vector memory for relevant information.
 
 ```python
 search_memory(
-    query: str,          # What to search for
-    num_results: int = 3 # Number of relevant fragments to return
+    query: str,
+    max_results: int = 5
 )
 ```
 
----
-
-## Browser Agent
-
-### `browser_agent`
-Control a real Chromium browser using Playwright.
-
-**Risk:** High | **Sandbox:** Yes
-
-```python
-browser_agent(
-    task: str,           # Natural language description of what to do in the browser
-    url: str = "",       # Optional starting URL
-    headless: bool = True # Run without showing browser window
-)
-```
-
-**Capabilities:**
-- Navigate to any URL
-- Click buttons, fill forms, select dropdowns
-- Extract text and data from pages
-- Take screenshots of specific elements
-- Wait for dynamic content to load
-- Log in to websites (with credentials provided in the task)
-- Scrape structured data from multiple pages
-
-**Examples:**
-```
-"log into my GitHub and check my notifications"
-→ browser_agent("Go to github.com/login, log in with user 'john' password 'xxx', then check notifications", url="https://github.com")
-
-"find the cheapest iPhone 16 on Amazon"
-→ browser_agent("Search Amazon for iPhone 16, sort by price low to high, return the first 5 results with prices", url="https://amazon.com")
-```
-
----
-
-## System Info Tool
-
-### `system_info`
-Get detailed information about the host system.
+### `save_customer_name`
+Remember the customer's name for this conversation — kept even after an agent's memory TTL resets the context, so the agent can keep greeting them by name.
 
 **Risk:** Low
 
 ```python
-system_info(
-    category: str = "all"  # "cpu", "memory", "disk", "gpu", "battery", "processes", "all"
-)
+save_customer_name(name: str)
 ```
 
-**Returns:** JSON with system stats including:
-- CPU usage, cores, frequency
-- RAM total/used/available
-- Disk partitions and usage
-- GPU info (if available)
-- Battery status (if laptop)
-- Top running processes
+### `save_user_profile`
+Used once during onboarding: saves the user's name, the assistant's name, behavior instructions, grammatical gender and language, and ends onboarding mode.
+
+**Risk:** Low
+
+```python
+save_user_profile(user_name: str, assistant_name: str, behaviors: str, gender: str, language: str)
+```
+
+### `add_resurrection_path`
+Add a folder to [Code Resurrection](./23-code-resurrection.md) indexing.
+
+**Risk:** Low
+
+```python
+add_resurrection_path(path: str)   # absolute path
+```
 
 ---
 
 ## Google Workspace Tools
 
-All Google tools require OAuth2 credentials configured (see [Configuration](./11-configuration.md)).
+All Google tools require OAuth2 credentials (`config/google_credentials.json`, see [Gmail Setup](./GMAIL_SETUP.md)).
 
 ### `gmail_read`
-Read emails from Gmail inbox.
+Read emails from Gmail. **Risk:** Medium
 
 ```python
 gmail_read(
-    max_results: int = 10,     # Number of emails to fetch
-    query: str = "",           # Gmail search query (e.g. "from:boss@company.com")
-    include_body: bool = True  # Include email body text
+    query: str = "",       # Gmail search query (e.g. "from:boss@company.com", "is:unread")
+    max_results: int = 10
 )
 ```
 
 ### `gmail_send`
-Send an email via Gmail.
+Send an email via Gmail. **Risk:** High
 
 ```python
 gmail_send(
-    to: str,             # Recipient email address
-    subject: str,        # Email subject
-    body: str,           # Email body (plain text or HTML)
-    cc: str = "",        # CC recipients (comma-separated)
-    attachments: list = [] # File paths to attach
+    to: str,
+    subject: str,
+    body: str
 )
 ```
 
 ### `calendar_list`
-List Google Calendar events.
+List upcoming Google Calendar events. **Risk:** Low
 
 ```python
 calendar_list(
-    days_ahead: int = 7,       # How many days to look ahead
-    calendar_id: str = "primary" # Calendar to query
+    max_results: int = 10,
+    days_ahead: int = 7
 )
 ```
 
 ### `calendar_create`
-Create a Google Calendar event.
+Create a Google Calendar event. **Risk:** Medium
 
 ```python
 calendar_create(
-    title: str,          # Event title
-    start: str,          # ISO 8601 datetime (e.g. "2025-06-15T14:00:00")
-    end: str,            # ISO 8601 datetime
-    description: str = "", # Event description
-    attendees: list = [] # Email addresses of attendees
+    summary: str,          # Event title
+    start_time: str,       # ISO 8601 (e.g. "2026-06-15T14:00:00")
+    end_time: str,         # ISO 8601
+    description: str = "",
+    location: str = ""
 )
 ```
 
 ### `drive_list`
-List files in Google Drive.
+List files in Google Drive. **Risk:** Low
 
 ```python
 drive_list(
-    folder_id: str = "root",  # Folder to list (default: root)
+    query: str = "",        # e.g. 'name contains "report"', 'mimeType="application/pdf"'
     max_results: int = 20
 )
 ```
 
+### `drive_search`
+Search Drive files by name. **Risk:** Low
+
+```python
+drive_search(name: str)
+```
+
 ### `drive_upload`
-Upload a file to Google Drive.
+Upload a local file to Google Drive. **Risk:** Medium
 
 ```python
 drive_upload(
-    file_path: str,      # Local path to the file
-    folder_id: str = "", # Target folder (default: root)
-    file_name: str = ""  # Override filename
+    file_path: str,
+    folder_id: str = ""   # Target folder (default: root)
 )
 ```
 
 ### `youtube_search`
-Search YouTube for videos.
+Search YouTube for videos. **Risk:** Low
 
 ```python
 youtube_search(
-    query: str,          # Search query
-    max_results: int = 5 # Number of results
+    query: str,
+    max_results: int = 5
 )
 ```
 
 ---
 
-## Blender 3D Tools
+## Agent & Flow Tools
 
-Control Blender via its Python API (`bpy`). Requires Blender installed and in PATH.
-
-### `blender_start`
-Launch Blender in background mode.
+### `create_agent`
+Create an agent. **Risk:** Low
 
 ```python
-blender_start(
-    scene_file: str = "" # Optional .blend file to open
+create_agent(
+    name: str,
+    description: str,
+    system_prompt: str,
+    allowed_tools: str = "none"   # "all", "none", or a JSON list of tool names
 )
 ```
 
-### `blender_exec`
-Execute Python (`bpy`) code in the running Blender instance.
+### `list_agents`
+List all agents with their tool policy and webhook URL. **Risk:** Low
+
+### `delete_agent`
+Delete an agent by ID. **Risk:** High
 
 ```python
-blender_exec(
-    code: str            # Python code using the bpy module
+delete_agent(agent_id: int)
+```
+
+### `create_or_update_agent_flow`
+Create or update one of an agent's [flows](./28-agent-flows.md) by generating its graph directly — this is what the flow editor's chat panel uses.
+
+**Risk:** Low
+
+```python
+create_or_update_agent_flow(
+    name: str,
+    graph_json: dict,        # {"nodes": [...], "edges": [...]}
+    description: str = "",
+    flow_id: int = None,     # update this flow instead of creating a new one
+    agent_id: int = None,    # auto-detected when called inside an agent's chat
 )
 ```
 
-### `blender_run_script`
-Execute a Python script file in Blender.
-
-```python
-blender_run_script(
-    script_path: str     # Path to the .py script file
-)
-```
-
-### `blender_export`
-Export the current Blender scene.
-
-```python
-blender_export(
-    file_path: str,      # Output path (.glb, .obj, .stl, .fbx)
-    format: str = "glb"  # Export format
-)
-```
-
-### `blender_info`
-Get info about the current Blender scene.
-
-```python
-blender_info(
-    detail: str = "summary" # "summary", "objects", "materials", "cameras"
-)
-```
-
-### `blender_stop`
-Close the Blender instance.
-
-```python
-blender_stop()
-```
-
-**Example workflow:**
-```
-"Create a chess pawn in Blender and export it as GLB"
-→ blender_start()
-→ blender_exec("""
-    import bpy
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete()
-    # Create pawn shape...
-""")
-→ blender_export("/workspace/pawn.glb")
-→ blender_stop()
-→ send_file_to_chat("/workspace/pawn.glb")
-```
+The graph must have exactly one `start` node and at least one `end` node; it is validated before saving.
 
 ---
 
-## Meta Tools (Self-Extension)
+## Scheduling Tools (Cron)
 
-### `create_tool`
-Create a new Python tool at runtime.
+See [Cron Scheduler](./19-cron-scheduler.md).
 
-**Risk:** High
+| Tool | Risk | Parameters |
+|------|------|-----------|
+| `list_cron_jobs` | Low | — |
+| `create_cron_job` | Medium | `name`, `cron_expr`, `action_type` (`analyze_patterns` / `run_skill` / `run_routine` / `custom_command` / `send_message`), `action_payload`, `description`, `enabled=True` |
+| `update_cron_job` | Medium | `job_id` + any of `name`, `cron_expr`, `action_type`, `action_payload`, `description` |
+| `toggle_cron_job` | Low | `job_id`, `enabled` (omit to flip) |
+| `trigger_cron_job` | Medium | `job_id` — runs it now and returns the output |
+| `delete_cron_job` | Medium | `job_id` |
 
-```python
-create_tool(
-    name: str,           # Tool identifier (snake_case)
-    description: str,    # What the tool does
-    parameters: dict,    # JSON Schema for parameters
-    code: str,           # Python async function body
-    category: str = "general",  # Tool category
-    apply: bool = False  # False = validate only; True = register live
-)
-```
+---
 
-**Two-phase workflow:**
-1. Call with `apply=False` → validates code, runs tests, shows preview
-2. User confirms → call with `apply=True` → registers in live registry, no restart needed
+## Swarm Tools
+
+See [Swarms](./22-swarms.md).
+
+| Tool | Risk | Parameters |
+|------|------|-----------|
+| `create_swarm` | Medium | `goal`, `name`, `global_model`, `context`, `auto_start=False` |
+| `start_swarm` | Medium | `swarm_id` |
+| `stop_swarm` | Medium | `swarm_id` |
+| `delete_swarm` | High | `swarm_id` |
+| `list_swarms` | Low | — |
+
+---
+
+## Platform Tools
+
+Let the agent manage OpenACM itself from chat.
+
+| Tool | Risk | What it does |
+|------|------|-------------|
+| `get_openacm_config` | Low | Active model, security mode, local router status and other key settings |
+| `switch_llm_model(model)` | Low | Change the active model (LiteLLM string such as `anthropic/claude-sonnet-4-6`) |
+| `update_security_mode(mode)` | Medium | Set `confirmation`, `auto` or `yolo` |
+| `list_mcp_servers` | Low | Configured MCP servers and their status |
+| `add_mcp_server(name, transport, command, args, url, api_key, auto_connect)` | Medium | Add an MCP server (`stdio`, `sse` or `streamable_http`) |
+| `connect_mcp_server(name)` | Medium | Connect and load its tools |
+| `disconnect_mcp_server(name)` | Low | Disconnect and unload its tools |
+| `list_routines` | Low | Routines detected from your activity |
+| `execute_routine(routine_id)` | Medium | Open the apps of a routine |
+
+---
+
+## Skill Tools
 
 ### `create_skill`
-Create a new skill (behavior instruction) as a markdown file.
+Generate a new skill with the LLM. Two phases: a preview first, then `apply=True` after you confirm.
+
+**Risk:** Medium
 
 ```python
 create_skill(
-    name: str,           # Skill name (kebab-case)
-    description: str,    # One-line description
-    content: str,        # Markdown instructions for the LLM
-    category: str = "custom" # Skill category folder
+    name: str,               # kebab-case (e.g. "python-expert")
+    description: str,        # 1-2 sentences
+    use_cases: str,          # 2-3 example scenarios
+    category: str = "custom",# "security", "development", "ai", "custom"
+    apply: bool = False      # True only after the user confirmed the preview
 )
 ```
 
 ### `toggle_skill`
-Enable or disable a skill.
+Activate or deactivate a skill. **Risk:** Low
 
 ```python
-toggle_skill(
-    name: str,           # Skill name
-    active: bool         # True to enable, False to disable
-)
+toggle_skill(name: str)
 ```
 
 ### `list_skills`
-List all available skills.
+List skills and their status. **Risk:** Low
 
 ```python
-list_skills(
-    filter: str = "all"  # "all", "active", "inactive", "builtin", "custom"
-)
+list_skills(show_inactive: bool = True)
 ```
 
 ### `delete_skill`
-Permanently delete a skill.
+Permanently delete a custom skill (built-in skills can only be deactivated). **Risk:** High
 
 ```python
-delete_skill(
-    name: str            # Skill name to delete
-)
+delete_skill(name: str, confirm: bool = False)   # confirm must be True
 ```
 
 ---
 
-## IoT / Smart Home Tools
+## IoT / Smart Home Tools (Home Assistant plugin)
 
-Control smart home devices through a [Home Assistant](https://www.home-assistant.io/) instance — configure the URL and a Long-Lived Access Token from `/plugins`. No per-vendor setup in OpenACM: Home Assistant's own integrations (Tuya, Xiaomi, LG WebOS, and hundreds more) already normalize every device behind one API.
+Control smart home devices through a [Home Assistant](https://www.home-assistant.io/) instance — configure the URL and a Long-Lived Access Token from `/plugins` (see [Home Assistant Setup](./HOME_ASSISTANT_SETUP.md)). No per-vendor setup in OpenACM: Home Assistant's own integrations (Tuya, Xiaomi, LG WebOS, and hundreds more) already normalize every device behind one API.
 
 ### `ha_devices`
-List entities, optionally filtered by domain.
+List entities, optionally filtered by domain and/or area.
 
 ```python
 ha_devices(
-    domain: str = ""     # e.g. "light", "switch", "climate", "cover", "media_player", "vacuum"
+    domain: str = "",   # e.g. "light", "switch", "climate", "cover", "media_player", "vacuum"
+    area: str = ""      # e.g. "Sala" — see ha_areas()
 )
 ```
+
+### `ha_areas`
+List Home Assistant areas/rooms.
 
 ### `ha_status`
 Get the current state and attributes of one entity — by exact `entity_id` or friendly name.
@@ -542,31 +618,33 @@ Control one or more entities, or a whole Home Assistant area, in one call.
 
 ```python
 ha_control(
-    entity_id: str | list = None,  # single id, list of ids, or omit if using `area`
     action: str,                    # turn_on, turn_off, toggle, set_brightness, set_color_temp,
-                                     # set_temperature, open, close, stop, set_volume
-    area: str = "",                  # area name — only with turn_on/turn_off/toggle
+                                     # set_color, set_temperature, open, close, stop, set_volume
+    entity_id: str | list = None,   # single id, list of ids, or omit if using `area`
+    area: str = "",                  # area id/slug — only with turn_on/turn_off/toggle
     brightness: int = None,          # 0-100, for set_brightness
     kelvin: int = None,              # 2000-6500, for set_color_temp
+    red: int = None, green: int = None, blue: int = None,  # 0-255, for set_color
     temperature: float = None,       # for set_temperature
     volume: float = None,            # 0.0-1.0, for set_volume
 )
 ```
 
-### `ha_scenes`
-List scenes available to activate.
-
-```python
-ha_scenes()
-```
-
-### `ha_activate_scene`
-Activate a scene by name.
+### `ha_scenes` / `ha_activate_scene`
+List scenes, and activate one by name.
 
 ```python
 ha_activate_scene(
     name: str             # e.g. "Modo Noche"
 )
+```
+
+### `ha_list_services` / `ha_call_service`
+For device types `ha_control` doesn't cover (vacuum, fan, lock, alarm panel, humidifier…): discover a domain's services, then call one directly. `ha_call_service` is Medium risk.
+
+```python
+ha_list_services(domain: str)                                  # e.g. "vacuum"
+ha_call_service(entity_id: str, service: str, data: dict = {}) # e.g. service="return_to_base"
 ```
 
 **Example:**
@@ -579,6 +657,27 @@ ha_activate_scene(
 → ha_control(entity_id="cover.sala", action="close")
 → ha_activate_scene("Modo Noche")
 ```
+
+---
+
+## Content & Social Tools (Content Automation plugin)
+
+| Tool | Risk | What it does |
+|------|------|-------------|
+| `capture_content_moment` | Low | Screenshot the current moment, analyse it with vision and queue post drafts for approval |
+| `generate_content_for_moment` | Low | Generate drafts for an already-captured moment |
+| `list_content_moments` | Low | List captured moments (optionally by date) |
+| `generate_meme` | Low | Meme image, `local` (Pillow) or `api` mode |
+| `create_slideshow_video` | Medium | MP4 slideshow from images (ffmpeg) |
+| `check_content_deps` | Medium | Check/install Pillow, ffmpeg, praw |
+| `queue_content_for_approval` | Low | Manually queue a post |
+| `list_pending_approvals` | Low | Posts waiting for approval |
+| `save_social_credentials` | Medium | Store Facebook Page / Reddit credentials |
+| `verify_social_credentials` | Low | Test stored credentials |
+| `post_to_facebook` | High | Publish to a Facebook Page |
+| `post_to_reddit` | High | Submit to a subreddit |
+
+Nothing is published automatically — drafts wait for your approval on the **Content** page.
 
 ---
 
@@ -602,20 +701,12 @@ See [MCP Integration](./13-mcp.md) for setup instructions.
 
 ---
 
+## Tool modules that are not registered by default
+
+`src/openacm/tools/` also contains `tool_creator.py` (`create_tool`, `edit_tool`, `delete_tool`), `list_tools.py` (`list_tools`) and `set_workspace.py` (`set_workspace`). In v0.4.7 these modules are **not** registered at startup (`app.py` does not call `register_module` on them), so the LLM cannot call them. Pinning a working directory is available through the `/workspace` slash command instead.
+
+---
+
 ## Creating Custom Tools
 
-You can ask OpenACM to create a new tool for itself:
-
-```
-You: Create a tool called "weather" that fetches the current weather for a given city using the Open-Meteo API (no API key required)
-```
-
-OpenACM will:
-1. Write the Python async function
-2. Validate it (syntax, imports, security)
-3. Show you a preview and ask for confirmation
-4. Register it live in the tool registry
-
-The tool is immediately available for subsequent requests without restarting.
-
-See [Extending OpenACM](./17-extending.md) for the full guide.
+Add a module with `@tool`-decorated async functions to `src/openacm/tools/` and register it in `app.py`, or ship it inside a [plugin](./24-plugins.md) (`get_tool_modules()`), which needs no core changes. See [Extending OpenACM](./17-extending.md) for the full guide.

@@ -1,127 +1,136 @@
 # Dashboard
 
-The OpenACM dashboard is a built-in web interface available at `http://127.0.0.1:47821` (or whatever host/port you configure). It requires no extra setup — it starts with OpenACM.
+The OpenACM dashboard is a built-in web interface available at `http://127.0.0.1:47821` (or whatever host/port you configure). It requires no extra setup — it starts with OpenACM. It is a Next.js app exported to static files and served by the FastAPI server.
 
 ---
 
 ## Accessing the Dashboard
 
-1. Start OpenACM: `python -m openacm`
+1. Start OpenACM (`openacm start`, `run.bat` / `./run.sh`, or `python -m openacm`)
 2. Open your browser to `http://127.0.0.1:47821`
-3. If a `DASHBOARD_TOKEN` is set in your config, you'll be prompted to enter it on first load
+3. Enter the dashboard token printed in the terminal (also stored as `DASHBOARD_TOKEN` in `config/.env`)
 
-The token is stored in your browser's `localStorage` and is checked automatically on all API calls.
+The token is stored in your browser and sent automatically on all API calls and WebSocket connections. On a fresh install you are taken to the **Onboarding** wizard to choose an LLM provider.
 
 ---
 
 ## Pages Overview
+
+The sidebar shows the core pages plus items contributed by enabled plugins. With a [client profile](./11-configuration.md#client-deployments-features-and-client_profile) active, only the allowed pages are shown.
+
+### Dashboard
+
+Real-time overview:
+- **Token Analytics** — tokens and cost over a selectable date range, by model
+- **Stats cards** — requests, tokens, tool calls, conversations, current provider/model
+- **Live events** and recent files
+
+---
 
 ### Chat
 
 The primary interface. Full-featured chat with the OpenACM agent.
 
 **Features:**
-- **Real-time streaming** — responses appear word-by-word as generated
+- **Live responses** — partial text appears while tools run, plus a thinking indicator and (for reasoning models) the model's reasoning
 - **Cancel button** — while the agent is thinking, the send button turns into a red ✕ button; clicking it cancels the current request immediately
-- **Conversation sidebar** — all past conversations listed on the left
+- **Conversation sidebar** — web conversations, external-channel conversations (Telegram, WhatsApp, Discord, with channel icons) and **one folder per agent**; folders remember whether they are open or collapsed, and long lists are paginated
 - **New conversation** — each session gets a unique ID; history persists
-- **New conversation badge** — conversations with no messages show a "New" indicator
-- **Delete conversation** — hover over a conversation in the sidebar to reveal the delete button (external channel conversations only)
+- **Delete conversation** — hover over a conversation in the sidebar to reveal the delete button
 - **Tool execution log** — toggle to see each tool call and its result inline
-- **File uploads** — drag-and-drop or click to attach images, PDFs, audio, text files
+- **Command approvals** — in `confirmation` mode, commands the agent wants to run pop up for approve/deny
+- **File uploads** — drag-and-drop or click to attach images, PDFs, audio, Office documents, text files
 - **Image preview** — images sent by the agent render inline with a download button
-- **Encryption badge** — a lock icon in the sidebar header when messages are encrypted at rest
-- **Model indicator** — shows current provider and model in the chat header
+- **Terminal panel** — a real interactive shell per conversation that also shows the AI's commands and their live output
+- **Encryption badge** — a lock icon when messages are encrypted at rest
+- **Context indicator** — live context-window usage
+- **Model indicator** — shows current provider and model
 
 **Slash commands** (type in the chat input):
 ```
+/new                          Start a fresh conversation
+/reset                        Emergency reset of this conversation's memory
+/compact                      Summarize the conversation now
 /model ollama/llama3.2        Switch to a different model mid-conversation
-/model anthropic/claude-opus-4-6
-/new                          Start a fresh conversation (equivalent to new chat)
-/models                       List available models
-/tools                        List available tools
-/config                       Show current configuration
+/stats                        Token usage and request counts
+/export                       Export the conversation
+/workspace <path>|clear       Pin or clear the working directory
 /help                         Show all commands
 ```
 
 **File upload behavior:**
 - Images → sent as vision input to the LLM (if model supports it)
-- Audio/voice → transcribed via Whisper and injected as text
-- Documents (PDF, text) → content extracted and added to context
+- Audio/voice → transcribed (OpenAI Whisper API, local faster-whisper, or MarkItDown) and injected as text
+- Documents (PDF, Office, text) → content extracted (Docling / pypdf / MarkItDown) and added to context
 
 ---
 
-### Dashboard (Stats)
+### Swarms
 
-Go to **Dashboard** in the left navigation.
-
-**Activity Chart** — Token usage over time (last 7/30 days). Shows prompt tokens vs. completion tokens as a bar chart.
-
-**Stats Cards:**
-- Total messages processed
-- Total tokens used (prompt + completion)
-- Total tool calls executed
-- Average response time (ms)
-- Current model (provider + model name)
-
-**LLM Call Log** — Recent LLM requests with model, token counts, and elapsed time.
+Create a swarm from a goal (optionally with context files), answer the clarification questions, review the planned team and tasks, start/pause it, change worker models, and follow the activity feed in real time. See [Swarms](./22-swarms.md).
 
 ---
 
-### Agents
+### Daemon
 
-Go to **Agents** in the left navigation.
+Controls the always-on **voice daemon**: engine status and missing dependencies (with an install button), microphone selection, wake word / assistant name, TTS provider and voice, enable/disable voice, and the animated companion skins. See [Voice](./30-voice.md).
 
-Lists all sub-agents with their name, description, allowed tools, and (optional) Telegram bot status.
+---
 
-**Actions:**
-- **New Agent** → form to create a new agent (name, description, system prompt, tool whitelist, Telegram token)
-- **Edit** → modify an existing agent
-- **Delete** → remove an agent
-- **Test** → send a test message to an agent and see its response
+### Routines
+
+Activity-watcher status (current app, hours monitored, sessions, top apps) and the routines detected by the pattern analyzer.
+
+**For each routine:**
+- Name and description (LLM-generated)
+- App list
+- Trigger type (`time_based` or `manual`), time and days
+- Confidence score and occurrence count
+
+**Actions:** **Analyze now**, run, activate/deactivate (activating a time-based routine schedules a cron job), edit, delete; start/stop the watcher.
+
+---
+
+### Cron
+
+Create jobs with a cron expression (with presets and a human-readable preview), choose the action, run a job now, enable/disable it, and browse the execution history. See [Cron Scheduler](./19-cron-scheduler.md).
 
 ---
 
 ### Tools
 
-Go to **Tools** in the left navigation.
-
-Lists all registered tools (built-in + runtime-created + MCP) grouped by category.
-
-**For each tool:**
-- Name, description, category, risk level
-- Parameter schema
-- Source (built-in, runtime, or MCP server name)
-
-**Create Tool button** → opens an interface to create a new runtime tool (delegates to the `create_tool` agent command).
+Lists all registered tools (built-in, plugin and MCP) with name, description, category, risk level and parameter schema, plus the **Execution log** (arguments, result, timing, success) of recent tool calls.
 
 ---
 
 ### Skills
 
-Go to **Skills** in the left navigation.
+Lists all skills with category and active status. Create a skill manually (name, description, category, content) or describe the skill you need and let the LLM generate it; edit, toggle and delete skills. See [Skills System](./06-skills-system.md).
 
-Lists all skills in the `skills/` directory organized by subdirectory.
+---
 
-**For each skill:**
-- Name, file path, description (extracted from markdown heading)
-- Active/inactive status (whether it was injected in the last request)
+### Agents
 
-**Create Skill button** → delegates to the `create_skill` tool.
+Lists agents; create one manually or generate it from a description. Each agent has tabs for:
+- **Config** — name, description, system prompt, **Tools access** (all / none), **Memory** policy (persistent or reset after N hours), inactivity follow-up, show in chat
+- **Knowledge** — text entries and uploaded files
+- **Channels** — Telegram, WhatsApp Business (Cloud API) or WhatsApp Web bridge, with connection status and restart
+- **Herramientas** (Tools) — pick exactly which tools the agent may use, grouped by category
+- **Skills** — enable system skills for this agent, or generate private ones
+- **Flujos** (Flows) — list, create, import/export and activate flows; opens the visual **flow editor** with an inspector, WooCommerce connections, a test panel ("Probar flujo") and a chat panel that builds the flow for you
+
+See [Agents](./07-agents.md) and [Agent Flows](./28-agent-flows.md).
 
 ---
 
 ### MCP
-
-Go to **MCP** in the left navigation.
 
 Lists all configured MCP servers with their connection status.
 
 **For each server:**
 - Name, transport type, command/URL
 - Connected/Disconnected status with error message if failed
-- Number of tools exposed
-- Tool list (expandable)
+- Tool list
 
 **Actions:**
 - **Add Server** → form to register a new MCP server
@@ -130,147 +139,49 @@ Lists all configured MCP servers with their connection status.
 
 ---
 
-### Config
+### Connectors
 
-Go to **Config** in the left navigation.
-
-**Current Model** — Dropdown to switch the active LLM provider and model. Change persists across restarts.
-
-**Custom Providers** — Add, edit, and remove custom OpenAI-compatible LLM endpoints.
-
-**Security** — Shows current execution mode (`sandbox`, `confirm`, `direct`) and allows changing it.
-
-**System Prompt** — View and edit the assistant's custom system prompt from the dashboard.
+Lists [webhook connectors](./29-webhook-connectors.md) with their public URL (`/api/webhooks/{slug}`) and auth scheme, lets you turn each one on/off, and shows its activity log (received time, status, result). Connectors are created through the API.
 
 ---
 
-### Routines
+### Traces
 
-Go to **Routines** in the left navigation.
-
-Displays patterns detected by the Activity Watcher's Pattern Analyzer.
-
-**For each routine:**
-- Name and description (LLM-generated)
-- App list with process names
-- Trigger type (`time_based` or `manual`)
-- Trigger time and days
-- Confidence score (0–100%)
-- Occurrence count (how many times detected)
-
-**Actions:**
-- **Analyze now** → trigger a fresh pattern analysis
-- **Delete** → remove a routine
-- **Toggle active** → enable/disable a routine
+The loop debugger: for each recent request, every agentic iteration with message count, context size, LLM time, tool calls and their timings, and the outcome (success / error / timeout).
 
 ---
 
-### Activity
+### Configuration
 
-Go to **Activity** in the left navigation (if enabled in config).
+- **Assistant Identity** — name and personality
+- **Model** — active provider/model and per-model parameters; **Custom Providers** (OpenAI-compatible endpoints); CLI providers
+- **Voice Interface** — wake word, TTS provider and language
+- **Memory & RAG** — RAG relevance threshold, compaction ratio / keep-recent, memory stats and wipe
+- **Local Intent Router** — enable/disable and confidence threshold
+- **WhatsApp** — Cloud API credentials or bridge URL
+- **Google Services** — upload OAuth credentials and authorize Gmail/Calendar/Drive/YouTube
+- **Google Stitch** — API key for UI generation
+- **Security** — execution mode (`confirmation`, `auto`, `yolo`), debug logging
+- **Code Resurrection** — folders to index
+- **Advanced** — raw config view
 
-Shows the current Activity Watcher status and recent app focus sessions.
+---
 
-**Current App** — Real-time display of the currently focused application.
+### Plugins
 
-**Recent Sessions** — Table of the last N app focus records:
-- App name and window title
-- Focus duration
-- Timestamp
+Every discovered plugin with an enable/disable toggle (applies after restart — a banner offers to restart), a settings form for plugins that declare a config schema, and a button that opens a plugin's own dashboard embedded inside the app (`/plugins/view`). See [Plugins](./24-plugins.md).
 
-**Watcher controls:**
-- **Start / Stop** — toggle the background watcher
+### Plugin pages
+
+- **Gmail** (`/gmail-classifier`) — [Gmail Classifier](./31-gmail-classifier.md)
+- **Home Assistant** (`/home-assistant`) — devices grouped by type with live state, areas and scenes
+- **Content** (`/content`) — approve or reject social posts queued by the Content Automation plugin
 
 ---
 
 ## WebSocket Protocol
 
-The chat interface communicates with the backend via three WebSocket connections:
-
-### Chat WebSocket
-```
-ws://127.0.0.1:47821/ws/chat?token=<your_token>
-```
-
-Client sends a message:
-```json
-{
-  "message": "What's my disk usage?",
-  "target_user_id": "web",
-  "target_channel_id": "web"
-}
-```
-
-Client cancels the current request:
-```json
-{
-  "type": "cancel",
-  "target_user_id": "web",
-  "target_channel_id": "web"
-}
-```
-
-Server sends:
-```json
-{"type": "response", "content": "Your disk usage is 87% full.", "attachments": []}
-```
-
-### Events WebSocket
-```
-ws://127.0.0.1:47821/ws/events?token=<your_token>
-```
-
-Server-only stream of real-time events (tool calls, thinking status, skill activation, memory recall). See `10-api-reference.md` for the full event type list.
-
-### Terminal WebSocket
-```
-ws://127.0.0.1:47821/ws/terminal?token=<your_token>&channel=<channel_id>
-```
-
-A **real interactive PTY shell** — one persistent session per chat channel. The terminal panel in the dashboard connects here. Powered by xterm.js on the frontend and `pywinpty` (Windows) / `pty` (Linux/Mac) on the backend.
-
-**Key behaviors:**
-- The shell session **persists** across WS reconnects — SSH connections, running servers, and shell state are preserved
-- Each chat channel (`web`, `telegram-xxx`, etc.) gets its own isolated shell
-- Supports full ANSI colors, the current path in the prompt (`PS1`), tab completion, and Ctrl+C
-- When the AI runs `run_command`, its output streams directly into the correct channel's terminal in real time
-
-Client sends:
-```json
-{"type": "input",  "data": "ls -la\n"}
-{"type": "signal", "data": "SIGINT"}
-{"type": "resize", "cols": 220, "rows": 50}
-```
-
-Server sends:
-```json
-{"type": "output",      "data": "\u001b[32muser@host\u001b[0m:/home$ "}
-{"type": "ai_command",  "tool": "run_command", "data": "npm install"}
-{"type": "ai_output",   "tool": "run_command", "data": "added 142 packages"}
-{"type": "exit",        "data": "shell process exited"}
-{"type": "error",       "data": "Failed to start shell: ..."}
-```
-
----
-
-## Authentication
-
-If `DASHBOARD_TOKEN` is set, all `/api/` endpoints require:
-```
-Authorization: Bearer <token>
-```
-
-Or via query string:
-```
-GET /api/stats?token=<token>
-```
-
-WebSocket connections pass the token as a query parameter:
-```
-ws://127.0.0.1:47821/ws/chat?token=<token>
-```
-
-The token is checked against the configured value. There is no user management — all valid tokens have full access.
+The dashboard communicates with the backend via WebSockets (`/ws/chat`, `/ws/events`, `/ws/terminal`, `/ws/swarms/{id}`), all authenticated with `?token=`. Message formats are documented in the [API Reference](./10-api-reference.md#websocket-chat-wschat).
 
 ---
 
@@ -279,16 +190,16 @@ The token is checked against the configured value. There is no user management �
 By default, the dashboard binds to `127.0.0.1` (localhost only). To expose it on a network:
 
 ```yaml
-# config/default.yaml
-server:
+# config/local.yaml
+web:
   host: "0.0.0.0"
   port: 47821
 ```
 
 **If exposing to a network:**
-1. Set a strong `DASHBOARD_TOKEN` in `config/.env`
-2. Put the server behind a reverse proxy (nginx, Caddy) with HTTPS
+1. Keep `DASHBOARD_TOKEN` secret (it is the only credential — there is no user management)
+2. Put the server behind a reverse proxy (nginx, Caddy, Nginx Proxy Manager) with HTTPS and WebSocket support
 3. Restrict access by IP at the network level
-4. Do not expose it to the public internet without authentication
+4. Do not expose it to the public internet without HTTPS
 
-The dashboard has full agent access — anyone with the token can execute tools, read files, and run commands on your machine.
+The dashboard has full agent access — anyone with the token can execute tools, read files, and run commands on your machine. See [Deploy on a VPS](./DEPLOY_VPS.md).

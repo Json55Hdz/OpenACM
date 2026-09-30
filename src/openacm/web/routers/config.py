@@ -298,7 +298,7 @@ def register_routes(app: FastAPI) -> None:
             return HTMLResponse(f"""
             <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#f87171">
             <h2>❌ Token Exchange Failed</h2>
-            <p>{e}</p>
+            <p>Check the OpenACM server logs for details.</p>
             <p>You can close this tab.</p>
             </body></html>""")
 

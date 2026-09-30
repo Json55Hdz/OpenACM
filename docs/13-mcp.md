@@ -32,6 +32,13 @@ OpenACM supports three MCP transport types:
 ### Via Dashboard
 Go to **MCP** → **Add Server** and fill in the form. Click **Connect** to activate immediately.
 
+### Via Chat
+The agent has platform tools for this — `add_mcp_server`, `connect_mcp_server`, `disconnect_mcp_server`, `list_mcp_servers`:
+
+```
+You: Add the filesystem MCP server for /home/me/projects and connect it
+```
+
 ### Via `config/mcp_servers.json`
 
 ```json
@@ -106,15 +113,15 @@ Go to **MCP** → click **Connect** / **Disconnect** per server. Connected serve
 ```bash
 # Connect
 curl -X POST http://localhost:47821/api/mcp/servers/filesystem/connect \
-  -H "Authorization: Bearer acm_xxx"
+  -H "Authorization: Bearer <dashboard-token>"
 
 # Disconnect
 curl -X POST http://localhost:47821/api/mcp/servers/filesystem/disconnect \
-  -H "Authorization: Bearer acm_xxx"
+  -H "Authorization: Bearer <dashboard-token>"
 
 # Status
 curl http://localhost:47821/api/mcp/servers \
-  -H "Authorization: Bearer acm_xxx"
+  -H "Authorization: Bearer <dashboard-token>"
 ```
 
 Response from status:
@@ -184,7 +191,7 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Register it in OpenACM:
+Register it in OpenACM (an entry of the `servers` array in `config/mcp_servers.json`, or the same fields in the dashboard form):
 ```json
 {
   "name": "stocks",

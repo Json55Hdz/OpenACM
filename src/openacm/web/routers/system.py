@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
+from openacm.security.auth import tokens_match
 from openacm.web.state import _state
 from openacm.web.broadcast import broadcast_event, _safe_ws_send, _broadcast_to_terminal, _verify_ws_token
 from openacm.web.server import _get_version, _load_custom_providers, _save_custom_providers, _apply_custom_providers, _make_provider_id, _get_custom_providers_path
@@ -84,7 +85,7 @@ def register_routes(app: FastAPI) -> None:
             if not token:
                 token = request.query_params.get("token")
 
-            if not token or token != _dashboard_token:
+            if not tokens_match(token, _dashboard_token):
                 return JSONResponse(
                     status_code=401, content={"error": "Unauthorized. Provide a valid token."}
                 )
@@ -104,14 +105,14 @@ def register_routes(app: FastAPI) -> None:
         """Verify a dashboard token is valid."""
         data = await request.json()
         token = data.get("token", "")
-        if _dashboard_token and token == _dashboard_token:
+        if tokens_match(token, _dashboard_token):
             return {"valid": True}
         return JSONResponse(status_code=401, content={"valid": False})
 
     @app.get("/api/auth/check")
     async def check_auth_get(token: str = ""):
         """Verify a dashboard token via GET."""
-        if _dashboard_token and token == _dashboard_token:
+        if tokens_match(token, _dashboard_token):
             return {"valid": True}
         return JSONResponse(status_code=401, content={"valid": False})
 
@@ -146,7 +147,8 @@ def register_routes(app: FastAPI) -> None:
             path = await loop.run_in_executor(None, _open_picker)
             return {"path": path}
         except Exception as exc:
-            return {"path": "", "error": str(exc)}
+            log.warning("Directory picker failed", error=str(exc))
+            return {"path": "", "error": "Could not open the directory picker on this host"}
 
     @app.get("/api/system/info")
     async def system_info():
@@ -508,7 +510,8 @@ def register_routes(app: FastAPI) -> None:
                 err = r.json().get("error", {}).get("message", r.text[:200])
                 return {"ok": False, "message": err}
             except Exception as exc:
-                return {"ok": False, "message": str(exc)}
+                log.warning("Social credential test failed", platform=platform, error=str(exc))
+                return {"ok": False, "message": "Could not reach the Facebook API — check the server logs"}
 
         elif platform == "reddit":
             try:
@@ -526,7 +529,8 @@ def register_routes(app: FastAPI) -> None:
             except ImportError:
                 return {"ok": False, "message": "praw not installed — run: pip install praw"}
             except Exception as exc:
-                return {"ok": False, "message": str(exc)[:300]}
+                log.warning("Social credential test failed", platform=platform, error=str(exc))
+                return {"ok": False, "message": "Reddit authentication failed — check the server logs"}
 
     @app.delete("/api/social/credentials/{platform}")
     async def delete_social_credentials(platform: str):
