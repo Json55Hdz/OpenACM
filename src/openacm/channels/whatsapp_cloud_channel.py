@@ -45,6 +45,19 @@ def recipient_fields(target_id: str) -> dict[str, str]:
     return {"recipient": target_id} if _BSUID_RE.match(target_id) else {"to": target_id}
 
 
+def is_bsuid(target_id: str) -> bool:
+    return bool(_BSUID_RE.match(target_id))
+
+
+def contact_display_name(value: dict[str, Any], user_id: str) -> str:
+    """Profile name (or username) Meta sent for `user_id` in this webhook value."""
+    for contact in value.get("contacts") or []:
+        if user_id in (contact.get("user_id"), contact.get("wa_id")):
+            profile = contact.get("profile") or {}
+            return (profile.get("name") or profile.get("username") or "").strip()
+    return ""
+
+
 def verify_signature(app_secret: str, raw_body: bytes, header: str) -> bool:
     """Validate Meta's X-Hub-Signature-256 header against the raw request body.
 
@@ -219,10 +232,22 @@ class WhatsAppCloudChannel(BaseChannel):
                 )
                 continue
 
+            if is_bsuid(sender):
+                # No phone number to show in the UI: use the WhatsApp profile name.
+                name = contact_display_name(value, sender)
+                if name:
+                    try:
+                        await self._remember_contact_name(sender, name)
+                    except Exception as exc:
+                        log.warning("WhatsApp contact name save failed", error=str(exc))
+
             try:
                 await self._respond(sender, content)
             except Exception as exc:
                 log.error("WhatsApp message processing error", error=str(exc))
+
+    async def _remember_contact_name(self, sender: str, name: str):
+        """Hook: persist a display name for a sender. No-op for the Brain channel."""
 
     async def _deliver(self, sender: str, response: str):
         """Parse ATTACHMENT: lines and send text + media to sender."""

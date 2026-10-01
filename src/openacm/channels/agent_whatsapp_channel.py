@@ -100,6 +100,16 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
         if target_id and text:
             await self._deliver(target_id, text)
 
+    async def _remember_contact_name(self, sender: str, name: str):
+        """Seed the customer name from the WhatsApp profile, never overwriting a saved one."""
+        db = self.agent_runner.database
+        if not db:
+            return
+        scoped_uid = f"a{self.agent['id']}_wa_{sender}"
+        if await db.get_customer_name(scoped_uid, sender):
+            return
+        await db.set_customer_name(scoped_uid, sender, name)
+
     async def _respond(self, sender: str, content: str):
         """Route to AgentRunner with scoped user_id for memory isolation."""
         scoped_uid = f"a{self.agent['id']}_wa_{sender}"

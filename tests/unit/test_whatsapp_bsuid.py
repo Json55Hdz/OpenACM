@@ -64,3 +64,71 @@ class TestBsuidFlow:
         payload = ch._http.post.call_args.kwargs["json"]
         assert payload["to"] == "573234677424"
         assert "recipient" not in payload
+
+
+def _bsuid_value(name="Maria", user_id="CO.1640468054141646"):
+    return {
+        "contacts": [{"user_id": user_id, "profile": {"name": name, "username": "maria_x"}}],
+        "messages": [{"from_user_id": user_id, "id": "wamid.n", "type": "text", "text": {"body": "hola"}}],
+    }
+
+
+class TestContactName:
+    def test_display_name_prefers_profile_name_then_username(self):
+        from openacm.channels.whatsapp_cloud_channel import contact_display_name
+        assert contact_display_name(_bsuid_value(), "CO.1640468054141646") == "Maria"
+        assert contact_display_name(_bsuid_value(name=""), "CO.1640468054141646") == "maria_x"
+        assert contact_display_name(_bsuid_value(), "CO.other") == ""
+
+    async def test_bsuid_sender_seeds_name_when_none_saved(self):
+        ch, runner = _make_channel()
+        db = MagicMock()
+        db.get_customer_name = AsyncMock(return_value=None)
+        db.set_customer_name = AsyncMock()
+        runner.database = db
+        ch._deliver = AsyncMock()
+
+        await ch.handle_incoming(_bsuid_value())
+
+        db.set_customer_name.assert_awaited_once_with(
+            "a7_wa_CO.1640468054141646", "CO.1640468054141646", "Maria"
+        )
+
+    async def test_existing_saved_name_is_not_overwritten(self):
+        ch, runner = _make_channel()
+        db = MagicMock()
+        db.get_customer_name = AsyncMock(return_value="Mariana")
+        db.set_customer_name = AsyncMock()
+        runner.database = db
+        ch._deliver = AsyncMock()
+
+        await ch.handle_incoming(_bsuid_value())
+
+        db.set_customer_name.assert_not_awaited()
+
+    async def test_phone_sender_does_not_touch_names(self):
+        ch, runner = _make_channel()
+        db = MagicMock()
+        db.get_customer_name = AsyncMock(return_value=None)
+        db.set_customer_name = AsyncMock()
+        runner.database = db
+        ch._deliver = AsyncMock()
+        value = {
+            "contacts": [{"wa_id": "573234677424", "profile": {"name": "Pedro"}}],
+            "messages": [{"from": "573234677424", "id": "wamid.p", "type": "text", "text": {"body": "hola"}}],
+        }
+
+        await ch.handle_incoming(value)
+
+        db.set_customer_name.assert_not_awaited()
+
+    async def test_name_save_failure_does_not_block_reply(self):
+        ch, runner = _make_channel()
+        db = MagicMock()
+        db.get_customer_name = AsyncMock(side_effect=RuntimeError("db down"))
+        runner.database = db
+        ch._deliver = AsyncMock()
+
+        await ch.handle_incoming(_bsuid_value())
+
+        ch._deliver.assert_awaited_once()
