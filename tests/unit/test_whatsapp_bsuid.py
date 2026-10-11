@@ -132,3 +132,60 @@ class TestContactName:
         await ch.handle_incoming(_bsuid_value())
 
         ch._deliver.assert_awaited_once()
+
+
+class TestSendMediaFriendlyName:
+    """send_file_to_chat embeds a display name after '__'; WhatsApp must show it."""
+
+    async def test_document_uses_friendly_name_and_pdf_mime(self, tmp_path, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from openacm.channels.whatsapp_cloud_channel import WhatsAppCloudChannel
+
+        fpath = tmp_path / f"upload_{'a' * 32}__Formato_de_recepcion_de_garantia.pdf"
+        fpath.write_bytes(b"%PDF-1.4 test")
+        monkeypatch.setattr("openacm.security.crypto.decrypt_file", lambda p: p.read_bytes())
+
+        ch = WhatsAppCloudChannel.__new__(WhatsAppCloudChannel)
+        ch.config = MagicMock(phone_number_id="123")
+        up = MagicMock(status_code=200)
+        up.json.return_value = {"id": "MEDIA1"}
+        ch._http = MagicMock()
+        ch._http.post = AsyncMock(side_effect=[up, MagicMock(status_code=200)])
+
+        assert await ch._send_media("573001112233", fpath, "") is True
+
+        upload_call, send_call = ch._http.post.await_args_list
+        assert upload_call.kwargs["files"]["file"][0] == "Formato_de_recepcion_de_garantia.pdf"
+        assert upload_call.kwargs["files"]["file"][2] == "application/pdf"
+        assert send_call.kwargs["json"]["document"]["filename"] == "Formato_de_recepcion_de_garantia.pdf"
+
+
+class TestDeliverLongReplyWithAttachment:
+    """A caption over Meta's 1024-char limit would drop the file; send the text first instead."""
+
+    async def _run(self, tmp_path, monkeypatch, text):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from openacm.channels.whatsapp_cloud_channel import WhatsAppCloudChannel
+
+        media = tmp_path / "data" / "media"
+        media.mkdir(parents=True)
+        (media / "upload_x.pdf").write_bytes(b"%PDF")
+        monkeypatch.setenv("OPENACM_PROJECT_ROOT", str(tmp_path))
+
+        ch = WhatsAppCloudChannel.__new__(WhatsAppCloudChannel)
+        ch.send_message = AsyncMock(return_value=True)
+        ch._send_media = AsyncMock(return_value=True)
+        await ch._deliver("573001112233", f"ATTACHMENT:upload_x.pdf\n{text}")
+        return ch
+
+    async def test_long_text_goes_first_and_file_has_no_caption(self, tmp_path, monkeypatch):
+        ch = await self._run(tmp_path, monkeypatch, "x" * 1500)
+        ch.send_message.assert_awaited_once()
+        assert ch._send_media.await_args.args[2] == ""
+
+    async def test_short_text_stays_as_caption(self, tmp_path, monkeypatch):
+        ch = await self._run(tmp_path, monkeypatch, "Te envío el formato")
+        ch.send_message.assert_not_awaited()
+        assert ch._send_media.await_args.args[2] == "Te envío el formato"

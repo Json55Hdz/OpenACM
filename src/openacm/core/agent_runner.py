@@ -66,7 +66,13 @@ class _AgentToolRegistry:
         self._base = base_registry
         self._filtered_schema = filtered_schema
         self._flow_tools = flow_tools
-        self.tools = {**getattr(base_registry, "tools", {}), **flow_tools}
+        base_tools = dict(getattr(base_registry, "tools", {}))
+        if filtered_schema is not None:
+            # The schema only hides tools from the model; also refuse to execute anything the
+            # agent isn't allowed, in case the model calls a tool it was never offered.
+            allowed_names = {t["function"]["name"] for t in filtered_schema}
+            base_tools = {n: t for n, t in base_tools.items() if n in allowed_names}
+        self.tools = {**base_tools, **flow_tools}
 
     def get_tools_schema(self) -> list[dict]:
         base_schema = self._filtered_schema if self._filtered_schema is not None else self._base.get_tools_schema()
@@ -82,6 +88,8 @@ class _AgentToolRegistry:
     async def execute(self, tool_name: str, arguments: dict, user_id: str = "", channel_id: str = "", channel_type: str = "web", _brain=None) -> str:
         if tool_name in self._flow_tools:
             return await self._flow_tools[tool_name].handler(_brain=_brain, **arguments)
+        if tool_name not in self.tools:
+            return f"Error: Tool '{tool_name}' is not allowed for this agent"
         return await self._base.execute(tool_name, arguments, user_id, channel_id, channel_type, _brain=_brain)
 
     def __getattr__(self, name):
@@ -126,7 +134,9 @@ class AgentRunner:
             all_tools = self.tool_registry.get_tools_schema()
             return [t for t in all_tools if t["function"]["name"] in names]
         except Exception:
-            return self.tool_registry.get_tools_schema()
+            # Malformed policy: fail closed rather than silently granting every tool
+            log.warning("AgentRunner: invalid allowed_tools policy, exposing no tools", policy=allowed_tools)
+            return []
 
     def _build_system_prompt(self, base_prompt: str, knowledge_items: list[dict]) -> str:
         """Prepend knowledge block to base system prompt, truncating if needed."""

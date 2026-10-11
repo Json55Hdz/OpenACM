@@ -11,6 +11,7 @@ channel so the webhook route can reach it.
 import asyncio
 import hashlib
 import hmac
+import mimetypes
 import os
 import re
 from pathlib import Path
@@ -26,6 +27,8 @@ from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL
 from openacm.utils.text import extract_and_strip_thinking
 
 log = structlog.get_logger()
+
+_MEDIA_CAPTION_LIMIT = 1024  # WhatsApp Cloud API max caption length for documents/images
 
 # Set by start() so the webhook route can dispatch incoming messages to us.
 _active_channel: "WhatsAppCloudChannel | None" = None
@@ -168,9 +171,12 @@ class WhatsAppCloudChannel(BaseChannel):
         try:
             from openacm.security.crypto import decrypt_file
             raw = decrypt_file(fpath)
+            # Friendly name set by send_file_to_chat: upload_<hex>__<name>.<ext> → <name>.<ext>
+            shown_name = fpath.name.split("__", 1)[1] if re.match(r"upload_[0-9a-f]{32}__", fpath.name) else fpath.name
+            mime = mimetypes.guess_type(shown_name)[0] or "application/octet-stream"
             # 1. Upload media → media_id
             files = {
-                "file": (fpath.name, raw, "application/octet-stream"),
+                "file": (shown_name, raw, mime),
                 "messaging_product": (None, "whatsapp"),
             }
             up = await self._http.post(f"/{self.config.phone_number_id}/media", files=files)
@@ -186,7 +192,7 @@ class WhatsAppCloudChannel(BaseChannel):
             }
             payload["image" if is_image else "document"] = {
                 "id": media_id, **({"caption": caption} if caption else {}),
-                **({} if is_image else {"filename": fpath.name}),
+                **({} if is_image else {"filename": shown_name}),
             }
             sent = await self._http.post(f"/{self.config.phone_number_id}/messages", json=payload)
             return sent.status_code < 400
@@ -258,6 +264,12 @@ class WhatsAppCloudChannel(BaseChannel):
         attachment_names = [line[len("ATTACHMENT:"):].strip() for line in lines if line.startswith("ATTACHMENT:")]
         clean_text = "\n".join(line for line in lines if not line.startswith("ATTACHMENT:")).strip()
         clean_text, _ = extract_and_strip_thinking(clean_text)
+
+        # Meta rejects media captions over 1024 chars (the upload would fail and the file would
+        # be silently lost), so long replies go out as a normal text message before the file.
+        if attachment_names and len(clean_text) > _MEDIA_CAPTION_LIMIT:
+            await self.send_message(sender, clean_text)
+            clean_text = ""
 
         for fname in attachment_names:
             fpath = media_dir / fname

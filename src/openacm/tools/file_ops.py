@@ -3,6 +3,7 @@ File Operations Tools — read, write, list, and search files.
 """
 
 import os
+import re
 from pathlib import Path
 
 from openacm.tools.base import tool
@@ -220,6 +221,34 @@ async def search_files(directory: str, pattern: str, max_results: int = 50, **kw
         return f"Error searching files: {str(e)}"
 
 
+_PROTECTED_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".key", ".pem", ".pfx", ".p12", ".env"}
+_PROTECTED_DIR_NAMES = {".ssh", ".aws", ".gnupg"}
+
+
+def _is_protected_path(file_path: Path) -> bool:
+    """True for secrets and internal state that must never leave the server through a chat.
+
+    Everything else (screenshots, videos, reports, generated files...) stays shareable.
+    """
+    from openacm.security.crypto import get_media_dir
+
+    root = get_media_dir().parent.parent.resolve()
+    data_dir = root / "data"
+    if file_path.is_relative_to(root / "config"):
+        return True
+    if file_path.is_relative_to(data_dir) and not any(
+        file_path.is_relative_to(data_dir / sub) for sub in ("media", "assets")
+    ):
+        return True  # database, vectordb, logs, state — only media/ and assets/ are shareable
+    name = file_path.name.lower()
+    return (
+        name == ".env"
+        or name.startswith(".env.")
+        or file_path.suffix.lower() in _PROTECTED_SUFFIXES
+        or any(part.lower() in _PROTECTED_DIR_NAMES for part in file_path.parts)
+    )
+
+
 @tool(
     name="send_file_to_chat",
     description=(
@@ -235,18 +264,30 @@ async def search_files(directory: str, pattern: str, max_results: int = 50, **kw
                 "type": "string",
                 "description": "Absolute or relative path to the file you want to send to the user",
             },
+            "display_name": {
+                "type": "string",
+                "description": (
+                    "Optional friendly file name (no extension) shown to the user on channels "
+                    "that deliver the file as a document, e.g. WhatsApp"
+                ),
+            },
         },
         "required": ["path"],
     },
     risk_level="low",
     category="general",
 )
-async def send_file_to_chat(path: str, **kwargs) -> str:
+async def send_file_to_chat(path: str, display_name: str = "", **kwargs) -> str:
     """Send a local file to the secure media storage and get a link."""
     try:
         # Normalize path - remove trailing backslashes and fix double backslashes
         normalized_path = path.rstrip("\\/").replace("\\\\", "\\")
         file_path = Path(normalized_path).resolve()
+
+        # Agent channels (e.g. "whatsapp_a2") talk to end customers: never let them share
+        # secrets or internal state (config, database, keys), whatever the model is told.
+        if re.search(r"_a\d+$", str(kwargs.get("_channel_type", ""))) and _is_protected_path(file_path):
+            return "Error: this file is protected and cannot be sent through chat"
 
         if not file_path.exists():
             return f"Error: File not found: {path} (normalized: {file_path})"
@@ -262,7 +303,9 @@ async def send_file_to_chat(path: str, **kwargs) -> str:
             ext = ".bin"
 
         file_id = secrets.token_hex(16)
-        file_name = f"upload_{file_id}{ext}"
+        # Friendly name travels after "__" so channels can recover it (see whatsapp_cloud_channel)
+        slug = re.sub(r"[^A-Za-z0-9_.-]+", "_", display_name.strip()).strip("_.")[:80]
+        file_name = f"upload_{file_id}__{slug}{ext}" if slug else f"upload_{file_id}{ext}"
         dest_path = get_media_dir() / file_name
 
         save_encrypted(file_bytes, dest_path)
