@@ -24,11 +24,12 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import WhatsAppConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
-from openacm.utils.text import extract_and_strip_thinking
+from openacm.utils.text import extract_and_strip_thinking, split_message_parts
 
 log = structlog.get_logger()
 
 _MEDIA_CAPTION_LIMIT = 1024  # WhatsApp Cloud API max caption length for documents/images
+_MESSAGE_GAP_SECONDS = 0.7  # pause between the parts of a split reply
 
 # Set by start() so the webhook route can dispatch incoming messages to us.
 _active_channel: "WhatsAppCloudChannel | None" = None
@@ -265,6 +266,10 @@ class WhatsAppCloudChannel(BaseChannel):
         clean_text = "\n".join(line for line in lines if not line.startswith("ATTACHMENT:")).strip()
         clean_text, _ = extract_and_strip_thinking(clean_text)
 
+        # The agent can split its reply into several messages with MESSAGE_SPLIT_MARKER;
+        # the first part keeps the attachment logic below, the rest go out afterwards.
+        clean_text, *later_parts = split_message_parts(clean_text) or [""]
+
         # Meta rejects media captions over 1024 chars (the upload would fail and the file would
         # be silently lost), so long replies go out as a normal text message before the file.
         if attachment_names and len(clean_text) > _MEDIA_CAPTION_LIMIT:
@@ -279,6 +284,10 @@ class WhatsAppCloudChannel(BaseChannel):
 
         if clean_text:
             await self.send_message(sender, clean_text)
+
+        for part in later_parts:
+            await asyncio.sleep(_MESSAGE_GAP_SECONDS)  # keep WhatsApp delivery order
+            await self.send_message(sender, part)
 
     async def _respond(self, sender: str, content: str):
         """Run the brain and deliver the reply."""

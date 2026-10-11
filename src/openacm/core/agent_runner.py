@@ -8,11 +8,13 @@ have its own tool restrictions.
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import structlog
 
 from openacm.tools.base import ToolDefinition
+from openacm.utils.text import join_message_parts
 from openacm.core.messages import (
     MSG_AGENT_PROCESSING_ERROR,
     MSG_SKILL_CONTEXT_FOOTER,
@@ -313,6 +315,10 @@ class AgentRunner:
                 target_id=channel_id,
                 user_id=user_id,
             )
+            # Only the WhatsApp Cloud channel can send the parts as separate messages;
+            # everywhere else the split marker becomes a blank line.
+            if not re.fullmatch(r"whatsapp_a\d+", channel_type or ""):
+                response = join_message_parts(response)
             return response
         except Exception as e:
             log.error("AgentRunner error", agent_id=agent["id"], error=str(e), exc_info=True)

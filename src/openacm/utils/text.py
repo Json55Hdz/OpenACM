@@ -1,6 +1,20 @@
 import re
 
 
+# An agent writes this marker where its reply should be cut into separate chat messages.
+MESSAGE_SPLIT_MARKER = "<<MSG>>"
+
+
+def split_message_parts(text: str) -> list[str]:
+    """Split a reply on MESSAGE_SPLIT_MARKER into non-empty, trimmed messages."""
+    return [part.strip() for part in text.split(MESSAGE_SPLIT_MARKER) if part.strip()]
+
+
+def join_message_parts(text: str) -> str:
+    """For channels that cannot send several messages: replace the marker with a blank line."""
+    return "\n\n".join(split_message_parts(text)) if MESSAGE_SPLIT_MARKER in text else text
+
+
 def truncate(text: str, max_len: int, suffix: str = "...[truncated]") -> str:
     if len(text) <= max_len:
         return text

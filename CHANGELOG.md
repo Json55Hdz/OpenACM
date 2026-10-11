@@ -6,7 +6,10 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
-### Added
+### Added
+- Agents can split one reply into several WhatsApp messages by writing `<<MSG>>`
+  where it should be cut (e.g. legal notice first, then the greeting). Other
+  channels turn the marker into a blank line.
 - `send_file_to_chat` accepts an optional `display_name`; WhatsApp delivers the
   document with that name instead of `upload_<hex>.ext`.
 
