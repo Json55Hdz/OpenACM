@@ -58,6 +58,25 @@ async def test_output_fits_llm_budget_and_lists_omitted_records(tmp_path, monkey
     assert "chars omitted" not in out
 
 
+async def test_exact_phrase_outranks_partial_word_matches(tmp_path, monkeypatch):
+    """Looking up one unit by name must put the record that contains that exact name first,
+    not records that only share generic words like 'centro medico'."""
+    col = tmp_path / "units"
+    col.mkdir()
+    (col / "01-units.md").write_text(
+        "# Units\n\n"
+        "### Lista A\n- Centro Medico Norte\n- Centro Medico Sur\n- Centro Medico Este\n- Centro Medico Oeste\n\n"
+        "### Lista B\n- Centro Medico Kennedy Bomberos\n- Otro lugar\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(kt, "_knowledge_root", lambda: tmp_path)
+    kt._CACHE.clear()
+
+    out = await kt.search_knowledge("Centro Medico Kennedy Bomberos", collection="units")
+
+    assert out.index("Lista B") < out.index("Lista A")
+
+
 async def test_no_results_message(kb):
     out = await kt.search_knowledge("tomografia craneo", collection="demo")
     assert out.startswith("No results")
