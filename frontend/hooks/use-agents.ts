@@ -46,6 +46,22 @@ export interface KnowledgeItem {
   created_at: string;
 }
 
+export interface KnowledgeFileCollection {
+  collection: string;
+  files: { name: string; title: string; size: number }[];
+}
+
+export function useKnowledgeFiles() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+  return useQuery<KnowledgeFileCollection[]>({
+    queryKey: ['knowledge-files'],
+    queryFn: () => fetchAPI('/api/knowledge-files'),
+    enabled: isAuthenticated,
+    staleTime: 0,
+  });
+}
+
 export interface ChannelItem {
   id: number;
   agent_id: number;

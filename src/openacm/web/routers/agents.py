@@ -539,6 +539,67 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="Knowledge item not found")
         return {"ok": True}
 
+    @app.get("/api/agents/{agent_id}/knowledge/{kid}")
+    async def get_knowledge_item(agent_id: int, kid: int):
+        """One knowledge item WITH its content (list responses leave it out)."""
+        if not _state.database:
+            raise HTTPException(status_code=503, detail="Database not available")
+        items = await _state.database.get_agent_knowledge(agent_id)
+        item = next((i for i in items if i["id"] == kid), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Knowledge item not found")
+        return item
+
+    # ─── Knowledge files (Markdown collections used by search_knowledge) ───
+
+    def _knowledge_file_path(collection: str, name: str) -> Path:
+        from openacm.tools import knowledge_tools as kt
+
+        base = kt._collection_dir(collection)
+        if base is None:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        if not re.fullmatch(r"[A-Za-z0-9_\-\.]+\.md", name or ""):
+            raise HTTPException(status_code=400, detail="Invalid file name")
+        path = (base / name).resolve()
+        if path.parent != base.resolve():
+            raise HTTPException(status_code=400, detail="Invalid file name")
+        return path
+
+    @app.get("/api/knowledge-files")
+    async def list_knowledge_files():
+        from openacm.tools import knowledge_tools as kt
+
+        root = kt._knowledge_root()
+        out = []
+        for col in sorted(p for p in root.glob("*") if p.is_dir()) if root.is_dir() else []:
+            files = []
+            for f in sorted(col.glob("*.md")):
+                with f.open(encoding="utf-8", errors="replace") as fh:
+                    title = fh.readline().lstrip("# ").strip() or f.name
+                files.append({"name": f.name, "title": title, "size": f.stat().st_size})
+            out.append({"collection": col.name, "files": files})
+        return out
+
+    @app.get("/api/knowledge-files/{collection}/{name}")
+    async def read_knowledge_file(collection: str, name: str):
+        path = _knowledge_file_path(collection, name)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"name": name, "content": path.read_text(encoding="utf-8", errors="replace")}
+
+    @app.put("/api/knowledge-files/{collection}/{name}")
+    async def write_knowledge_file(collection: str, name: str, request: Request):
+        """Overwrite an existing file; the search cache refreshes by mtime, no restart needed."""
+        path = _knowledge_file_path(collection, name)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        data = await request.json()
+        content = data.get("content")
+        if not isinstance(content, str):
+            raise HTTPException(status_code=400, detail="content required")
+        path.write_bytes(content.encode("utf-8"))
+        return {"ok": True, "size": path.stat().st_size}
+
     # ─── Agent Channels ───────────────────────────────────────
 
     _MASKED_KEYS = {"token", "access_token", "app_secret"}

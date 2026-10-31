@@ -3,12 +3,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { AppLayout } from '@/components/layout/app-layout';
 import {
-  useAgents, useAgentMutations, useAgentKnowledge, useAgentKnowledgeMutations,
+  useAgents, useAgentMutations, useAgentKnowledge, useAgentKnowledgeMutations, useKnowledgeFiles,
   useAgentChannels, useAgentChannelMutations,
   useAgentSkills, useToggleAgentGlobalSkill, useGenerateAgentSkill, useToggleAgentPrivateSkill, useDeleteAgentPrivateSkill,
   type Agent, type AgentFormData, type KnowledgeItem, type ChannelItem,
 } from '@/hooks/use-agents';
-import { useTools, type ToolInfo } from '@/hooks/use-api';
+import { useTools, useAPI, type ToolInfo } from '@/hooks/use-api';
 import { useAgentFlows, useCreateFlow, useUpdateFlow, useDeleteFlow } from '@/hooks/use-agent-flows';
 import { FlowCanvas } from '@/components/flow-editor/FlowCanvas';
 import { parseAllowedTools, serializeAllowedTools } from '@/hooks/use-worker-config';
@@ -64,11 +64,143 @@ const DEFAULT_FORM: AgentFormData = {
   inactivity_message: '',
 };
 
+// ── Knowledge files (Markdown collections the agent searches on demand) ──────
+
+function KnowledgeFilesSection() {
+  const { data: collections = [] } = useKnowledgeFiles();
+  const { fetchAPI } = useAPI();
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState('');
+  const [editing, setEditing] = useState<{ collection: string; name: string } | null>(null);
+  const [content, setContent] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const total = collections.reduce((n, c) => n + c.files.length, 0);
+  if (total === 0) return null;
+
+  const openFile = async (collection: string, name: string) => {
+    setEditing({ collection, name });
+    setContent('');
+    setLoading(true);
+    try {
+      const d = await fetchAPI(`/api/knowledge-files/${collection}/${name}`);
+      setContent(d.content ?? '');
+    } catch {
+      toast.error('No se pudo cargar el archivo');
+      setEditing(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await fetchAPI(`/api/knowledge-files/${editing.collection}/${editing.name}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      toast.success('Archivo guardado');
+      setEditing(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Error al guardar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const q = filter.trim().toLowerCase();
+
+  return (
+    <div className="border border-zinc-700 rounded-lg bg-zinc-900/30">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-3 py-2 text-sm text-zinc-200"
+      >
+        <span className="flex items-center gap-2">
+          <FileText className="w-4 h-4 text-blue-400" />
+          Archivos de la base de búsqueda ({total})
+        </span>
+        <span className="text-xs text-zinc-500">{open ? 'Ocultar' : 'Ver'}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          <p className="text-xs text-zinc-500">
+            Documentos que el agente consulta con sus herramientas de búsqueda (no van completos en el prompt).
+            Los cambios se aplican al instante.
+          </p>
+          {editing ? (
+            <div className="space-y-2">
+              <p className="text-sm text-zinc-100 font-mono">{editing.collection}/{editing.name}</p>
+              {loading ? (
+                <div className="flex items-center text-zinc-500 text-sm"><Loader2 className="w-4 h-4 animate-spin mr-2" />Cargando…</div>
+              ) : (
+                <textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  rows={20}
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-zinc-500"
+                />
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={save}
+                  disabled={saving || loading}
+                  className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-white transition-colors"
+                >
+                  {saving ? 'Guardando…' : 'Guardar'}
+                </button>
+                <button onClick={() => setEditing(null)} className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <input
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filtrar archivos…"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+              />
+              <div className="max-h-80 overflow-y-auto space-y-1">
+                {collections.map((c) =>
+                  c.files
+                    .filter((f) => !q || f.name.toLowerCase().includes(q) || f.title.toLowerCase().includes(q))
+                    .map((f) => (
+                      <div key={`${c.collection}/${f.name}`} className="flex items-center justify-between gap-2 text-sm py-1 border-b border-zinc-800">
+                        <div className="min-w-0">
+                          <p className="text-zinc-100 truncate">{f.title}</p>
+                          <p className="text-xs text-zinc-500 font-mono truncate">{c.collection}/{f.name} · {(f.size / 1024).toFixed(0)} KB</p>
+                        </div>
+                        <button
+                          onClick={() => openFile(c.collection, f.name)}
+                          className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors flex-shrink-0"
+                          title="Ver / editar"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Knowledge Tab ─────────────────────────────────────────────────────────────
 
 function KnowledgeTab({ agentId }: { agentId: number }) {
   const { data: items = [], isLoading } = useAgentKnowledge(agentId);
   const { addText, addFile, updateItem, removeItem } = useAgentKnowledgeMutations(agentId);
+  const { fetchAPI } = useAPI();
 
   const [showTextForm, setShowTextForm] = useState(false);
   const [textTitle, setTextTitle] = useState('');
@@ -105,16 +237,22 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
     e.target.value = '';
   };
 
-  const startEdit = (item: KnowledgeItem) => {
+  const startEdit = async (item: KnowledgeItem) => {
     setEditingId(item.id);
     setEditTitle(item.title);
     setEditContent('');
+    try {
+      const full = await fetchAPI(`/api/agents/${agentId}/knowledge/${item.id}`);
+      setEditContent(full.content ?? '');
+    } catch {
+      toast.error('No se pudo cargar el contenido');
+    }
   };
 
   const handleUpdate = async (item: KnowledgeItem) => {
     const updates: { title?: string; content?: string } = {};
     if (editTitle.trim() && editTitle !== item.title) updates.title = editTitle.trim();
-    if (item.type === 'text' && editContent.trim()) updates.content = editContent.trim();
+    if (editContent.trim()) updates.content = editContent.trim();
     if (Object.keys(updates).length === 0) { setEditingId(null); return; }
     await updateItem.mutateAsync({ kid: item.id, ...updates });
     setEditingId(null);
@@ -217,15 +355,13 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
                 onChange={(e) => setEditTitle(e.target.value)}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500"
               />
-              {item.type === 'text' && (
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  placeholder="Nuevo contenido (dejar vacío para no cambiar)"
-                  rows={4}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 resize-none"
-                />
-              )}
+              <textarea
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                placeholder="Contenido"
+                rows={12}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+              />
               <div className="flex gap-2">
                 <button
                   onClick={() => handleUpdate(item)}
@@ -288,6 +424,8 @@ function KnowledgeTab({ agentId }: { agentId: number }) {
           )}
         </div>
       ))}
+
+      <KnowledgeFilesSection />
 
       {/* Char counter footer */}
       {items.length > 0 && (
