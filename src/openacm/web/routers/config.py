@@ -692,9 +692,24 @@ def register_routes(app: FastAPI) -> None:
     async def set_verbose_channels(request: Request):
         """Set whether external channels receive tool execution logs."""
         data = await request.json()
-        enabled = data.get("enabled", True)
-        os.environ["OPENACM_VERBOSE_CHANNELS"] = "true" if enabled else "false"
+        enabled = bool(data.get("enabled", True))
+        value = "true" if enabled else "false"
+        os.environ["OPENACM_VERBOSE_CHANNELS"] = value
+        try:  # persist, otherwise the setting is lost on restart and tool logs come back
+            from dotenv import set_key
+            from openacm.core.config import _find_project_root
+
+            env_file = _find_project_root() / "config" / ".env"
+            env_file.parent.mkdir(parents=True, exist_ok=True)
+            env_file.touch(exist_ok=True)
+            set_key(str(env_file), "OPENACM_VERBOSE_CHANNELS", value)
+        except Exception as e:
+            log.warning("Could not persist verbose_channels", error=str(e))
         return {"status": "ok", "enabled": enabled}
+
+    @app.get("/api/config/verbose_channels")
+    async def get_verbose_channels():
+        return {"enabled": os.environ.get("OPENACM_VERBOSE_CHANNELS", "true").lower() == "true"}
 
     @app.get("/api/ollama/status")
     async def get_ollama_status():

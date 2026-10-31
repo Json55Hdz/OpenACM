@@ -81,11 +81,74 @@ class TestAgentRunnerMarker:
         with patch("openacm.core.brain.Brain.process_message", new_callable=AsyncMock, return_value=reply):
             return await runner.run(agent=agent, message="hi", user_id="u", channel_id="c", channel_type=channel_type)
 
-    async def test_whatsapp_cloud_agent_keeps_the_marker_for_the_channel(self):
-        out = await self._run("whatsapp_a2", f"uno {MESSAGE_SPLIT_MARKER} dos")
+    @pytest.mark.parametrize("channel", ["whatsapp_a2", "telegram_a5", "whatsapp_web_a2", "discord"])
+    async def test_messaging_channels_keep_the_marker_for_the_channel(self, channel):
+        out = await self._run(channel, f"uno {MESSAGE_SPLIT_MARKER} dos")
         assert MESSAGE_SPLIT_MARKER in out
 
-    @pytest.mark.parametrize("channel", ["web", "telegram_a5", "whatsapp_web_a2", "console"])
-    async def test_other_channels_never_see_the_marker(self, channel):
+    @pytest.mark.parametrize("channel", ["web", "console"])
+    async def test_non_messaging_channels_never_see_the_marker(self, channel):
         out = await self._run(channel, f"uno {MESSAGE_SPLIT_MARKER} dos")
         assert MESSAGE_SPLIT_MARKER not in out and out == "uno\n\ndos"
+
+
+class TestEveryChannelSplits:
+    """send_message of ANY BaseChannel subclass delivers marker-separated parts one by one."""
+
+    async def test_send_message_is_split_for_any_subclass(self, monkeypatch):
+        from openacm.channels import base
+        from openacm.channels.base import BaseChannel
+
+        monkeypatch.setattr(base, "MESSAGE_GAP_SECONDS", 0)
+        sent = []
+
+        class Fake(BaseChannel):
+            name = "fake"
+            is_connected = True
+
+            async def start(self): ...
+            async def stop(self): ...
+
+            async def send_message(self, target_id, content, **kwargs):
+                sent.append((target_id, content))
+                return True
+
+        ok = await Fake().send_message("c1", f"uno {MESSAGE_SPLIT_MARKER} dos {MESSAGE_SPLIT_MARKER} tres")
+        assert ok is True
+        assert sent == [("c1", "uno"), ("c1", "dos"), ("c1", "tres")]
+
+    async def test_plain_text_goes_through_untouched(self):
+        from openacm.channels.base import BaseChannel
+
+        sent = []
+
+        class Fake(BaseChannel):
+            name = "fake"
+            is_connected = True
+
+            async def start(self): ...
+            async def stop(self): ...
+
+            async def send_message(self, target_id, content, **kwargs):
+                sent.append(content)
+                return True
+
+        await Fake().send_message("c1", "hola")
+        assert sent == ["hola"]
+
+    async def test_telegram_event_reply_sends_each_part_as_its_own_message(self, monkeypatch):
+        from openacm.channels import telegram_channel as mod
+
+        monkeypatch.setattr(mod, "MESSAGE_GAP_SECONDS", 0)
+        ch = mod.TelegramChannel.__new__(mod.TelegramChannel)
+        ch._connected = True
+        ch._app = MagicMock()
+        ch._app.bot.send_message = AsyncMock()
+
+        await ch._on_message_sent(
+            "message_sent",
+            {"channel_type": "telegram", "channel_id": "123", "content": f"uno {MESSAGE_SPLIT_MARKER} dos"},
+        )
+
+        texts = [c.kwargs["text"] for c in ch._app.bot.send_message.call_args_list]
+        assert texts == ["uno", "dos"]

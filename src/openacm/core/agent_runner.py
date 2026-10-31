@@ -8,7 +8,6 @@ have its own tool restrictions.
 
 import asyncio
 import json
-import re
 from typing import Any
 
 import structlog
@@ -322,9 +321,9 @@ class AgentRunner:
                 target_id=channel_id,
                 user_id=user_id,
             )
-            # Only the WhatsApp Cloud channel can send the parts as separate messages;
-            # everywhere else the split marker becomes a blank line.
-            if not re.fullmatch(r"whatsapp_a\d+", channel_type or ""):
+            # Messaging channels send the parts as separate messages; the dashboard chat and
+            # the console cannot, so there the split marker becomes a blank line.
+            if (channel_type or "") in ("", "web", "console"):
                 response = join_message_parts(response)
             return response
         except Exception as e:

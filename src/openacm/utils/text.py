@@ -3,6 +3,7 @@ import re
 
 # An agent writes this marker where its reply should be cut into separate chat messages.
 MESSAGE_SPLIT_MARKER = "<<MSG>>"
+MESSAGE_GAP_SECONDS = 0.7  # pause between the parts of a split reply, keeps delivery order
 
 
 def split_message_parts(text: str) -> list[str]:

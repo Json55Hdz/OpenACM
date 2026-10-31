@@ -1016,6 +1016,14 @@ export default function ChatPage() {
     typeof window !== 'undefined' && localStorage.getItem('openacm_debug_mode') === 'true'
   );
 
+  // Tool Logs switch mirrors the server setting that also gates external channels
+  useEffect(() => {
+    fetchAPI('/api/config/verbose_channels')
+      .then((d: any) => { if (typeof d?.enabled === 'boolean') setShowToolLogs(d.enabled); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
@@ -1688,7 +1696,16 @@ export default function ChatPage() {
               </div>
 
               <button
-                onClick={() => setShowToolLogs(!showToolLogs)}
+                onClick={() => {
+                  const next = !showToolLogs;
+                  setShowToolLogs(next);
+                  // same switch for external channels (Telegram etc.), persisted on the server
+                  fetchAPI('/api/config/verbose_channels', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: next }),
+                  }).catch(() => {});
+                }}
                 className={cn(
                   "inline-flex items-center gap-[7px] px-[10px] py-[4px] border rounded-full text-[11px] mono transition-colors",
                   showToolLogs

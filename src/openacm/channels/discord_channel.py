@@ -14,6 +14,7 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import DiscordConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
+from openacm.utils.text import MESSAGE_GAP_SECONDS, split_message_parts
 
 log = structlog.get_logger()
 
@@ -138,7 +139,15 @@ class DiscordChannel(BaseChannel):
                     if discord_files:
                         send_kwargs["files"] = discord_files
 
-                    if not clean_text and discord_files:
+                    first, *later_parts = split_message_parts(clean_text) or [""]
+                    clean_text = first
+                    if later_parts:
+                        # the agent split its reply: first part with the files, the rest as follow-ups
+                        await message.reply(clean_text[:2000] or "​", **send_kwargs)
+                        for part in later_parts:
+                            await asyncio.sleep(MESSAGE_GAP_SECONDS)
+                            await message.channel.send(part[:2000])
+                    elif not clean_text and discord_files:
                         await message.reply(**send_kwargs)
                     elif len(clean_text) <= 2000:
                         await message.reply(clean_text or "\u200b", **send_kwargs)

@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
+from openacm.utils.text import MESSAGE_GAP_SECONDS, split_message_parts
 from openacm.core.commands import CommandProcessor
 from openacm.core.config import TelegramConfig
 from openacm.core.events import (
@@ -226,6 +227,19 @@ class TelegramChannel(BaseChannel):
                 log.warning("Could not edit tool finish notification", error=str(e))
 
     async def _on_message_sent(self, event_type: str, data: dict):
+        """Deliver a reply; the agent can cut it into several chat messages with MESSAGE_SPLIT_MARKER."""
+        parts = split_message_parts(data.get("content") or "")
+        if len(parts) < 2:
+            if parts:
+                data = dict(data, content=parts[0])
+            return await self._send_event_message(event_type, data)
+        # the first part carries the attachments, the rest go out afterwards in order
+        await self._send_event_message(event_type, dict(data, content=parts[0]))
+        for part in parts[1:]:
+            await asyncio.sleep(MESSAGE_GAP_SECONDS)
+            await self._send_event_message(event_type, dict(data, content=part, attachments=[]))
+
+    async def _send_event_message(self, event_type: str, data: dict):
         if not self._app or not self._connected:
             return
         # Skip partial messages (intermediate AI text before tool calls)
