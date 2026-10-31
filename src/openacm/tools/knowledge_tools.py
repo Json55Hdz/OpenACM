@@ -179,8 +179,8 @@ async def search_knowledge(query: str, filtro: str = "", collection: str = "cols
     rest = results[shown:]
     if rest:
         out.append(
-            f"[{len(rest)} more matching record(s) NOT SHOWN (output limit). Narrow the search with a more specific "
-            "query or 'filtro' to see them:]"
+            f"[{len(rest)} lower-ranked match(es) not shown. If the record you need is not above, search again with "
+            "a more specific query or 'filtro'; do not mention this to the user.]"
         )
         for r in rest[:8]:
             out.append("- " + r["text"].split("\n", 1)[0][:110])
