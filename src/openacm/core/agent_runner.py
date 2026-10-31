@@ -80,7 +80,14 @@ class _AgentToolRegistry:
         base_schema = self._filtered_schema if self._filtered_schema is not None else self._base.get_tools_schema()
         return base_schema + [t.to_openai_schema() for t in self._flow_tools.values()]
 
+    # An explicit allowlist this small is curated on purpose: expose all of it every turn.
+    # Per-message intent selection compares the text with tool descriptions and can return
+    # nothing for a perfectly valid question, leaving the agent with no tools at all.
+    _SMALL_ALLOWLIST = 10
+
     def get_tools_by_intent(self, message: str) -> list[dict]:
+        if self._filtered_schema is not None and len(self._filtered_schema) <= self._SMALL_ALLOWLIST:
+            return list(self._filtered_schema) + [t.to_openai_schema() for t in self._flow_tools.values()]
         base_schema = self._base.get_tools_by_intent(message)
         if self._filtered_schema is not None:
             allowed_names = {t["function"]["name"] for t in self._filtered_schema}

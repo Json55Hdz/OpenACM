@@ -308,6 +308,9 @@ class OpenACM:
         self.tool_registry.register_module(onboarding_tools)
         self.tool_registry.register_module(customer_profile_tool)
 
+        from openacm.tools import knowledge_tools
+        self.tool_registry.register_module(knowledge_tools)
+
         from openacm.tools import agent_tool
         self.tool_registry.register_module(agent_tool)
 

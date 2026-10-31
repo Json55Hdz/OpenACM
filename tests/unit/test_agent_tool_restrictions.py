@@ -29,6 +29,27 @@ class TestAllowedToolsEnforcement:
         reg = _AgentToolRegistry(base, None, {})
         assert set(reg.tools) == {"a", "b"}
 
+    def test_small_allowlist_is_not_starved_by_intent_selection(self):
+        """Intent selection compares the message with tool descriptions; a short
+        allowlist must not end up empty just because the message doesn't match them."""
+        base = MagicMock()
+        base.tools = {"search_knowledge": object(), "run_command": object()}
+        base.get_tools_by_intent.return_value = _schema("run_command")  # nothing allowed matched
+        reg = _AgentToolRegistry(base, _schema("search_knowledge", "read_knowledge_file"), {})
+
+        got = [t["function"]["name"] for t in reg.get_tools_by_intent("TAC de tórax en Bogotá EPS")]
+        assert got == ["search_knowledge", "read_knowledge_file"]
+
+    def test_large_allowlist_still_uses_intent_selection(self):
+        base = MagicMock()
+        names = [f"t{i}" for i in range(12)]
+        base.tools = {n: object() for n in names}
+        base.get_tools_by_intent.return_value = _schema("t1", "outside")
+        reg = _AgentToolRegistry(base, _schema(*names), {})
+
+        got = [t["function"]["name"] for t in reg.get_tools_by_intent("hola")]
+        assert got == ["t1"]
+
     def test_malformed_policy_fails_closed(self):
         runner = AgentRunner(MagicMock(), MagicMock(), MagicMock(), MagicMock())
         runner.tool_registry.get_tools_schema.return_value = _schema("run_command")
