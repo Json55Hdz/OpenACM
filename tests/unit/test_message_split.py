@@ -179,3 +179,20 @@ class TestTelegramIncoming:
         await asyncio.sleep(0.05)
 
         ch.brain.process_message.assert_awaited()
+
+
+class TestTelegramRetry:
+    async def test_timed_out_send_is_retried_so_the_reply_still_arrives(self, monkeypatch):
+        from telegram.error import TimedOut
+
+        from openacm.channels import telegram_channel as mod
+
+        monkeypatch.setattr(mod.asyncio, "sleep", AsyncMock())
+        ch = mod.TelegramChannel.__new__(mod.TelegramChannel)
+        ch._connected = True
+        ch._app = MagicMock()
+        ch._app.bot.send_message = AsyncMock(side_effect=[TimedOut("Timed out"), None])
+
+        await ch._on_message_sent("message_sent", {"channel_type": "telegram", "channel_id": "123", "content": "hola"})
+
+        assert ch._app.bot.send_message.await_count == 2

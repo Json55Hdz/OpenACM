@@ -71,7 +71,15 @@ class TelegramChannel(BaseChannel):
             self.ready_event.set()
             return
 
-        self._app = Application.builder().token(self.config.token).build()
+        # Generous timeouts: the default 5 s connect timeout drops replies on a flaky connection.
+        self._app = (
+            Application.builder()
+            .token(self.config.token)
+            .connect_timeout(15)
+            .read_timeout(20)
+            .write_timeout(20)
+            .build()
+        )
 
         # Register handlers
         self._app.add_handler(CommandHandler("start", self._cmd_start))
@@ -383,13 +391,27 @@ class TelegramChannel(BaseChannel):
 
             # Split long messages (Telegram limit: 4096 chars)
             if len(content) <= 4096:
-                await self._app.bot.send_message(chat_id=chat_id, text=content)
+                await self._send_text(chat_id, content)
             else:
                 chunks = [content[i : i + 4000] for i in range(0, len(content), 4000)]
                 for chunk in chunks:
-                    await self._app.bot.send_message(chat_id=chat_id, text=chunk)
+                    await self._send_text(chat_id, chunk)
         except Exception as e:
             log.error("Telegram event send failed", error=str(e))
+
+    async def _send_text(self, chat_id: int, text: str, attempts: int = 3):
+        """Send a text message, retrying on network timeouts so a flaky connection does not drop replies."""
+        from telegram.error import NetworkError, TimedOut
+
+        for attempt in range(1, attempts + 1):
+            try:
+                await self._app.bot.send_message(chat_id=chat_id, text=text)
+                return
+            except (TimedOut, NetworkError) as e:
+                if attempt == attempts:
+                    raise
+                log.warning("Telegram send retry", attempt=attempt, error=str(e))
+                await asyncio.sleep(1.5 * attempt)
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command."""
