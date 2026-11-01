@@ -527,7 +527,11 @@ class TelegramChannel(BaseChannel):
             return
 
         # Send "typing" action
-        await update.message.chat.send_action("typing")
+        # Cosmetic: a network timeout here must not abort the whole message.
+        try:
+            await update.message.chat.send_action("typing")
+        except Exception as e:
+            log.warning("Telegram typing indicator failed", error=str(e))
 
         async def _process_and_handle_errors():
             """Wrapper to catch errors from brain.process_message inside the task."""

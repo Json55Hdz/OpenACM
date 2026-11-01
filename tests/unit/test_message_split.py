@@ -152,3 +152,30 @@ class TestEveryChannelSplits:
 
         texts = [c.kwargs["text"] for c in ch._app.bot.send_message.call_args_list]
         assert texts == ["uno", "dos"]
+
+
+class TestTelegramIncoming:
+    async def test_typing_indicator_timeout_does_not_drop_the_message(self):
+        from openacm.channels import telegram_channel as mod
+
+        ch = mod.TelegramChannel.__new__(mod.TelegramChannel)
+        ch.config = MagicMock(allowed_users=[])
+        ch.brain = MagicMock()
+        ch.brain.process_message = AsyncMock(return_value="ok")
+        ch._app = MagicMock()
+
+        update = MagicMock()
+        update.effective_user.id = 1
+        update.message.chat_id = 5
+        update.message.text = "hola"
+        update.message.photo = None
+        update.message.voice = None
+        update.message.audio = None
+        update.message.document = None
+        update.message.chat.send_action = AsyncMock(side_effect=TimeoutError("Timed out"))
+
+        await ch._handle_message(update, MagicMock())
+        import asyncio
+        await asyncio.sleep(0.05)
+
+        ch.brain.process_message.assert_awaited()
