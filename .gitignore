@@ -68,3 +68,6 @@ config/mcp_servers.json
 
 # Personal tunnel/dev config
 vite.config.ts
+
+# Superpowers scratch (brainstorm drafts, SDD state)
+.superpowers/
