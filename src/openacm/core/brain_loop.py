@@ -31,6 +31,8 @@ from openacm.core.output_compressor import compress as compress_output, compress
 log = structlog.get_logger()
 
 _CHAT_TOOLS_MAX = 60  # tools remembered per chat
+DEFAULT_TOOL_RESULT_CHARS = 6000        # tool results longer than this are cut (head + tail)
+MAX_TOOL_RESULT_CHARS_CEILING = 24000   # the most a tool may ask for via max_result_chars
 _SAME_CALL_HARD_LIMIT = 40  # identical consecutive calls tolerated even if results differ
 
 # Matches all ANSI/VT100 escape sequences (colors, cursor moves, OSC title-set, etc.)
@@ -328,10 +330,13 @@ class BrainLoopMixin:
 
         _tool_trace["elapsed_ms"] = int((_time.monotonic() - _tool_t0) * 1000)
         _tool_trace["result_chars"] = len(str(result))
-        _tool_trace["truncated"] = len(str(result)) > 6000
-
-        # Compress result for LLM context
-        MAX_TOOL_RESULT_CHARS = 6000
+        # Compress result for LLM context. A tool may declare a larger budget.
+        _td = self.tool_registry.tools.get(tool_name) if self.tool_registry else None
+        MAX_TOOL_RESULT_CHARS = max(
+            DEFAULT_TOOL_RESULT_CHARS,
+            min(int(getattr(_td, "max_result_chars", None) or 0), MAX_TOOL_RESULT_CHARS_CEILING),
+        )
+        _tool_trace["truncated"] = len(str(result)) > MAX_TOOL_RESULT_CHARS
         result_for_memory, _orig_len, _comp_len = compress_output(
             _strip_ansi(str(result)), tool_name, tool_args
         )
@@ -342,9 +347,11 @@ class BrainLoopMixin:
                 summary=compression_summary(_orig_len, _comp_len),
             )
         if len(result_for_memory) > MAX_TOOL_RESULT_CHARS:
-            head = result_for_memory[:3500]
-            tail = result_for_memory[-1000:]
-            omitted = len(result_for_memory) - 4500
+            _head_n = MAX_TOOL_RESULT_CHARS * 7 // 12
+            _tail_n = MAX_TOOL_RESULT_CHARS // 6
+            head = result_for_memory[:_head_n]
+            tail = result_for_memory[-_tail_n:]
+            omitted = len(result_for_memory) - _head_n - _tail_n
             result_for_memory = head + f"\n... [{omitted} chars omitted] ...\n" + tail
 
         # Detect file attachment produced by send_file_to_chat

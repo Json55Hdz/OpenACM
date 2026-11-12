@@ -16,6 +16,9 @@ class ToolDefinition:
     risk_level: str = "low"  # low, medium, high
     needs_sandbox: bool = False
     category: str = "general"  # general, system, file, web, ai, media, google, meta
+    # Result size kept for the LLM (None = the default). A tool whose output is already
+    # budgeted and must arrive whole (a page outline) can ask for more.
+    max_result_chars: int | None = None
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function calling format."""
@@ -74,6 +77,7 @@ def tool(
     risk_level: str = "low",
     needs_sandbox: bool = False,
     category: str = "general",
+    max_result_chars: int | None = None,
 ):
     """
     Decorator to register an async function as a tool.
@@ -103,6 +107,7 @@ def tool(
             risk_level=risk_level,
             needs_sandbox=needs_sandbox,
             category=category,
+            max_result_chars=max_result_chars,
         )
         _registered_tools.append(tool_def)
         func._tool_definition = tool_def
