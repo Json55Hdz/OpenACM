@@ -139,6 +139,22 @@ class ModelCapabilities:
         cfg = (getattr(self.router.config, "providers", {}) or {}).get(provider)
         return isinstance(cfg, dict) and cfg.get("type") == "cli"
 
+    def is_local(self, provider: str) -> bool:
+        """True when the provider runs on this machine / private network."""
+        cfg = (getattr(self.router.config, "providers", {}) or {}).get(provider)
+        base = (cfg.get("base_url") if isinstance(cfg, dict) else "") or ""
+        if not base:
+            return provider == "ollama"
+        host = base.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0].strip("[]").lower()
+        if host in ("localhost", "::1", "host.docker.internal") or host.endswith(".local"):
+            return True
+        try:
+            import ipaddress
+            ip = ipaddress.ip_address(host)
+            return ip.is_loopback or ip.is_private
+        except ValueError:
+            return False
+
     async def pick(self, capability: str) -> tuple[str, str] | None:
         """A (provider, model) able to do `capability`: the current model if it can,
         otherwise the most recently verified one. Probes the current model if unknown."""
@@ -149,14 +165,20 @@ class ModelCapabilities:
             known = self.supports(capability)
         if known:
             return cp, cm
+        # Falling back means the content goes to ANOTHER provider than the chat's. Only
+        # providers still in the config qualify, and a chat running on a local model never
+        # falls back to a remote one: what the user kept on their machine stays there.
         providers = getattr(self.router.config, "providers", {}) or {}
+        keep_local = self.is_local(cp)
         best: tuple[float, str, str] | None = None
         for k, caps in self._caps.items():
             if caps.get(capability) is not True or "::" not in k:
                 continue
             p, m = k.split("::", 1)
-            if p not in providers and p not in ("openai", "anthropic", "gemini"):
+            if p not in providers:
                 continue  # provider was removed from the config
+            if keep_local and not self.is_local(p):
+                continue
             t = float(caps.get("tested_at") or 0)
             if best is None or t > best[0]:
                 best = (t, p, m)

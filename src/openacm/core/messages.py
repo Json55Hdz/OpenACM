@@ -149,4 +149,4 @@ PROMPT_DESCRIBE_IMAGE = (
     "Describe this image for someone who cannot see it: what it shows, every piece of visible "
     "text exactly as written, and any numbers, labels or layout that matter. Be factual and complete."
 )
-MSG_IMAGE_DESCRIBED = "[Image — {name}, described by a vision model because the chat model cannot see images]:\n{description}"
+MSG_IMAGE_DESCRIBED = "[Image — {name}, described by {model} because the chat model cannot see images]:\n{description}"

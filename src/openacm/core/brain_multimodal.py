@@ -227,7 +227,10 @@ class BrainMultimodalMixin:
                     if _delegated:
                         structured_content.append({
                             "type": "text",
-                            "text": MSG_IMAGE_DESCRIBED.format(name=file_path.name, description=_delegated),
+                            "text": MSG_IMAGE_DESCRIBED.format(
+                                name=file_path.name, description=_delegated,
+                                model=f"{_target[0]}/{_target[1]}",
+                            ),
                         })
                     elif _vision_ok:
                         structured_content.append({

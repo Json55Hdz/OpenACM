@@ -110,3 +110,25 @@ def test_litellm_kwargs_per_provider(monkeypatch):
     assert "x-opencode-session" in kw["extra_headers"]
     assert caps._litellm_kwargs("anthropic", "claude-x")["model"] == "anthropic/claude-x"
     assert caps._litellm_kwargs("openai", "gpt-x") == {"model": "gpt-x"}
+
+
+async def test_local_chat_never_falls_back_to_a_remote_provider():
+    providers = {"ollama": {"base_url": "http://localhost:11434/v1"}, "cloud": {"base_url": "https://api.x.com/v1"},
+                 "lan": {"base_url": "http://192.168.1.20:8000/v1"}}
+    router = _router(provider="ollama", model="blind", providers=providers)
+    caps = _caps(router, {("blind", "vision"): "I cannot see images", ("blind", "audio"): "no",
+                          ("eyes", "vision"): "red", ("eyes", "audio"): "no"})
+    assert caps.is_local("ollama") and caps.is_local("lan") and not caps.is_local("cloud")
+    await caps.probe("cloud", "eyes")
+    assert await caps.pick("vision") is None              # image stays on the machine
+    await caps.probe("lan", "eyes")
+    assert await caps.pick("vision") == ("lan", "eyes")   # another local provider is fine
+    router.current_provider = "cloud"
+    assert (await caps.pick("vision"))[1] == "eyes"       # a remote chat may use either
+
+
+async def test_removed_provider_is_not_a_fallback():
+    router = _router(model="blind", providers={"opencode_go": {"base_url": "https://x/v1"}})
+    caps = _caps(router, {("blind", "vision"): "cannot", ("blind", "audio"): "no"})
+    caps._caps["openai::gpt-x"] = {"vision": True, "audio": False, "tested_at": 1}
+    assert await caps.pick("vision") is None
