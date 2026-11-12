@@ -15,6 +15,12 @@ from openacm.core.messages import (
     MSG_CMD_TOO_FEW,
     MSG_CMD_COMPACT_HEADER,
     MSG_CMD_COMPACT_FAILED,
+    MSG_STEPS_CURRENT,
+    MSG_STEPS_DEFAULT,
+    MSG_STEPS_INVALID,
+    MSG_STEPS_OFF,
+    MSG_STEPS_SET,
+    STEPS_UNLIMITED,
 )
 
 log = structlog.get_logger()
@@ -73,6 +79,10 @@ class CommandProcessor:
                 return await self._cmd_compact(user_id, channel_id)
             case "/export":
                 return await self._cmd_export(user_id, channel_id)
+            case "/probe":
+                return await self._cmd_probe()
+            case "/steps":
+                return await self._cmd_steps(args.strip(), user_id, channel_id)
             case "/workspace":
                 return await self._cmd_workspace(args.strip(), user_id, channel_id)
             case _:
@@ -93,6 +103,48 @@ class CommandProcessor:
             data={"reset": True},
         )
 
+    async def _cmd_probe(self) -> CommandResult:
+        """Re-test what the current model accepts (image / audio input)."""
+        router = self.brain.llm_router
+        caps = await router.capabilities.probe(force=True)
+        return CommandResult(
+            handled=True,
+            text=(
+                f"`{router.current_model}` (provider: `{router.current_provider}`) — "
+                f"{router.capabilities.describe()}\n\n_{caps.get('note', '')}_"
+            ),
+            data={"capabilities": caps},
+        )
+
+    async def _cmd_steps(self, args: str, user_id: str, channel_id: str) -> CommandResult:
+        """Show or set the per-chat tool-step limit (overrides max_tool_iterations)."""
+        default = self.brain.config.max_tool_iterations
+        limits = self.brain._step_limits
+        key = (user_id, channel_id)
+        arg = args.lower()
+        if not arg:
+            current = await self.brain._resolve_step_limit(user_id, channel_id)
+            shown = "no limit" if current >= STEPS_UNLIMITED else str(current)
+            return CommandResult(handled=True, text=MSG_STEPS_CURRENT.format(limit=shown, default=default))
+        if arg in ("default", "reset"):
+            value, text = None, MSG_STEPS_DEFAULT.format(default=default)
+        elif arg in ("off", "none", "unlimited", "0", "sin", "infinito"):
+            value, text = STEPS_UNLIMITED, MSG_STEPS_OFF
+        elif arg.isdigit() and int(arg) > 0:
+            value = int(arg)
+            text = MSG_STEPS_SET.format(limit=value)
+        else:
+            return CommandResult(handled=True, text=MSG_STEPS_INVALID)
+        limits[key] = value
+        if self.database:
+            try:
+                await self.database.set_setting(
+                    self.brain.step_limit_key(user_id, channel_id), str(value or "")
+                )
+            except Exception as e:
+                log.warning("Could not persist step limit", error=str(e))
+        return CommandResult(handled=True, text=text, data={"max_steps": value})
+
     @staticmethod
     def _cmd_help() -> CommandResult:
         return CommandResult(handled=True, text=COMMANDS_HELP)
@@ -104,16 +156,24 @@ class CommandProcessor:
             provider = router.current_provider
             return CommandResult(
                 handled=True,
-                text=f"Current model: `{model}` (provider: `{provider}`)",
+                text=f"Current model: `{model}` (provider: `{provider}`) — {router.capabilities.describe()}",
             )
 
         # Change model
         router.set_model(args)
         # Persist to database
         await self._persist_model(router.current_model, router.current_provider)
+        # Measure image/audio input now so the answer can say what this model can do.
+        try:
+            await router.capabilities.probe()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Capability probe failed", error=str(e))
         return CommandResult(
             handled=True,
-            text=f"Model changed to `{router.current_model}` (provider: `{router.current_provider}`)",
+            text=(
+                f"Model changed to `{router.current_model}` (provider: `{router.current_provider}`) — "
+                f"{router.capabilities.describe()}"
+            ),
         )
 
     async def _persist_model(self, model: str, provider: str) -> None:

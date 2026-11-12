@@ -8,6 +8,7 @@ import structlog
 
 from openacm.constants import TRUNCATE_PDF_CHARS, TRUNCATE_FILE_CONTEXT_CHARS
 from openacm.utils.text import truncate
+from openacm.core.messages import MSG_IMAGE_DESCRIBED, PROMPT_DESCRIBE_IMAGE
 
 log = structlog.get_logger()
 
@@ -199,11 +200,36 @@ class BrainMultimodalMixin:
                     mime = "image/webp"
 
                 if mime.startswith("image/"):
-                    try:
-                        _vision_ok = litellm.supports_vision(model=self.llm_router.current_model)
-                    except Exception:
-                        _vision_ok = True
-                    if _vision_ok:
+                    # Measured capability first (see core/model_capabilities.py); litellm's
+                    # static table only as a fallback for models not probed yet.
+                    _caps = getattr(self.llm_router, "capabilities", None)
+                    _vision_ok = _caps.supports("vision") if _caps else None
+                    if _vision_ok is None:
+                        try:
+                            _vision_ok = litellm.supports_vision(model=self.llm_router.current_model)
+                        except Exception:
+                            _vision_ok = True
+                    _delegated = ""
+                    if not _vision_ok and _caps:
+                        # The chat model is blind: let any verified vision model describe it.
+                        try:
+                            _target = await _caps.pick("vision")
+                            if _target:
+                                _delegated = await _caps.complete(_target[0], _target[1], [{
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": PROMPT_DESCRIBE_IMAGE},
+                                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                                    ],
+                                }], max_tokens=700)
+                        except Exception as _e:
+                            log.warning("Vision delegation failed", error=str(_e))
+                    if _delegated:
+                        structured_content.append({
+                            "type": "text",
+                            "text": MSG_IMAGE_DESCRIBED.format(name=file_path.name, description=_delegated),
+                        })
+                    elif _vision_ok:
                         structured_content.append({
                             "type": "image_url",
                             "image_url": {"url": f"data:{mime};base64,{b64}"},

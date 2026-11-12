@@ -27,7 +27,7 @@ class ProviderProfile:
     name: str
     needs_tool_enforcement: bool
     tool_choice_mode: str  # "auto", "required", "none"
-    max_tools_per_call: int | None  # None = no limit
+    max_tools_per_call: int | None  # None = no limit (every provider currently uses None; the cap mechanism stays for future use)
 
 log = structlog.get_logger()
 
@@ -116,6 +116,8 @@ class LLMRouter:
         self.config = config
         self.event_bus = event_bus
         self._current_provider = config.default_provider
+        from openacm.core.model_capabilities import ModelCapabilities
+        self.capabilities = ModelCapabilities(self)
         self._current_model: str | None = None
         self._total_tokens = 0
         self._total_prompt_tokens = 0
@@ -200,31 +202,35 @@ class LLMRouter:
                 name=provider,
                 needs_tool_enforcement=True,
                 tool_choice_mode="auto",
-                max_tools_per_call=15,
+                max_tools_per_call=None,
             )
         if provider == "ollama":
             return ProviderProfile(
                 name=provider,
                 needs_tool_enforcement=True,
                 tool_choice_mode="auto",
-                max_tools_per_call=10,
+                max_tools_per_call=None,
             )
         if provider == "openrouter":
             return ProviderProfile(
                 name=provider,
                 needs_tool_enforcement=True,
                 tool_choice_mode="auto",
-                max_tools_per_call=15,
+                max_tools_per_call=None,
             )
         if provider == "opencode_go":
             # OpenCode.ai proxy crashes with tool_choice="required"
             # (their backend fails reading usage.prompt_tokens).
             # Use "auto" and never enforce — let the model decide.
+            # No tool-count cap: OpenCode publishes no such limit (the old 15 was an
+            # unmeasured guess copied from Gemini and silently dropped plugin tools).
+            # If the backend ever rejects a request for too many tools, re-introduce
+            # a cap HERE — tool lists are relevance-ranked, so truncation is safe.
             return ProviderProfile(
                 name=provider,
                 needs_tool_enforcement=False,
                 tool_choice_mode="auto",
-                max_tools_per_call=15,
+                max_tools_per_call=None,
             )
         if provider == "xai":
             # xAI Grok — OpenAI-compatible API, full tool support
@@ -240,7 +246,7 @@ class LLMRouter:
                 name=provider,
                 needs_tool_enforcement=False,
                 tool_choice_mode="auto",
-                max_tools_per_call=10,
+                max_tools_per_call=None,
             )
 
         # Unknown / custom — conservative defaults
@@ -248,7 +254,7 @@ class LLMRouter:
             name=provider,
             needs_tool_enforcement=True,
             tool_choice_mode="auto",
-            max_tools_per_call=15,
+            max_tools_per_call=None,
         )
 
     def set_model(self, model: str, provider: str | None = None):
@@ -269,10 +275,13 @@ class LLMRouter:
         else:
             self._current_model = model
         log.info("Model changed", model=self.current_model, provider=self._current_provider)
+        # Measure what this model can really do (image/audio input) in the background.
+        self.capabilities.schedule_probe()
 
     async def load_persisted_model(self, database: Any) -> None:
         """Load persisted model/provider from the database on startup."""
         self._database = database
+        await self.capabilities.load(database)
         try:
             model = await database.get_setting("llm.current_model")
             provider = await database.get_setting("llm.current_provider")

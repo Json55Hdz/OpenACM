@@ -24,6 +24,12 @@ from openacm.web.state import _state
 from openacm.web.broadcast import broadcast_event, _safe_ws_send, _broadcast_to_terminal, _verify_ws_token
 from openacm.web.shell import ChannelShell
 from openacm.constants import DEFAULT_OLLAMA_BASE_URL
+from openacm.core.messages import (
+    MSG_CANCEL_PENDING,
+    MSG_NOTHING_TO_CANCEL,
+    MSG_QUEUED_ACK,
+    MSG_STEER_ACK,
+)
 
 log = structlog.get_logger()
 
@@ -83,6 +89,15 @@ async def _handle_chat_turn(
                 else:
                     clean_lines.append(line)
             clean_response = "\n".join(clean_lines).strip()
+
+            if response in (MSG_QUEUED_ACK, MSG_STEER_ACK, MSG_CANCEL_PENDING, MSG_NOTHING_TO_CANCEL):
+                # Status notes, not the end of a turn: sending them as "response" would
+                # clear the spinner/cancel button while the previous run is still working.
+                try:
+                    await _safe_ws_send(websocket, {"type": "command", "content": response, "data": None})
+                except Exception:
+                    pass
+                return
 
             payload = {
                 "type": "response",
@@ -227,9 +242,16 @@ def register_routes(app: FastAPI) -> None:
 
         # Files that render inline in the browser (no forced download)
         inline_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".html", ".htm", ".svg"}
-        headers = {}
+        # Never let the browser guess a more dangerous type than the one declared.
+        headers = {"X-Content-Type-Options": "nosniff"}
+        # Active content (it can carry scripts) still previews inline, but sandboxed:
+        # an opaque origin with scripts disabled, so a file the agent downloaded or
+        # received cannot act with the dashboard's session.
+        if ext in {".html", ".htm", ".svg"}:
+            headers["Content-Security-Policy"] = "sandbox"
         if download or ext not in inline_exts:
-            headers["Content-Disposition"] = f'attachment; filename="{file_name}"'
+            safe_name = "".join(c for c in file_name if c not in '"\\\r\n')
+            headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
 
         return Response(content=file_bytes, media_type=content_type, headers=headers)
 

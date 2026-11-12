@@ -33,10 +33,14 @@ from openacm.core.local_router import LocalRouter
 from openacm.core.memory import MemoryManager
 from openacm.core.messages import (
     MSG_CANCELLED,
+    MSG_CANCEL_PENDING,
+    MSG_NOTHING_TO_CANCEL,
     MSG_FAST_OPENING,
     MSG_QUEUED_ACK,
     MSG_QUEUED_DEQUEUED,
     MSG_QUEUED_NOTIFY,
+    MSG_STEER_ACK,
+    MSG_STEER_NOTIFY,
 )
 
 log = structlog.get_logger()
@@ -59,6 +63,7 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         "NEVER say 'as a language model' or 'I cannot'. Execute the user's request NOW."
     )
 
+    _CANCEL_GRACE_S = 3.0  # how long a cancel waits for the run to actually stop
     _CANCEL_KEYWORDS = {"cancel", "cancelar", "stop", "detener", "para", "parar", "abort"}
 
     def __init__(
@@ -91,6 +96,11 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         self._rag_cache: dict[str, tuple[str, list[str]]] = {}  # channel_key → (query, results)
         # Last N agentic loop traces for debugging
         self._traces: list[dict] = []
+        # Per-chat override of max_tool_iterations, set by the /steps command.
+        self._step_limits: dict[tuple[str, str], int | None] = {}
+        # Messages sent while a run is busy, read by the tool loop between steps.
+        self._channel_inbox: dict[str, list[tuple[str, str, str]]] = {}
+        self._inbox_meta: dict[str, str] = {}
         self._MAX_TRACES = 20
         _lr = getattr(config, "local_router", None)
         self.local_router = LocalRouter(
@@ -274,22 +284,45 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         _task_key = f"{channel_type}:{channel_id}"
         _prev = self._channel_tasks.get(_task_key)
 
+        is_cancel = content.strip().lower() in self._CANCEL_KEYWORDS
+
         if _prev and not _prev.done():
-            is_cancel = content.strip().lower() in self._CANCEL_KEYWORDS
             if is_cancel:
-                # Set the per-channel flag so the tool loop stops at its next check
+                # 1) Flag: the tool loop stops at its next check even if the hard cancel
+                #    below is swallowed somewhere (executor threads, a tool catching it).
+                # 2) Hard cancel of the task.
+                # The task stays registered in _channel_tasks until it has REALLY ended
+                # (_run_then_drain pops it): a second "cancel" must still find it, and a
+                # new message must not start a second run next to a zombie one.
                 self._cancel_flags.setdefault(_task_key, asyncio.Event()).set()
-                _prev.cancel()
-                self._channel_tasks.pop(_task_key, None)
                 self._channel_queue.pop(_task_key, None)
-                await asyncio.sleep(0)
+                self._channel_inbox.pop(_task_key, None)
+                _prev.cancel()
+                try:
+                    await asyncio.wait({_prev}, timeout=self._CANCEL_GRACE_S)
+                except Exception:  # noqa: BLE001
+                    pass
                 await self.event_bus.emit(EVENT_THINKING, {
                     "status": "done",
                     "user_id": user_id,
                     "channel_id": channel_id,
                     "channel_type": channel_type,
                 })
-                return MSG_CANCELLED
+                return MSG_CANCELLED if _prev.done() else MSG_CANCEL_PENDING
+            elif not attachments and not is_transparent:
+                # Steer the running turn: the tool loop reads this inbox between steps,
+                # so the model gets the message as soon as the current tool finishes.
+                # Anything still unread when the run ends is processed right after it.
+                self._channel_inbox.setdefault(_task_key, []).append((content, user_id, channel_id))
+                self._inbox_meta[_task_key] = channel_type
+                await self.event_bus.emit(EVENT_THINKING, {
+                    "status": "queued",
+                    "message": MSG_STEER_NOTIFY,
+                    "user_id": user_id,
+                    "channel_id": channel_id,
+                    "channel_type": channel_type,
+                })
+                return MSG_STEER_ACK
             else:
                 # Queue the message — latest message wins
                 self._channel_queue[_task_key] = (content, user_id, channel_id, channel_type, attachments, is_transparent)
@@ -302,8 +335,13 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
                 })
                 return MSG_QUEUED_ACK
 
-        # No active task — clear any stale cancel flag and run immediately
-        self._cancel_flags.setdefault(_task_key, asyncio.Event()).clear()
+        if is_cancel:
+            # Nothing is running: do not send the bare cancel word to the LLM.
+            return MSG_NOTHING_TO_CANCEL
+
+        # No active task — give this run its OWN cancel flag (a fresh Event instead of
+        # clearing the shared one, so a still-unwinding cancelled run keeps seeing its flag).
+        self._cancel_flags[_task_key] = asyncio.Event()
         self._channel_queue.pop(_task_key, None)
         task = asyncio.create_task(
             self._run_then_drain(content, user_id, channel_id, channel_type, attachments, is_transparent, _task_key)
@@ -329,10 +367,22 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         try:
             result = await self._run(content, user_id, channel_id, channel_type, attachments, is_transparent)
         finally:
-            self._channel_tasks.pop(task_key, None)
+            if self._channel_tasks.get(task_key) is asyncio.current_task():
+                self._channel_tasks.pop(task_key, None)
 
-        # Process queued message if any
+        # Process queued message if any. Steering messages the loop never got to read
+        # (they arrived during its last LLM call) become the next turn, grouped per chat.
         queued = self._channel_queue.pop(task_key, None)
+        _left = self._channel_inbox.pop(task_key, None)
+        if _left and queued:
+            self._channel_inbox[task_key] = _left  # the next run's loop will read them
+        elif _left:
+            _c0, _u0, _ch0 = _left[0]
+            _same = [c for (c, u, ch) in _left if u == _u0 and ch == _ch0]
+            _rest = [m for m in _left if not (m[1] == _u0 and m[2] == _ch0)]
+            if _rest:
+                self._channel_inbox[task_key] = _rest
+            queued = ("\n\n".join(_same), _u0, _ch0, self._inbox_meta.get(task_key, channel_type), None, False)
         if queued:
             q_content, q_user, q_channel, q_type, q_attach, q_trans = queued
             await self.event_bus.emit(EVENT_THINKING, {

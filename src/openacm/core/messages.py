@@ -10,9 +10,13 @@ Naming convention: MSG_<CONTEXT>_<DESCRIPTION>
 # ── Task control ─────────────────────────────────────────────────────────────
 
 MSG_CANCELLED = "⏹ Cancelled."
+MSG_CANCEL_PENDING = "⏹ Cancelling… the current step is finishing and nothing else will run."
+MSG_NOTHING_TO_CANCEL = "Nothing is running in this chat."
 MSG_CANCELLED_FOLLOWUP = "⏹ Cancelled — what else can I help you with?"
 MSG_QUEUED_NOTIFY = "⏳ Processing previous task... your message will be sent when it finishes."
 MSG_QUEUED_ACK = "⏳ Processing something, please wait... (type «cancel» to stop)"
+MSG_STEER_NOTIFY = "📨 Got it — I will read your message as soon as the current step finishes."
+MSG_STEER_ACK = "📨 Message received — it will be read as soon as the current step finishes (send «cancel» to stop everything)."
 MSG_QUEUED_DEQUEUED = "▶ Processing your message..."
 
 # ── Progress / status ────────────────────────────────────────────────────────
@@ -131,3 +135,18 @@ Structure your response exactly like this (use the same language the user used):
 Be thorough and specific — this summary permanently replaces the original messages \
 and is the ONLY record of this work. Never truncate or omit paths, filenames, or outcomes.\
 """
+
+# ── /steps command (per-chat tool-step limit) ────────────────────────────────
+STEPS_UNLIMITED = 1_000_000  # sentinel meaning "no limit" for this chat
+MSG_STEPS_CURRENT = "Step limit for this chat: **{limit}** (default: {default}). Use `/steps <n>`, `/steps off` (no limit) or `/steps default`."
+MSG_STEPS_SET = "Step limit for this chat set to **{limit}**."
+MSG_STEPS_OFF = "Step limit removed for this chat. Send `cancelar` / stop the run from the dashboard if it loops; `/steps default` restores the limit."
+MSG_STEPS_DEFAULT = "Step limit for this chat restored to the default ({default})."
+MSG_STEPS_INVALID = "Usage: `/steps` (show) · `/steps <number>` · `/steps off` (no limit) · `/steps default`."
+
+# ── Vision delegation (chat model cannot see images; another verified model describes them) ──
+PROMPT_DESCRIBE_IMAGE = (
+    "Describe this image for someone who cannot see it: what it shows, every piece of visible "
+    "text exactly as written, and any numbers, labels or layout that matter. Be factual and complete."
+)
+MSG_IMAGE_DESCRIBED = "[Image — {name}, described by a vision model because the chat model cannot see images]:\n{description}"

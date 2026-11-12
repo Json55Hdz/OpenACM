@@ -139,11 +139,29 @@ class ToolRegistry:
         # Cosine similarity against all tools (pre-normalized)
         similarities = (msg_norm @ self._tool_embeddings.T)[0]
 
-        # Select tools above threshold + always-include tools
-        selected: list[dict[str, Any]] = []
-        for i, (name, sim) in enumerate(zip(self._tool_names_order, similarities)):
-            if sim >= SEMANTIC_TOOL_THRESHOLD or name in ALWAYS_INCLUDE_TOOLS:
-                selected.append(self.tools[name].to_slim_schema())
+        # Remember per-tool scores so callers can rank tools by relevance.
+        self._last_scores = {
+            name: float(sim) for name, sim in zip(self._tool_names_order, similarities)
+        }
+
+        # Select tools above threshold + always-include tools.
+        # ORDER MATTERS: providers with a tool cap (max_tools_per_call) truncate the
+        # list from the end (brain_loop: tools[:cap]), so the most relevant tools must
+        # come first — ranked by similarity — and "always include" tools that did not
+        # match the message go last. Without this, tools registered late (every plugin)
+        # fall off the end of the list and the model never sees them.
+        relevant: list[tuple[float, str]] = []
+        always_only: list[str] = []
+        for name, sim in zip(self._tool_names_order, similarities):
+            if sim >= SEMANTIC_TOOL_THRESHOLD:
+                relevant.append((float(sim), name))
+            elif name in ALWAYS_INCLUDE_TOOLS:
+                always_only.append(name)
+        relevant.sort(key=lambda t: -t[0])
+        selected: list[dict[str, Any]] = [
+            self.tools[name].to_slim_schema()
+            for name in [n for _, n in relevant] + always_only
+        ]
 
         log.debug(
             "Semantic tool selection",
@@ -264,6 +282,32 @@ class ToolRegistry:
             log.debug("MCP tools appended", count=len(extras))
         return selected + extras
 
+    def family_of(self, name: str) -> str | None:
+        """The toolset a tool belongs to: the plugin package that defines it.
+        Core tools have no family (they are selected one by one)."""
+        td = self.tools.get(name)
+        if td is None:
+            return None
+        pkg = (getattr(td.handler, "__module__", "") or "").split(".")[0]
+        return pkg if pkg and pkg != "openacm" else None
+
+    def expand_families(self, names: list[str]) -> list[str]:
+        """`names` (known ones, order kept) followed by every other tool of the same
+        families. A plugin's tools are a set: offering half of it leaves the model stuck."""
+        out: list[str] = []
+        fams: list[str] = []
+        for n in names:
+            if n in self.tools and n not in out:
+                out.append(n)
+                f = self.family_of(n)
+                if f and f not in fams:
+                    fams.append(f)
+        if fams:
+            for n in self.tools:
+                if n not in out and self.family_of(n) in fams:
+                    out.append(n)
+        return out
+
     def get_tools_by_intent(self, message: str) -> list[dict[str, Any]]:
         """Return only tools relevant to the user's message.
 
@@ -299,12 +343,24 @@ class ToolRegistry:
         semantic_result = self.get_tools_semantic(message)
         if semantic_result is not None:
             if len(semantic_result) > 0:
-                # Merge plugin extras with semantic results (deduplicated by name)
+                # Merge plugin extras with semantic results (deduplicated by name).
+                # Keyword-matched plugin tools are a strong intent signal, so they go
+                # FIRST (ranked by semantic score) — if the provider caps the tool
+                # count, the tail is what gets dropped.
                 if plugin_extras:
-                    seen = {t["function"]["name"] for t in semantic_result}
-                    semantic_result = semantic_result + [
-                        t for t in plugin_extras if t["function"]["name"] not in seen
+                    scores = getattr(self, "_last_scores", {}) or {}
+                    extras: dict[str, dict[str, Any]] = {}
+                    for t in plugin_extras:
+                        extras.setdefault(t["function"]["name"], t)
+                    ordered_extras = sorted(
+                        extras.values(),
+                        key=lambda t: -scores.get(t["function"]["name"], 0.0),
+                    )
+                    rest = [
+                        t for t in semantic_result
+                        if t["function"]["name"] not in extras
                     ]
+                    semantic_result = ordered_extras + rest
                 return self._merge_mcp(semantic_result)
             # Semantic returned 0 matches.
             # Short messages with no matches are genuinely conversational → trust it.
@@ -329,11 +385,14 @@ class ToolRegistry:
         # Start with general only (NOT meta by default — mcp handled via _merge_mcp)
         matched_categories: set[str] = {"general"}
 
+        category_hits: dict[str, int] = {}
         for cat, keywords in self.INTENT_KEYWORDS.items():
             if cat == "mcp":
                 continue  # MCP tools are always included via _merge_mcp
-            if any(self._kw_match(msg_lower, kw) for kw in keywords):
+            hits = sum(1 for kw in keywords if self._kw_match(msg_lower, kw))
+            if hits:
                 matched_categories.add(cat)
+                category_hits[cat] = hits
 
         # No specific intent detected in a longer message → general tools as safety net
         if matched_categories == {"general"}:
@@ -343,11 +402,16 @@ class ToolRegistry:
                 if t.category == "general"
             ])
 
-        filtered = [
-            t.to_slim_schema()
-            for t in self.tools.values()
+        # Rank by how strongly the message matched each category (most keyword hits
+        # first, "general" last; ties keep registration order). Providers with a tool
+        # cap truncate from the end (brain_loop: tools[:cap]), so relevance — not
+        # registration order — must decide what survives.
+        candidates = [
+            t for t in self.tools.values()
             if t.category in matched_categories or t.category == "general"
         ]
+        candidates.sort(key=lambda t: -category_hits.get(t.category, 0))  # stable
+        filtered = [t.to_slim_schema() for t in candidates]
 
         log.debug(
             "Keyword tool filtering applied",

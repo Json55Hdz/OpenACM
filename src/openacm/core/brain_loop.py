@@ -22,12 +22,15 @@ from openacm.core.messages import (
     MSG_EMPTY_RESPONSE,
     MSG_MAX_ITERATIONS,
     MSG_STEP,
+    STEPS_UNLIMITED,
     MSG_THINKING,
     MSG_TOOL_EXECUTING,
 )
 from openacm.core.output_compressor import compress as compress_output, compression_summary
 
 log = structlog.get_logger()
+
+_CHAT_TOOLS_MAX = 60  # tools remembered per chat
 
 # Matches all ANSI/VT100 escape sequences (colors, cursor moves, OSC title-set, etc.)
 # Order matters: longer/more-specific patterns must come first.
@@ -61,6 +64,71 @@ def _clean_tool_call_id(call_id: str) -> str:
 
 
 class BrainLoopMixin:
+
+    @staticmethod
+    def step_limit_key(user_id: str, channel_id: str) -> str:
+        return f"chat.max_steps.{channel_id}.{user_id}"
+
+    @staticmethod
+    def chat_tools_key(user_id: str, channel_id: str) -> str:
+        return f"chat.tools.{channel_id}.{user_id}"
+
+    async def _load_chat_tools(self, user_id: str, channel_id: str) -> list[str]:
+        """Names of the tools this chat has used (in memory, lazily loaded from the DB)."""
+        cache = self.__dict__.setdefault("_chat_tools", {})
+        key = (user_id, channel_id)
+        if key not in cache:
+            names: list[str] = []
+            db = getattr(self.memory, "database", None) or getattr(self, "database", None)
+            try:
+                raw = await db.get_setting(self.chat_tools_key(user_id, channel_id)) if db else None
+                if raw:
+                    names = [n for n in str(raw).split(",") if n]
+            except Exception:  # noqa: BLE001
+                names = []
+            cache[key] = names
+        return list(cache[key])
+
+    async def _remember_chat_tool(self, user_id: str, channel_id: str, name: str) -> None:
+        try:
+            names = await self._load_chat_tools(user_id, channel_id)
+            if not name or name in names:
+                return
+            names = (names + [name])[-_CHAT_TOOLS_MAX:]
+            self.__dict__.setdefault("_chat_tools", {})[(user_id, channel_id)] = names
+            db = getattr(self.memory, "database", None) or getattr(self, "database", None)
+            if db:
+                await db.set_setting(self.chat_tools_key(user_id, channel_id), ",".join(names))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Could not remember chat tool", error=str(exc))
+
+    def _take_inbox(self, task_key: str, user_id: str, channel_id: str) -> list[str]:
+        """Pop the messages this chat's user sent while the run was busy."""
+        inbox = getattr(self, "_channel_inbox", None)
+        if not inbox or not inbox.get(task_key):
+            return []
+        mine = [c for (c, u, ch) in inbox[task_key] if u == user_id and ch == channel_id]
+        inbox[task_key] = [m for m in inbox[task_key] if not (m[1] == user_id and m[2] == channel_id)]
+        return mine
+
+    async def _resolve_step_limit(self, user_id: str, channel_id: str) -> int:
+        """Tool-step limit for this chat: the /steps override if set, else the config default."""
+        default = self.config.max_tool_iterations
+        limits = getattr(self, "_step_limits", None)
+        if limits is None:
+            return default
+        key = (user_id, channel_id)
+        if key not in limits:
+            value = None
+            try:
+                db = getattr(getattr(self, "memory", None), "database", None)
+                raw = await db.get_setting(self.step_limit_key(user_id, channel_id)) if db else None
+                if isinstance(raw, str) and raw.strip().isdigit() and int(raw) > 0:
+                    value = int(raw)
+            except Exception as exc:  # noqa: BLE001 - a settings hiccup must not break the chat
+                log.debug("Could not load per-chat step limit", error=str(exc))
+            limits[key] = value
+        return limits[key] or default
 
     # Messages older than this index (from the end) get aggressively stripped to save tokens.
     _RECENT_MSG_WINDOW = 6  # keep full detail for the last N messages
@@ -392,6 +460,28 @@ class BrainLoopMixin:
                     if not any(t.get("function", {}).get("name") == "save_user_profile" for t in tools):
                         tools.append(sp_def.to_slim_schema())
 
+        # Per-chat toolset. Selection above runs on the LATEST user message only, so a
+        # follow-up like "continúa" (or a long task whose early tool calls scrolled out of
+        # history) would drop tools the chat depends on. Every tool this chat has used
+        # stays available for the rest of the chat, together with its whole family
+        # (a plugin's tools work as a set: browser_* is useless without audio_*).
+        if self.tool_registry and tools is not None:
+            try:
+                names = [t.get("function", {}).get("name") for t in tools]
+                for m in reversed(messages[-40:]):
+                    if isinstance(m, dict):
+                        for tc in (m.get("tool_calls") or []):
+                            if isinstance(tc, dict):
+                                names.append((tc.get("function") or {}).get("name"))
+                names += await self._load_chat_tools(user_id, channel_id)
+                have = {t.get("function", {}).get("name") for t in tools}
+                for nm in self.tool_registry.expand_families([n for n in names if n]):
+                    if nm not in have:
+                        tools.append(self.tool_registry.tools[nm].to_slim_schema())
+                        have.add(nm)
+            except Exception as exc:  # noqa: BLE001 - never break the loop over this
+                log.debug("Chat toolset carry-over failed", error=str(exc))
+
         # Cap tool count for providers with limited context
         profile = self.llm_router.get_provider_profile()
         if tools and profile.max_tools_per_call is not None:
@@ -427,10 +517,12 @@ class BrainLoopMixin:
 
         # Agentic loop: LLM may call tools multiple times
         iterations = 0
-        max_iterations = self.config.max_tool_iterations
+        max_iterations = await self._resolve_step_limit(user_id, channel_id)
         generated_attachments: list[str] = []  # Track files generated by send_file_to_chat
         _last_tool_signature: str | None = None  # For repeated-call loop detection
         _repeated_call_count: int = 0
+        _last_results_sig: str | None = None   # tool results of the previous iteration
+        _last_results_changed: bool = False    # did they differ from the one before?
         _empty_response_retried: bool = False  # Guard: only inject the "write now" turn once
         _consecutive_read_only_iters: int = 0  # Analysis-paralysis detector
         # Tools that constitute "real work" in a swarm — any write/mutate/output action
@@ -461,8 +553,22 @@ class BrainLoopMixin:
             # while a subprocess was running in run_in_executor (CancelledError alone
             # doesn't interrupt executor threads).
             if _cancel_event.is_set():
-                _cancel_event.clear()
-                return "⏹ Cancelado."
+                return MSG_CANCELLED
+
+            # Messages the user sent while this run was working: read them NOW (between
+            # steps, where the tool-call protocol allows a user turn) instead of after
+            # the whole run. The model sees them on its very next call.
+            _steered = self._take_inbox(_task_key_for_cancel, user_id, channel_id)
+            if _steered:
+                for _s_content in _steered:
+                    await self.memory.add_message(user_id, channel_id, "user", _s_content)
+                    if tools is not None and self.tool_registry:
+                        _have = {t.get("function", {}).get("name") for t in tools}
+                        for _t in self.tool_registry.get_tools_by_intent(_s_content) or []:
+                            if _t.get("function", {}).get("name") not in _have:
+                                tools.append(_t)
+                messages = await self.memory.get_messages(user_id, channel_id)
+                log.info("User message injected mid-run", count=len(_steered), iteration=iterations)
 
             iterations += 1
             is_tool_loop = iterations > 1
@@ -471,7 +577,7 @@ class BrainLoopMixin:
                 EVENT_THINKING,
                 {
                     "status": "processing",
-                    "message": MSG_STEP.format(iterations=iterations, max_iterations=max_iterations),
+                    "message": MSG_STEP.format(iterations=iterations, max_iterations=("∞" if max_iterations >= STEPS_UNLIMITED else max_iterations)),
                     "iteration": iterations,
                     "user_id": user_id,
                     "channel_id": channel_id,
@@ -736,7 +842,10 @@ class BrainLoopMixin:
                 f"{tc['function']['name']}:{tc['function']['arguments']}"
                 for tc in response["tool_calls"]
             )
-            if _call_sig == _last_tool_signature:
+            # Same call AND same result as last time = stuck. Same call with a DIFFERENT
+            # result is progress (e.g. pressing "Next" on consecutive screens, polling a
+            # job), so it does not count.
+            if _call_sig == _last_tool_signature and not _last_results_changed:
                 _repeated_call_count += 1
                 if _repeated_call_count >= 2:
                     log.warning(
@@ -764,6 +873,8 @@ class BrainLoopMixin:
             # asyncio.gather preserves input order in its return list regardless of
             # completion order, so the memory writes below are always correctly sequenced
             # (required by the OpenAI tool-call protocol).
+            if _cancel_event.is_set():  # cancelled while the LLM was answering: run no tools
+                return MSG_CANCELLED
             _tool_results = await asyncio.gather(
                 *[
                     self._execute_one_tool(tc, user_id, channel_id, channel_type)
@@ -780,12 +891,19 @@ class BrainLoopMixin:
                 self._save_trace(_trace)
                 return MSG_CANCELLED_FOLLOWUP
 
+            _results_sig = "|".join(
+                str(_r[3]) for _r in _tool_results if not isinstance(_r, Exception)
+            )
+            _last_results_changed = _results_sig != _last_results_sig
+            _last_results_sig = _results_sig
+
             # Write results to memory in original order and collect side-effects
             for _r in _tool_results:
                 if isinstance(_r, Exception):
                     continue  # _execute_one_tool catches all non-CancelledError exceptions
                 _tc_id, _tc_name, _tc_args, _tc_result, _tc_attachment, _tc_trace = _r
                 _tool_sequence_for_turn.append({"tool": _tc_name, "arguments": _tc_args})
+                await self._remember_chat_tool(user_id, channel_id, _tc_name)
                 if _tc_attachment:
                     generated_attachments.append(_tc_attachment)
                 _iter_trace["tool_calls"].append(_tc_trace)

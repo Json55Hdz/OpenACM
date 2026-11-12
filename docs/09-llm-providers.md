@@ -225,10 +225,10 @@ Some providers have quirks that OpenACM handles automatically:
 
 | Provider | Quirk | How OpenACM handles it |
 |----------|-------|----------------------|
-| Gemini | Strict message format; tool limits | Message normalization, max 15 tools per call |
-| Ollama / local models | Weak native tool calling | Tool-use enforcement message, max 10 tools per call |
+| Gemini | Strict message format; tool limits | Message normalization |
+| Ollama / local models | Weak native tool calling | Tool-use enforcement message |
 | OpenCode Go | Proxy fails with `tool_choice="required"` | Always `auto`, no enforcement |
-| Unknown / custom | — | Conservative defaults (enforcement on, max 15 tools) |
+| Unknown / custom | — | Conservative defaults (enforcement on) |
 | Thinking models (DeepSeek R1, Kimi) | Emit reasoning tokens / `<think>` tags | Tags stripped from the answer; reasoning streamed to the dashboard and stripped from old context |
 
 ---

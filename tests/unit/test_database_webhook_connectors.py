@@ -3,9 +3,22 @@ import pytest
 from openacm.storage.database import Database
 
 
+_OPEN_DBS: list[Database] = []
+
+
+@pytest.fixture(autouse=True)
+async def _close_open_dbs():
+    """Close every database a test opened. An unclosed aiosqlite connection leaves a
+    non-daemon worker thread alive, which keeps the pytest process from exiting."""
+    yield
+    while _OPEN_DBS:
+        await _OPEN_DBS.pop().close()
+
+
 async def _make_db():
     db = Database(":memory:")
     await db.initialize()
+    _OPEN_DBS.append(db)
     # Create a default agent for the flow to reference
     await db._db.execute(
         "INSERT INTO agents (name, system_prompt, webhook_secret) VALUES (?, ?, ?)",

@@ -207,3 +207,65 @@ class TestIsConversational:
         # Messages over 80 chars skip the conversational check entirely
         long_msg = "hola " * 20  # 100+ chars, pure greetings but too long
         assert tool_registry._is_conversational(long_msg) is False
+
+
+class _FixedEncoder:
+    """encode() always returns the same unit vector [1, 0]."""
+
+    def encode(self, texts, **kwargs):
+        return np.array([[1.0, 0.0]] * len(texts))
+
+
+class TestSemanticSelectionOrderSurvivesToolCap:
+    """Providers cap tools per call (brain_loop: tools[:cap]). The list must be
+    ranked by relevance so tools registered LAST (every plugin) are not the ones
+    that fall off the end."""
+
+    def _setup(self, tool_registry, n_builtin=20):
+        names, embs = [], []
+        for i in range(n_builtin):  # registered first, only mildly relevant
+            n = f"builtin_{i}"
+            tool_registry.tools[n] = ToolDefinition(
+                name=n, description="x", parameters={"type": "object", "properties": {}},
+                handler=_dummy_handler, category="general",
+            )
+            names.append(n)
+            embs.append([0.5, 0.866])  # cosine 0.5 with [1, 0]
+        for n, vec in (("plugin_best", [1.0, 0.0]), ("plugin_good", [0.8, 0.6])):
+            tool_registry.tools[n] = ToolDefinition(
+                name=n, description="x", parameters={"type": "object", "properties": {}},
+                handler=_dummy_handler, category="audio",
+            )
+            names.append(n)  # registered last
+            embs.append(vec)
+        tool_registry._semantic_model = _FixedEncoder()
+        tool_registry._tool_names_order = names
+        tool_registry._tool_embeddings = np.array(embs)
+
+    def test_most_relevant_tools_come_first_even_if_registered_last(self, tool_registry):
+        self._setup(tool_registry)
+        got = [t["function"]["name"] for t in tool_registry.get_tools_semantic("msg")]
+        assert got[:2] == ["plugin_best", "plugin_good"]
+        capped = got[:15]  # what brain_loop does for a 15-tool provider
+        assert "plugin_best" in capped and "plugin_good" in capped
+
+    def test_keyword_matched_plugin_tools_lead_the_intent_result(self, tool_registry):
+        self._setup(tool_registry)
+        tool_registry.register_plugin_keywords({"audio": ["escucha"]})
+        got = [t["function"]["name"] for t in tool_registry.get_tools_by_intent("escucha esto")]
+        assert got[:2] == ["plugin_best", "plugin_good"]
+
+
+class TestKeywordFallbackRanksByCategoryHits:
+    def test_strongest_matching_category_first_general_last(self, tool_registry):
+        for name, cat in (("g1", "general"), ("b1", "browser"), ("d1", "desktop"), ("d2", "desktop")):
+            tool_registry.tools[name] = ToolDefinition(
+                name=name, description="x", parameters={"type": "object", "properties": {}},
+                handler=_dummy_handler, category=cat,
+            )
+        tool_registry.INTENT_KEYWORDS = {
+            "browser": ["navegador"],
+            "desktop": ["mouse", "clic", "pantalla"],
+        }
+        got = [t["function"]["name"] for t in tool_registry.get_tools_by_intent("mueve el mouse y haz clic en la pantalla del navegador")]
+        assert got.index("d1") < got.index("b1") < got.index("g1")
