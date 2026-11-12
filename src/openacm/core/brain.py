@@ -294,9 +294,9 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
                 # The task stays registered in _channel_tasks until it has REALLY ended
                 # (_run_then_drain pops it): a second "cancel" must still find it, and a
                 # new message must not start a second run next to a zombie one.
+                # Messages the user sent while it was working are NOT dropped: they run
+                # as the next turn as soon as the cancelled run has ended.
                 self._cancel_flags.setdefault(_task_key, asyncio.Event()).set()
-                self._channel_queue.pop(_task_key, None)
-                self._channel_inbox.pop(_task_key, None)
                 _prev.cancel()
                 try:
                     await asyncio.wait({_prev}, timeout=self._CANCEL_GRACE_S)
@@ -365,13 +365,17 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
     ) -> str:
         """Run _run(), then process any queued message afterwards."""
         try:
-            result = await self._run(content, user_id, channel_id, channel_type, attachments, is_transparent)
+            return await self._run(content, user_id, channel_id, channel_type, attachments, is_transparent)
         finally:
+            # Runs on normal end AND on cancel, so waiting messages are never stranded.
             if self._channel_tasks.get(task_key) is asyncio.current_task():
                 self._channel_tasks.pop(task_key, None)
+                self._start_waiting(task_key, channel_type)
 
-        # Process queued message if any. Steering messages the loop never got to read
-        # (they arrived during its last LLM call) become the next turn, grouped per chat.
+    def _start_waiting(self, task_key: str, channel_type: str) -> None:
+        """Start the next turn from what the user sent while the previous run was busy:
+        a queued message, or the steering messages the loop never got to read (grouped
+        per chat)."""
         queued = self._channel_queue.pop(task_key, None)
         _left = self._channel_inbox.pop(task_key, None)
         if _left and queued:
@@ -383,8 +387,13 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
             if _rest:
                 self._channel_inbox[task_key] = _rest
             queued = ("\n\n".join(_same), _u0, _ch0, self._inbox_meta.get(task_key, channel_type), None, False)
-        if queued:
-            q_content, q_user, q_channel, q_type, q_attach, q_trans = queued
+        if not queued:
+            return
+        q_content, q_user, q_channel, q_type, q_attach, q_trans = queued
+        # Its own cancel flag: the previous run's flag may be set (it was cancelled).
+        self._cancel_flags[task_key] = asyncio.Event()
+
+        async def _next() -> str:
             await self.event_bus.emit(EVENT_THINKING, {
                 "status": "start",
                 "message": MSG_QUEUED_DEQUEUED,
@@ -392,10 +401,6 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
                 "channel_id": q_channel,
                 "channel_type": q_type,
             })
-            next_task = asyncio.create_task(
-                self._run_then_drain(q_content, q_user, q_channel, q_type, q_attach, q_trans, task_key)
-            )
-            self._channel_tasks[task_key] = next_task
-            # Don't await — let it run in background
+            return await self._run_then_drain(q_content, q_user, q_channel, q_type, q_attach, q_trans, task_key)
 
-        return result
+        self._channel_tasks[task_key] = asyncio.create_task(_next())

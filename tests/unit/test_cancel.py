@@ -130,3 +130,24 @@ async def test_unread_mid_run_message_becomes_the_next_turn():
     await first
     await asyncio.gather(*b._channel_tasks.values(), return_exceptions=True)
     assert seen == ["go", "uno\n\ndos"]  # nothing lost, both delivered together
+
+
+async def test_message_waiting_when_cancelled_runs_right_after_the_cancel():
+    started, seen = asyncio.Event(), []
+
+    async def run(content, *a):
+        seen.append(content)
+        started.set()
+        if content == "go":
+            await asyncio.sleep(30)
+        return "done"
+
+    b = _brain(run)
+    first = asyncio.create_task(b.process_message("go", "u", "web", "web"))
+    await started.wait()
+    assert await b.process_message("mejor haz otra cosa", "u", "web", "web") == MSG_STEER_ACK
+    assert await b.process_message("cancelar", "u", "web", "web") == MSG_CANCELLED
+    assert await first == MSG_CANCELLED
+    await asyncio.gather(*b._channel_tasks.values(), return_exceptions=True)
+    assert seen == ["go", "mejor haz otra cosa"]      # the waiting message ran by itself
+    assert not b._cancel_flags["web:web"].is_set()    # with a fresh, unset cancel flag
