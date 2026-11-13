@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 
 dependencies = [
     # Core LLM
-    "litellm>=1.84.0",
+    "litellm>=1.103.1",
     "pydantic>=2.0",
     "pydantic-settings>=2.14.2",
     "pyyaml>=6.0",
@@ -41,17 +41,17 @@ dependencies = [
     
     # Multimodal & Crypto
     "mss>=9.0",
-    "Pillow>=12.3.0",
+    "Pillow>=13.0.0",
     "cryptography>=50.0.0",
-    "pypdf>=6.16.1",
+    "pypdf>=6.21.4",
     "markitdown[docx,xlsx,pptx,audio-transcription]>=0.1",
     "chonkie[sentence]>=1.0",
-    "docling>=2.94.0",
+    "docling>=2.132.0",
     "instructor>=1.0",
     
     # Tier-1 Agentic powers
     "chromadb>=1.5.9",
-    "sentence-transformers>=3.3",
+    "sentence-transformers>=5.6.0",
     "playwright>=1.49",
     "jupyter-client>=8.6",
     "ipykernel>=6.29",
@@ -94,20 +94,27 @@ build-backend = "setuptools.build_meta"
 # Floors for transitive dependencies with known security advisories.
 constraint-dependencies = [
     "accelerate>=1.15.0",
-    "aiohttp>=3.14.3",
+    "aiohttp>=3.14.4",
     "anyio>=4.14.2",
+    "certifi>=2026.10.18",
     "click>=8.3.3",
     "docling-core>=2.74.1",
+    "docling-slim>=2.132.0",
+    "filelock>=4.2.1",
+    "fsspec>=2026.6.0",
     "httplib2>=0.32.0",
     "idna>=3.15",
-    "pyasn1>=0.6.4",
+    "multidict>=6.9.1",
+    "oauthlib>=4.0.1",
+    "opentelemetry-api>=1.45.1",
+    "pyasn1>=0.6.5",
     "pygments>=2.20.0",
     "pyjwt>=2.13.0",
-    "setuptools>=83.0.0",
-    "soupsieve>=2.9.0",
+    "setuptools>=84.1.0",
+    "soupsieve>=4.0.0",
     "starlette>=1.3.1",
     "torch>=2.13.0",
-    "tornado>=6.5.8",
+    "tornado>=6.6",
     "transformers>=5.10.0",
     "urllib3>=2.7.0",
 ]
