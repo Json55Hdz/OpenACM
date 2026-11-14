@@ -1,20 +1,21 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
 import {
   usePlugins,
   useTogglePlugin,
   usePluginDocs,
   useRestartSystem,
   usePluginNav,
+  useInstallPlugin,
+  PLUGIN_MARKETPLACE_URL,
 } from '@/hooks/use-plugins';
 import { PluginConfigForm } from '@/components/plugins/plugin-config-form';
 import { AppLayout } from '@/components/layout/app-layout';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Loader2, Puzzle, ExternalLink, Store, ArrowUpRight } from 'lucide-react';
+import { Loader2, Puzzle, ExternalLink, Store, ArrowUpRight, Download, ShieldAlert } from 'lucide-react';
 
 function ToggleSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -62,6 +63,37 @@ export default function PluginsPage() {
   const [configOpen, setConfigOpen] = useState<string | null>(null);
   const [showDocs, setShowDocs] = useState(false);
   const [needsRestart, setNeedsRestart] = useState(false);
+  const installPlugin = useInstallPlugin();
+  const [installUrl, setInstallUrl] = useState('');
+  const [confirmSource, setConfirmSource] = useState<string | null>(null);
+
+  // Deep link from the marketplace: /plugins?install=<github repo url>.
+  // It only opens the confirmation dialog — nothing is installed without a click here.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const source = params.get('install');
+    if (!source) return;
+    setConfirmSource(source.trim());
+    params.delete('install');
+    const rest = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+  }, []);
+
+  const closeInstall = () => {
+    if (installPlugin.isPending) return;
+    setConfirmSource(null);
+    installPlugin.reset();
+  };
+
+  const runInstall = () => {
+    if (!confirmSource) return;
+    installPlugin.mutate(confirmSource, {
+      onSuccess: () => {
+        setNeedsRestart(true);
+        setInstallUrl('');
+      },
+    });
+  };
 
   // First nav route each plugin contributes, if any — lets a card link
   // straight to the plugin's own page instead of just showing metadata.
@@ -102,7 +134,8 @@ export default function PluginsPage() {
           <div style={{ display: 'flex', gap: 10 }}>
             <button
               className="btn-secondary"
-              onClick={() => toast.info('Marketplace de plugins — próximamente')}
+              onClick={() => window.open(PLUGIN_MARKETPLACE_URL, '_blank', 'noopener,noreferrer')}
+              title="Abrir el marketplace de plugins"
             >
               <Store size={14} style={{ marginRight: 6, verticalAlign: -2 }} />
               Marketplace
@@ -112,6 +145,36 @@ export default function PluginsPage() {
             </button>
           </div>
         </div>
+
+        {!showDocs && (
+          <form
+            className="acm-card"
+            style={{ padding: 16, marginBottom: 20, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              const source = installUrl.trim();
+              if (!source) return;
+              installPlugin.reset();
+              setConfirmSource(source);
+            }}
+          >
+            <Download size={16} style={{ color: 'var(--acm-fg-4)', flexShrink: 0 }} />
+            <input
+              className="mono"
+              value={installUrl}
+              onChange={(e) => setInstallUrl(e.target.value)}
+              placeholder="https://github.com/usuario/plugin"
+              aria-label="URL del repositorio del plugin en GitHub"
+              style={{
+                flex: 1, minWidth: 240, background: 'var(--acm-base)', color: 'var(--acm-fg)',
+                border: '1px solid var(--acm-border)', borderRadius: 8, padding: '8px 12px', fontSize: 13,
+              }}
+            />
+            <button type="submit" className="btn-primary" disabled={!installUrl.trim()}>
+              Instalar desde GitHub
+            </button>
+          </form>
+        )}
 
         {needsRestart && (
           <div
@@ -145,7 +208,7 @@ export default function PluginsPage() {
             <Puzzle size={40} style={{ color: 'var(--acm-fg-4)', marginBottom: 16 }} />
             <h3 className="text-base font-semibold mb-2" style={{ color: 'var(--acm-fg-2)' }}>Sin plugins instalados</h3>
             <p className="text-sm" style={{ color: 'var(--acm-fg-4)' }}>
-              Los plugins se cargan automáticamente desde <span className="mono">src/openacm/plugins/</span>.
+              Instala uno desde el marketplace o pega arriba la URL de su repositorio en GitHub.
             </p>
           </div>
         ) : (
@@ -233,6 +296,107 @@ export default function PluginsPage() {
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {confirmSource && (
+          <div
+            style={{
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16,
+            }}
+            onClick={closeInstall}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Instalar plugin"
+              style={{
+                background: 'var(--acm-card)', borderRadius: 12, padding: 28, width: 520, maxWidth: '100%',
+                maxHeight: '90vh', overflowY: 'auto',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ marginBottom: 12, color: 'var(--acm-fg)' }}>
+                {installPlugin.isSuccess ? 'Plugin instalado' : 'Instalar plugin'}
+              </h3>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 13, color: 'var(--acm-fg)', background: 'var(--acm-base)',
+                  border: '1px solid var(--acm-border)', borderRadius: 8, padding: '10px 12px',
+                  wordBreak: 'break-all', marginBottom: 14,
+                }}
+              >
+                {confirmSource}
+              </div>
+
+              {installPlugin.isSuccess ? (
+                <p style={{ fontSize: 13, color: 'var(--acm-fg-3)', marginBottom: 18 }}>
+                  Reinicia OpenACM para cargarlo. Si el plugin trae pasos extra (por ejemplo una
+                  extensión de navegador), están en el README de su repositorio.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', gap: 10, fontSize: 13, color: 'var(--acm-fg-3)', marginBottom: 18 }}>
+                  <ShieldAlert size={18} style={{ color: 'var(--acm-accent)', flexShrink: 0, marginTop: 1 }} />
+                  <span>
+                    Un plugin es código que se ejecuta con el mismo acceso que OpenACM: tus archivos,
+                    tus claves y tu equipo. Instálalo solo si confías en este repositorio.
+                  </span>
+                </div>
+              )}
+
+              {installPlugin.isPending && (
+                <p style={{ fontSize: 13, color: 'var(--acm-fg-3)', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Loader2 size={14} className="animate-spin" />
+                  Instalando… puede tardar varios minutos si el plugin tiene dependencias grandes.
+                </p>
+              )}
+
+              {installPlugin.isError && (
+                <div style={{ marginBottom: 18 }}>
+                  <p style={{ fontSize: 13, color: 'var(--acm-fg)', marginBottom: 8 }}>
+                    {installPlugin.error.message}
+                  </p>
+                  {installPlugin.error.output && (
+                    <pre
+                      className="mono"
+                      style={{
+                        fontSize: 11, color: 'var(--acm-fg-3)', background: 'var(--acm-base)',
+                        border: '1px solid var(--acm-border)', borderRadius: 8, padding: 10,
+                        maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', margin: 0,
+                      }}
+                    >
+                      {installPlugin.error.output}
+                    </pre>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                {installPlugin.isSuccess ? (
+                  <>
+                    <button className="btn-secondary" onClick={closeInstall}>Cerrar</button>
+                    <button
+                      className="btn-primary"
+                      disabled={restartSystem.isPending}
+                      onClick={() => { restartSystem.mutate(); closeInstall(); }}
+                    >
+                      Reiniciar ahora
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn-secondary" disabled={installPlugin.isPending} onClick={closeInstall}>
+                      Cancelar
+                    </button>
+                    <button className="btn-primary" disabled={installPlugin.isPending} onClick={runInstall}>
+                      {installPlugin.isError ? 'Reintentar' : 'Instalar'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
 

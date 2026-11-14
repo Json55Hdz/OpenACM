@@ -71,6 +71,28 @@ export function useTogglePlugin() {
   });
 }
 
+export const PLUGIN_MARKETPLACE_URL = 'https://openacm.jsonproductions.com/plugins';
+
+export interface PluginInstallResult {
+  status: string;
+  message: string;
+  source: string;
+  output: string;
+}
+
+/** Installs a plugin from a public GitHub repo. Takes effect after a restart. */
+export function useInstallPlugin() {
+  const { fetchAPI } = useAPI();
+
+  return useMutation<PluginInstallResult, Error & { output?: string }, string>({
+    mutationFn: (source: string) =>
+      fetchAPI('/api/plugins/install', {
+        method: 'POST',
+        body: JSON.stringify({ source }),
+      }),
+  });
+}
+
 export function useRestartSystem() {
   const { fetchAPI } = useAPI();
 

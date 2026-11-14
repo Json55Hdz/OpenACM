@@ -19,6 +19,16 @@ MSG_STEER_NOTIFY = "📨 Got it — I will read your message as soon as the curr
 MSG_STEER_ACK = "📨 Message received — it will be read as soon as the current step finishes (send «cancel» to stop everything)."
 MSG_QUEUED_DEQUEUED = "▶ Processing your message..."
 
+# ── Plugin install ───────────────────────────────────────────────────────────
+PLUGIN_MARKETPLACE_URL = "https://openacm.jsonproductions.com/plugins"
+MSG_PLUGIN_INSTALL_BAD_SOURCE = (
+    "Only public GitHub repositories can be installed: https://github.com/<owner>/<repo>"
+)
+MSG_PLUGIN_INSTALL_BUSY = "Another plugin is being installed. Wait for it to finish."
+MSG_PLUGIN_INSTALL_FAILED = "The plugin could not be installed."
+MSG_PLUGIN_INSTALL_TIMEOUT = "The plugin install took too long and was stopped."
+MSG_PLUGIN_INSTALL_OK = "Plugin installed. Restart OpenACM to load it."
+
 # ── Progress / status ────────────────────────────────────────────────────────
 
 MSG_THINKING = "🤔 Thinking..."

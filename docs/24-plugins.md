@@ -436,6 +436,19 @@ my_feature = "my_package:PLUGIN"
 
 After `pip install my-package`, OpenACM discovers and loads it automatically on next startup alongside built-in plugins.
 
+### Installing from the dashboard or the marketplace
+
+A plugin kept in a **public GitHub repository** can be installed without a terminal:
+
+- **Dashboard:** open **Plugins**, paste the repository address (`https://github.com/<owner>/<repo>`) into *Instalar desde GitHub* and confirm.
+- **Marketplace:** <https://openacm.jsonproductions.com/plugins> lists plugins with an *Install in OpenACM* button. It opens your own dashboard at `/plugins?install=<repo>`, which shows the same confirmation dialog. Nothing is installed until you confirm there.
+
+Both paths call `POST /api/plugins/install` with `{"source": "https://github.com/<owner>/<repo>"}`. The endpoint needs the dashboard token, accepts only that URL form, downloads the default branch as a source archive (no `git` needed) and installs it into the Python environment OpenACM is running on (`uv pip install` if `uv` is present, otherwise `pip`). Restart OpenACM afterwards to load the plugin.
+
+A plugin runs with the same access as OpenACM itself. Install only repositories you trust.
+
+To list a plugin in the marketplace, open a pull request that adds it to `src/pluginsData.js` in the [website repository](https://github.com/Json55Hdz/OpenACMMainPage).
+
 ---
 
 ## Frontend Pages

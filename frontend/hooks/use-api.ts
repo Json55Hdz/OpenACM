@@ -38,15 +38,21 @@ export function useAPI() {
           console.error('401 Unauthorized - token invalid');
         }
         let detailMessage: string | undefined;
+        let outputText: string | undefined;
         try {
           const errorBody = await response.json();
           if (errorBody && typeof errorBody.detail === 'string') {
             detailMessage = errorBody.detail;
           }
+          if (errorBody && typeof errorBody.output === 'string') {
+            outputText = errorBody.output;
+          }
         } catch {
           // response body wasn't JSON (or was empty) - fall back below
         }
-        throw new Error(detailMessage || `HTTP ${response.status}`);
+        const err = new Error(detailMessage || `HTTP ${response.status}`) as Error & { output?: string };
+        if (outputText) err.output = outputText;
+        throw err;
       }
 
       return options.raw ? await response.text() : await response.json();

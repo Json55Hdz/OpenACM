@@ -303,6 +303,31 @@ def register_routes(app: FastAPI) -> None:
                 return p
         raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
 
+    @app.post("/api/plugins/install")
+    async def install_plugin_from_github(request: Request):
+        """Install a pip-installable plugin from a public GitHub repo (loaded on next restart).
+
+        This runs third-party code with OpenACM's own access: the dashboard asks the
+        user to confirm the exact repository before calling it.
+        """
+        from openacm.core import messages as M
+        from openacm.plugins.installer import PluginInstallError, install_plugin
+
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        try:
+            result = await install_plugin(data.get("source", ""))
+        except PluginInstallError as exc:
+            return JSONResponse(
+                status_code=exc.status,
+                content={"detail": str(exc), "output": exc.output},
+            )
+        return {"status": "ok", "message": M.MSG_PLUGIN_INSTALL_OK, **result}
+
     @app.post("/api/plugins/{name}/toggle")
     async def toggle_plugin(name: str, request: Request):
         """Enable or disable a plugin. Takes effect on next restart."""
