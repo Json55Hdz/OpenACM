@@ -71,3 +71,6 @@ vite.config.ts
 
 # Superpowers scratch (brainstorm drafts, SDD state)
 .superpowers/
+
+# OpenCode tool-managed dependencies (its package.json is local too)
+.opencode/package-lock.json
