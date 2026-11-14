@@ -218,7 +218,7 @@ class Plugin:
 
         Available kwargs:
             config, database, event_bus, llm_router, brain, tool_registry,
-            skill_manager, activity_watcher, cron_scheduler, swarm_manager,
+            skill_manager, activity_watcher, cron_scheduler, swarm_manager, channels,
             workspace_root (Path)
         """
         self._database = app_context.get("database")

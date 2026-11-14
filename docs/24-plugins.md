@@ -399,6 +399,7 @@ Available kwargs:
 | `cron_scheduler` | `CronScheduler` | Cron job scheduler |
 | `swarm_manager` | `SwarmManager` | Multi-agent swarm system |
 | `workspace_root` | `Path` | Base workspace directory |
+| `channels` | `list[BaseChannel]` | Chat channels of this instance (Telegram, Discord, WhatsApp). Each has `name`, `is_connected` and `await send_message(target_id, content)`, so a plugin can notify the user |
 
 ### `on_stop()`
 

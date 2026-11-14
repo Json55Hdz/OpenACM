@@ -587,6 +587,8 @@ class OpenACM:
             cron_scheduler=self._cron_scheduler,
             swarm_manager=self._swarm_manager,
             workspace_root=_Path(self.config.storage.workspace_path),
+            # live list: channels started later still show up here
+            channels=self._channels,
         )
 
         loaded = [p.name for p in plugin_manager.plugins if plugin_manager.is_enabled(p.name)]
