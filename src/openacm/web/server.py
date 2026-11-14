@@ -237,7 +237,8 @@ async def create_web_server(
     _state.voice_daemon = voice_daemon
     _state.config = config
     _state.command_processor = CommandProcessor(brain, database)
-    _state.channels = channels or []
+    # keep the caller's list object (even when empty) so channels added later are seen by everyone holding it
+    _state.channels = channels if channels is not None else []
     _state.agent_channel_manager = agent_channel_manager
     _state.mcp_manager = mcp_manager
 
