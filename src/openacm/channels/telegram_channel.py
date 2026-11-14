@@ -157,6 +157,10 @@ class TelegramChannel(BaseChannel):
             log.error("Telegram send failed", error=str(e))
             return False
 
+    def conversation_ids(self, target_id: str) -> tuple[str, str] | None:
+        """In a private chat the chat id is the user's id, and that pair names the conversation."""
+        return (str(target_id), str(target_id))
+
     def _is_allowed(self, user_id: int) -> bool:
         """Check if a user is allowed to interact with the bot."""
         if not self.config.allowed_users:

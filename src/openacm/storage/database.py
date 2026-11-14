@@ -5,6 +5,7 @@ Stores conversation logs, tool execution logs, and usage statistics.
 Uses aiosqlite for async operations.
 """
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1190,15 +1191,21 @@ class Database:
         role: str,
         content: str,
         timestamp: str | None = None,
+        extra: dict | None = None,
     ):
-        """Log a conversation message (content encrypted at rest if encryptor configured)."""
+        """Log a conversation message (content encrypted at rest if encryptor configured).
+
+        `extra` holds what the text alone cannot: the tool calls an assistant message made, or
+        which call a tool result answers. It is stored encrypted like the content.
+        """
         if not self._db:
             return
         ts = timestamp or datetime.now(timezone.utc).isoformat()
+        extra_data = self._e(json.dumps(extra)) if extra else None
         await self._db.execute(
-            "INSERT INTO messages (user_id, channel_id, role, content, timestamp) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (user_id, channel_id, role, self._e(content), ts),
+            "INSERT INTO messages (user_id, channel_id, role, content, timestamp, extra_data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, channel_id, role, self._e(content), ts, extra_data),
         )
         await self._db.commit()
 
@@ -1209,7 +1216,7 @@ class Database:
         if not self._db:
             return []
         cursor = await self._db.execute(
-            "SELECT role, content, timestamp FROM messages "
+            "SELECT role, content, timestamp, extra_data FROM messages "
             "WHERE user_id = ? AND channel_id = ? "
             "ORDER BY id DESC LIMIT ?",
             (user_id, channel_id, limit),
@@ -1222,6 +1229,12 @@ class Database:
                 r["content"] = self._d(r["content"])
             except Exception:
                 pass  # leave as-is if decryption fails (e.g. pre-encryption rows)
+            raw_extra = r.pop("extra_data", None)
+            if raw_extra:
+                try:
+                    r["extra"] = json.loads(self._d(raw_extra))
+                except Exception:
+                    pass  # unreadable structure: the message is still usable as plain text
             result.append(r)
         return result
 

@@ -79,22 +79,45 @@ class TestPrepareMessagesForLlm:
             msgs.append(_assistant(f"reply {i}"))
         return msgs
 
-    def test_nulls_old_tool_message_content(self, brain):
-        old_tool = _tool_result("c0", "big output " * 100)
+    def test_shortens_old_tool_results_but_keeps_what_they_said(self, brain):
+        old_tool = _tool_result("c0", "IMPORTANT-FACT " + "big output " * 300)
         messages = [_sys()] + [old_tool] + self._pad(5)
         result = brain._prepare_messages_for_llm(messages, tools=None, is_tool_loop=False)
-        # The tool message should have been nulled
-        tool_msgs = [m for m in result if m.get("role") == "tool"]
-        assert all(m["content"] == "" for m in tool_msgs)
+        tool_msg = next(m for m in result if m.get("role") == "tool")
+        assert tool_msg["content"].startswith("IMPORTANT-FACT")
+        assert len(tool_msg["content"]) < len(old_tool["content"]) // 2
 
-    def test_strips_args_from_old_assistant_tool_calls(self, brain):
-        old_call = _assistant_with_tool_call(args='{"very":"big","json":"payload" * 200}')
-        messages = [_sys()] + [old_call] + self._pad(5)
+    def test_old_tool_call_arguments_stay_readable(self, brain):
+        import json
+        small = _assistant_with_tool_call(tool_id="c1", args='{"cmd":"ls"}')
+        big = _assistant_with_tool_call(tool_id="c2", args=json.dumps({"text": "payload " * 400}))
+        messages = [_sys()] + [small, big] + self._pad(5)
         result = brain._prepare_messages_for_llm(messages, tools=None, is_tool_loop=False)
-        assistant_msgs = [m for m in result if m.get("tool_calls")]
-        for m in assistant_msgs:
-            for tc in m["tool_calls"]:
-                assert tc["function"]["arguments"] == "{}"
+        args = [m["tool_calls"][0]["function"]["arguments"] for m in result if m.get("tool_calls")]
+        assert args[0] == '{"cmd":"ls"}'
+        assert len(args[1]) < 1000 and "payload" in args[1]
+        json.loads(args[1])                                   # still valid JSON for the provider
+
+    def test_nothing_from_the_current_turn_is_shortened(self, brain):
+        """A long tool session (browser control…) must keep every result of the turn in progress."""
+        turn = []
+        for i in range(8):
+            turn += [_assistant_with_tool_call(tool_id=f"c{i}", args='{"n": %d}' % i),
+                     _tool_result(f"c{i}", f"result {i} " + "x" * 3000)]
+        messages = [_sys(), _user("do a long job")] + turn
+        result = brain._prepare_messages_for_llm(messages, tools=None, is_tool_loop=True)
+        assert [m["content"] for m in result if m.get("role") == "tool"] ==                [m["content"] for m in turn if m.get("role") == "tool"]
+
+    def test_an_earlier_image_is_described_as_already_seen(self, brain):
+        from openacm.core.messages import MSG_IMAGE_ALREADY_SEEN
+        image = {"role": "user", "content": [
+            {"type": "text", "text": "what is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}, "_file_id": "cat.png"}]}
+        messages = [_sys(), image, _assistant("A cat."), _user("translate that")]
+        result = brain._prepare_messages_for_llm(messages, tools=None, is_tool_loop=False)
+        parts = result[1]["content"]
+        assert not any(p.get("type") == "image_url" for p in parts)
+        assert any(p.get("text") == MSG_IMAGE_ALREADY_SEEN.format(file_id="cat.png") for p in parts)
 
     def test_strips_reasoning_content_from_old_messages(self, brain):
         old_msg = {**_assistant("thinking done"), "reasoning_content": "internal thought " * 50}

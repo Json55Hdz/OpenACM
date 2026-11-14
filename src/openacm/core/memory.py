@@ -7,13 +7,14 @@ user/channel combination, with automatic truncation and compaction.
 
 import asyncio
 import json
+import re
 from typing import Any
 from datetime import datetime, timedelta, timezone
 
 import structlog
 
 from openacm.core.config import AssistantConfig
-from openacm.core.messages import PROMPT_COMPACT_SYSTEM
+from openacm.core.messages import MSG_IMAGE_ALREADY_SEEN, PROMPT_COMPACT_SYSTEM
 from openacm.storage.database import Database
 from openacm.core.events import EventBus, EVENT_MEMORY_COMPACTED
 
@@ -31,6 +32,10 @@ _DEFAULT_COMPACT_KEEP_RECENT = 6
 
 # Prompt used to summarize old messages
 _COMPACT_SYSTEM_PROMPT = PROMPT_COMPACT_SYSTEM
+
+
+# how an image is written in the saved text of a message (see _content_for_db)
+_IMAGE_MARKER = re.compile(r"\[IMAGE:([^\]]*)\]|\[📎 image\]")
 
 
 class MemoryManager:
@@ -198,12 +203,20 @@ class MemoryManager:
         # Persist to database — serialize multimodal content to readable text
         db_content = self._content_for_db(content)
         now = datetime.now(timezone.utc)
+        extra: dict[str, Any] = {}
+        if tool_calls:
+            extra["tool_calls"] = tool_calls
+        if tool_call_id:
+            extra["tool_call_id"] = tool_call_id
+        if name:
+            extra["name"] = name
         await self.database.log_message(
             user_id=user_id,
             channel_id=channel_id,
             role=role,
             content=db_content,
             timestamp=now.isoformat(),
+            **({"extra": extra} if extra else {}),
         )
         self._last_activity[key] = now
 
@@ -303,18 +316,74 @@ class MemoryManager:
         except Exception:
             return []
 
-        messages = []
+        messages: list[dict[str, Any]] = []
         for row in rows:
             role = row.get("role", "")
-            content = row.get("content", "")
-            # Skip system messages (we add our own), tool results (need original tool_call_id),
-            # and empty content
-            if role in ("system", "tool") or not content or not content.strip():
+            content = row.get("content", "") or ""
+            extra = row.get("extra") or {}
+            if role == "system":
+                continue  # we add our own
+            if role == "tool":
+                if extra.get("tool_call_id"):
+                    message = {"role": "tool", "content": content, "tool_call_id": extra["tool_call_id"]}
+                    if extra.get("name"):
+                        message["name"] = extra["name"]
+                    messages.append(message)
+                continue  # a result saved without its call id cannot be placed
+            if role == "assistant" and extra.get("tool_calls"):
+                messages.append({"role": "assistant", "content": content, "tool_calls": extra["tool_calls"]})
                 continue
-            # Skip assistant messages that were pure tool-call planners (no visible text)
+            if not content.strip():
+                continue
+            if role == "user":
+                content = _IMAGE_MARKER.sub(
+                    lambda m: MSG_IMAGE_ALREADY_SEEN.format(file_id=m.group(1) or "image"), content)
             messages.append({"role": role, "content": content})
 
-        return messages
+        return self._complete_tool_groups(messages)
+
+    @staticmethod
+    def _complete_tool_groups(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep tool calls only when every one of them has its result right after.
+
+        A model rejects a history where a call has no answer or an answer has no call. That
+        happens at the edge of the loaded window and when a run was cut short.
+        """
+        out: list[dict[str, Any]] = []
+        i = 0
+        while i < len(messages):
+            message = messages[i]
+            if message["role"] == "tool":
+                i += 1  # no call before it
+                continue
+            if message["role"] == "assistant" and message.get("tool_calls"):
+                results = []
+                j = i + 1
+                while j < len(messages) and messages[j]["role"] == "tool":
+                    results.append(messages[j])
+                    j += 1
+                wanted = {call.get("id") for call in message["tool_calls"]}
+                if wanted and wanted == {r.get("tool_call_id") for r in results}:
+                    out.append(message)
+                    out.extend(results)
+                elif (message.get("content") or "").strip():
+                    out.append({"role": "assistant", "content": message["content"]})
+                i = j
+                continue
+            out.append(message)
+            i += 1
+        return out
+
+    async def note_outgoing(self, user_id: str, channel_id: str, content: str) -> None:
+        """Record something sent to the user outside a normal reply (a notice from a plugin, a
+        scheduled message), so the assistant knows about it when the user answers."""
+        if self._cache.get(self._key(user_id, channel_id)):
+            await self.add_message(user_id, channel_id, "assistant", content)
+            return
+        # not loaded: save it only, so the next message still restores the whole history
+        await self.database.log_message(
+            user_id=user_id, channel_id=channel_id, role="assistant", content=content,
+            timestamp=datetime.now(timezone.utc).isoformat())
 
     def set_conversation_workspace(self, user_id: str, channel_id: str, path: str) -> None:
         """Pin a workspace path to this conversation (overrides the global default)."""

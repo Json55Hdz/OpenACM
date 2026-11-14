@@ -65,3 +65,22 @@ class BaseChannel(ABC):
     async def send_message(self, target_id: str, content: str, **kwargs) -> bool:
         """Send a message to a specific target (user/channel/group)."""
         ...
+
+    def conversation_ids(self, target_id: str) -> tuple[str, str] | None:
+        """(user_id, channel_id) of the conversation the assistant has with this target, or None
+        when the channel cannot tell. Channels override it with their own convention."""
+        return None
+
+    async def notify(self, target_id: str, content: str, **kwargs) -> bool:
+        """Send something the user did not ask for just now (a plugin's notice, a scheduled
+        message) and record it in their conversation, so that when they answer it the assistant
+        knows what they are talking about. Use this instead of send_message for such messages."""
+        sent = await self.send_message(target_id, content, **kwargs)
+        ids = self.conversation_ids(str(target_id)) if sent else None
+        memory = getattr(getattr(self, "brain", None), "memory", None)
+        if ids and memory is not None:
+            try:
+                await memory.note_outgoing(ids[0], ids[1], content)
+            except Exception:  # noqa: BLE001 — the message was delivered; never fail the sender
+                pass
+        return sent

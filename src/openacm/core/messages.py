@@ -159,4 +159,9 @@ PROMPT_DESCRIBE_IMAGE = (
     "Describe this image for someone who cannot see it: what it shows, every piece of visible "
     "text exactly as written, and any numbers, labels or layout that matter. Be factual and complete."
 )
+MSG_IMAGE_ALREADY_SEEN = (
+    "[Image {file_id}: you received and looked at this image when the user sent it; what you said about it "
+    "right after is your real analysis of it. The image itself is not attached again here.]"
+)
+MSG_TOOL_RESULT_SHORTENED = "\n[… earlier tool result shortened; {omitted} more characters not shown]"
 MSG_IMAGE_DESCRIBED = "[Image — {name}, described by {model} because the chat model cannot see images]:\n{description}"

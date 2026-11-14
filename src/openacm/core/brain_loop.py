@@ -16,6 +16,8 @@ from openacm.core.events import (
     EVENT_TOOL_RESULT,
 )
 from openacm.core.messages import (
+    MSG_IMAGE_ALREADY_SEEN,
+    MSG_TOOL_RESULT_SHORTENED,
     MSG_CANCELLED,
     MSG_CANCELLED_FOLLOWUP,
     MSG_COMPACTING,
@@ -136,6 +138,8 @@ class BrainLoopMixin:
     # Messages older than this index (from the end) get aggressively stripped to save tokens.
     _RECENT_MSG_WINDOW = 6  # keep full detail for the last N messages
     _OLD_REASONING_MAX = 0  # strip reasoning_content from old messages entirely
+    _OLD_TOOL_RESULT_MAX = 800   # characters kept from a tool result of an earlier turn
+    _OLD_TOOL_ARGS_MAX = 600     # tool-call arguments longer than this are shortened in earlier turns
 
     def _prepare_messages_for_llm(
         self,
@@ -167,7 +171,9 @@ class BrainLoopMixin:
 
         prepared = []
         for i, msg in enumerate(messages):
-            is_old = i > 0 and i < cutoff  # index 0 = system, always keep
+            # index 0 = system, always keep; the turn in progress (everything after the last
+            # user message) is never shortened: the model is still working with it
+            is_old = 0 < i < cutoff and i < last_user_idx
 
             needs_copy = False
             role = msg.get("role")
@@ -187,8 +193,8 @@ class BrainLoopMixin:
                     needs_copy = True
 
             if is_old:
-                # tool messages: null content entirely — tool_call_id is all that's needed
-                if role == "tool" and msg.get("content"):
+                # tool messages: keep the start of the result, drop the bulk
+                if role == "tool" and len(msg.get("content") or "") > self._OLD_TOOL_RESULT_MAX:
                     needs_copy = True
 
                 # assistant messages with tool_calls: strip the arguments JSON blob
@@ -208,23 +214,30 @@ class BrainLoopMixin:
                     for part in msg["content"]:
                         if isinstance(part, dict) and part.get("type") == "image_url":
                             file_id = part.get("_file_id", "image")
-                            new_parts.append({"type": "text", "text": f"[IMAGE: {file_id} — already processed]"})
+                            new_parts.append({"type": "text",
+                                              "text": MSG_IMAGE_ALREADY_SEEN.format(file_id=file_id)})
                         else:
                             new_parts.append(part)
                     msg["content"] = new_parts
 
                 if is_old:
-                    if role == "tool":
-                        msg["content"] = ""
+                    if role == "tool" and len(msg.get("content") or "") > self._OLD_TOOL_RESULT_MAX:
+                        full = msg["content"]
+                        msg["content"] = full[:self._OLD_TOOL_RESULT_MAX] + MSG_TOOL_RESULT_SHORTENED.format(
+                            omitted=len(full) - self._OLD_TOOL_RESULT_MAX)
 
                     if role == "assistant" and msg.get("tool_calls"):
                         slim_calls = []
                         for tc in msg["tool_calls"]:
                             fn = tc.get("function", {})
+                            args = fn.get("arguments") or "{}"
+                            if len(args) > self._OLD_TOOL_ARGS_MAX:
+                                # still valid JSON for the provider, still says what was asked
+                                args = json.dumps({"_shortened": args[:self._OLD_TOOL_ARGS_MAX // 2]})
                             slim_calls.append({
                                 "id": tc.get("id", ""),
                                 "type": tc.get("type", "function"),
-                                "function": {"name": fn.get("name", ""), "arguments": "{}"},
+                                "function": {"name": fn.get("name", ""), "arguments": args},
                             })
                         msg["tool_calls"] = slim_calls
 

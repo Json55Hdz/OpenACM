@@ -215,3 +215,66 @@ class TestGetOrCreate:
         msgs = await mem.get_or_create("u1", "web", "system prompt", ttl_hours=24)
         contents = [m["content"] for m in msgs]
         assert "recent message" in contents
+
+
+# ---------------------------------------------------------------------------
+# What the assistant did must survive a restart (cache miss → restore from DB)
+# ---------------------------------------------------------------------------
+
+def _call(call_id, name="run", args='{"cmd":"ls"}'):
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": args}}
+
+
+class TestRestoreKeepsWork:
+    async def _restart(self, mem):
+        await mem.clear("u1", "web")
+        return await mem.get_or_create("u1", "web", "system prompt")
+
+    async def test_tool_calls_and_results_survive_a_restart(self, db, app_config):
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "list the files")
+        await mem.add_message("u1", "web", "assistant", "", tool_calls=[_call("c1")])
+        await mem.add_message("u1", "web", "tool", "a.txt b.txt", tool_call_id="c1", name="run")
+        await mem.add_message("u1", "web", "assistant", "There are two files.")
+        msgs = await self._restart(mem)
+        assert [m["role"] for m in msgs] == ["system", "user", "assistant", "tool", "assistant"]
+        assert msgs[2]["tool_calls"][0]["function"]["arguments"] == '{"cmd":"ls"}'
+        assert msgs[3]["tool_call_id"] == "c1" and msgs[3]["content"] == "a.txt b.txt"
+
+    async def test_a_tool_group_without_all_its_results_is_left_out(self, db, app_config):
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "do two things")
+        await mem.add_message("u1", "web", "assistant", "On it.", tool_calls=[_call("c1"), _call("c2")])
+        await mem.add_message("u1", "web", "tool", "first done", tool_call_id="c1", name="run")
+        msgs = await self._restart(mem)
+        assert [m["role"] for m in msgs] == ["system", "user", "assistant"]
+        assert "tool_calls" not in msgs[2] and msgs[2]["content"] == "On it."
+
+    async def test_an_image_comes_back_as_something_the_assistant_did_see(self, db, app_config):
+        from openacm.core.messages import MSG_IMAGE_ALREADY_SEEN
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", [
+            {"type": "text", "text": "what is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}, "_file_id": "cat.png"}])
+        await mem.add_message("u1", "web", "assistant", "A cat on a sofa.")
+        msgs = await self._restart(mem)
+        assert MSG_IMAGE_ALREADY_SEEN.format(file_id="cat.png") in msgs[1]["content"]
+        assert "what is this?" in msgs[1]["content"] and "[IMAGE:" not in msgs[1]["content"]
+
+
+class TestNoteOutgoing:
+    async def test_a_notice_joins_a_conversation_that_is_loaded(self, db, app_config):
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.get_or_create("u1", "web", "system prompt")
+        await mem.add_message("u1", "web", "user", "hi")
+        await mem.note_outgoing("u1", "web", "Job 5 has a question")
+        msgs = await mem.get_messages("u1", "web")
+        assert msgs[-1] == {"role": "assistant", "content": "Job 5 has a question"}
+
+    async def test_a_notice_to_an_unloaded_conversation_does_not_hide_its_history(self, db, app_config):
+        mem = MemoryManager(database=db, config=app_config.assistant)
+        await mem.add_message("u1", "web", "user", "earlier question")
+        await mem.clear("u1", "web")                      # as after a restart
+        await mem.note_outgoing("u1", "web", "Job 5 has a question")
+        msgs = await mem.get_or_create("u1", "web", "system prompt")
+        assert [m["content"] for m in msgs] == ["system prompt", "earlier question", "Job 5 has a question"]
