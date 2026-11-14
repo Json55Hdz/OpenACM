@@ -12,6 +12,9 @@ services:
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
+      # Plugins instalados desde el dashboard viven en el volumen de datos,
+      # así sobreviven a reconstruir el contenedor:
+      - OPENACM_PLUGINS_DIR=/app/data/plugins
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/ping"]
       interval: 30s

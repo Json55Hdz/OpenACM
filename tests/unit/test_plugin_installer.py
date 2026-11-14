@@ -132,3 +132,37 @@ class TestInstallApi:
         body = resp.json()
         assert body["status"] == "ok"
         assert "Restart" in body["message"]
+
+
+class TestPersistentPluginsDir:
+    async def test_installs_into_the_plugins_folder_when_configured(self, monkeypatch, tmp_path):
+        seen = {}
+
+        async def fake_exec(*cmd, **kwargs):
+            seen["cmd"] = list(cmd)
+            return _FakeProc()
+
+        target = tmp_path / "plugins"
+        monkeypatch.setenv("OPENACM_PLUGINS_DIR", str(target))
+        monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+        monkeypatch.setattr(installer.asyncio, "create_subprocess_exec", fake_exec)
+        await installer.install_plugin("https://github.com/a/b")
+        assert seen["cmd"] == [
+            sys.executable, "-m", "pip", "install", "--target", str(target), "--upgrade",
+            "https://github.com/a/b/archive/HEAD.zip",
+        ]
+        assert target.is_dir()
+
+    def test_plugins_folder_is_added_after_the_existing_paths(self, monkeypatch, tmp_path):
+        from openacm.plugins import PluginManager
+
+        monkeypatch.setenv("OPENACM_PLUGINS_DIR", str(tmp_path))
+        monkeypatch.setattr(sys, "path", list(sys.path))
+        PluginManager().load_builtin_plugins()
+        assert str(tmp_path) in sys.path and sys.path.index(str(tmp_path)) > 0
+
+    def test_no_folder_configured_changes_nothing(self, monkeypatch):
+        from openacm.plugins import plugins_dir
+
+        monkeypatch.delenv("OPENACM_PLUGINS_DIR", raising=False)
+        assert plugins_dir() is None

@@ -445,6 +445,8 @@ A plugin kept in a **public GitHub repository** can be installed without a termi
 
 Both paths call `POST /api/plugins/install` with `{"source": "https://github.com/<owner>/<repo>"}`. The endpoint needs the dashboard token, accepts only that URL form, downloads the default branch as a source archive (no `git` needed) and installs it into the Python environment OpenACM is running on (`uv pip install` if `uv` is present, otherwise `pip`). Restart OpenACM afterwards to load the plugin.
 
+In Docker, packages installed into the image's Python disappear when the container is rebuilt. Set `OPENACM_PLUGINS_DIR` to a folder inside a mounted volume (the bundled `docker-compose.yml` uses `/app/data/plugins`) and plugins are installed there instead and loaded from it on every start.
+
 A plugin runs with the same access as OpenACM itself. Install only repositories you trust.
 
 To list a plugin in the marketplace, open a pull request that adds it to `src/pluginsData.js` in the [website repository](https://github.com/Json55Hdz/OpenACMMainPage).

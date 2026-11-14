@@ -23,6 +23,7 @@ import sys
 import structlog
 
 from openacm.core import messages as M
+from openacm.plugins import plugins_dir
 
 log = structlog.get_logger()
 
@@ -67,11 +68,17 @@ def archive_url(owner: str, repo: str) -> str:
 
 
 def installer_command(url: str) -> list[str]:
-    """Install into the interpreter OpenACM is running on (uv if present, else pip)."""
+    """Install into the interpreter OpenACM is running on (uv if present, else pip).
+
+    When OPENACM_PLUGINS_DIR is set (Docker), the plugin goes into that folder instead,
+    so it survives the container being rebuilt.
+    """
+    target = plugins_dir()
+    where = ["--target", str(target), "--upgrade"] if target else []
     uv = shutil.which("uv")
     if uv:
-        return [uv, "pip", "install", "--python", sys.executable, url]
-    return [sys.executable, "-m", "pip", "install", url]
+        return [uv, "pip", "install", "--python", sys.executable, *where, url]
+    return [sys.executable, "-m", "pip", "install", *where, url]
 
 
 async def install_plugin(source: str, timeout: float = INSTALL_TIMEOUT_SECONDS) -> dict:
@@ -82,6 +89,9 @@ async def install_plugin(source: str, timeout: float = INSTALL_TIMEOUT_SECONDS) 
         raise PluginInstallError(M.MSG_PLUGIN_INSTALL_BUSY, status=409)
 
     async with _lock:
+        target = plugins_dir()
+        if target:
+            target.mkdir(parents=True, exist_ok=True)
         cmd = installer_command(url)
         log.info("plugin.install.start", owner=owner, repo=repo, installer=cmd[0])
         try:

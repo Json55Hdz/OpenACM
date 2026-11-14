@@ -37,7 +37,9 @@ No framework magic needed.
 from __future__ import annotations
 
 import importlib
+import os
 import pkgutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +49,18 @@ if TYPE_CHECKING:
     from openacm.tools.registry import ToolRegistry
 
 log = structlog.get_logger()
+
+PLUGINS_DIR_ENV = "OPENACM_PLUGINS_DIR"
+
+
+def plugins_dir() -> Path | None:
+    """Folder where installed plugins are kept when OPENACM_PLUGINS_DIR is set.
+
+    Used in Docker, where packages installed into the image's own Python are lost
+    whenever the container is rebuilt; this folder lives in the mounted data volume.
+    """
+    value = os.environ.get(PLUGINS_DIR_ENV, "").strip()
+    return Path(value) if value else None
 
 
 class Plugin:
@@ -257,8 +271,8 @@ class PluginManager:
                my_plugin = "my_package:PLUGIN"
         """
         # 1. Built-in plugins (subpackages of openacm.plugins)
-        plugins_dir = Path(__file__).parent
-        for finder, pkg_name, is_pkg in pkgutil.iter_modules([str(plugins_dir)]):
+        builtin_dir = Path(__file__).parent
+        for finder, pkg_name, is_pkg in pkgutil.iter_modules([str(builtin_dir)]):
             if not is_pkg:
                 continue
             try:
@@ -271,7 +285,12 @@ class PluginManager:
             except Exception as exc:
                 log.warning("Failed to load plugin", package=pkg_name, error=str(exc))
 
-        # 2. pip-installed plugins via entry points
+        # 2. pip-installed plugins via entry points (including the persistent plugins folder,
+        #    added last so it can never shadow OpenACM's own dependencies)
+        extra = plugins_dir()
+        if extra and extra.is_dir() and str(extra) not in sys.path:
+            sys.path.append(str(extra))
+            importlib.invalidate_caches()
         try:
             from importlib.metadata import entry_points
             eps = entry_points(group="openacm.plugins")
