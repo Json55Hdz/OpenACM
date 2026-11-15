@@ -805,7 +805,10 @@ def register_routes(app: FastAPI) -> None:
         message = data.get("message", "").strip()
         if not message:
             raise HTTPException(status_code=400, detail="message required")
-        user_id = data.get("user_id", "webhook_user")
+        # The caller is outside the system: its user_id is untrusted text. Keep it short and
+        # plain, and namespace it per agent so it can never collide with another user's memory.
+        raw_user = re.sub(r"[^\w.@-]", "", str(data.get("user_id") or "webhook_user"))[:64] or "webhook_user"
+        user_id = f"a{agent_id}_hook_{raw_user}"
 
         response = await shared_agent_runner().run(agent=agent, message=message, user_id=user_id)
         return {"response": response, "agent": agent["name"]}

@@ -102,3 +102,14 @@ def test_with_no_secret_anywhere_it_still_works_but_can_be_made_strict(setup, mo
 def test_a_body_that_is_not_json_is_a_client_error(setup):
     client = setup.make(main=_Channel())
     assert _post(client, None, raw=b"not json").status_code == 400
+
+
+def test_a_payload_cannot_carry_a_change_for_a_channel_whose_secret_did_not_sign_it(setup):
+    agent = _Channel(secret="agent-secret")
+    main = _Channel(secret="main-secret")
+    client = setup.make(global_secret="main-secret", agent=agent, main=main)
+    payload = _payload(phone_id="111")
+    payload["entry"][0]["changes"].append(_payload(phone_id="999")["entry"][0]["changes"][0])
+    # signed with the main secret only: the change for the agent's phone must not be accepted
+    assert _post(client, payload, secret="main-secret").status_code == 403
+    assert agent.handled == [] and main.handled == []

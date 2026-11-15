@@ -96,3 +96,18 @@ class TestChatWebhookIsReachableFromOutside:
             async with client as ac:
                 resp = await ac.post(f"/api/agents/{a}/chat", json={"message": "hi"})
         assert resp.status_code == 401
+
+
+class TestChatWebhookUserIdIsUntrusted:
+    async def test_the_caller_cannot_choose_another_users_memory(self, client, real_db):
+        a = await _agent(real_db, "A")
+        run = AsyncMock(return_value="ok")
+        with patch("openacm.core.agent_runner.AgentRunner.run", run):
+            async with client as ac:
+                await ac.post(
+                    f"/api/agents/{a}/chat",
+                    json={"message": "hi", "user_id": "owner\n; ../x" + "z" * 200},
+                    headers={"X-Agent-Secret": "s3cret-value"},
+                )
+        uid = run.await_args.kwargs["user_id"]
+        assert uid.startswith(f"a{a}_hook_") and len(uid) <= 80 and "\n" not in uid and "/" not in uid

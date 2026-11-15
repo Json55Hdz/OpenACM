@@ -57,27 +57,27 @@ def _phone_ids(payload: dict) -> list[str]:
     ]
 
 
-def _secrets_for(payload: dict) -> list[str]:
-    """The app secrets that may have signed this payload: each addressed channel's own, or the
-    global one for a channel that has none."""
+def _secret_for(phone_id: str) -> str:
+    """The app secret that must have signed a message addressed to this phone number: the
+    channel's own, or the global one for a channel that has none."""
     wa = _wa_config()
     global_secret = (wa.app_secret if wa else "") or ""
-    secrets: list[str] = []
-    for phone_id in _phone_ids(payload) or [""]:
-        channel = _channel_for(phone_id)
-        own = getattr(getattr(channel, "config", None), "app_secret", "") or ""
-        secret = own or global_secret
-        if secret and secret not in secrets:
-            secrets.append(secret)
-    return secrets
+    channel = _channel_for(phone_id)
+    own = getattr(getattr(channel, "config", None), "app_secret", "") or ""
+    return own or global_secret
 
 
 def _signature_ok(payload: dict, raw: bytes, header: str) -> bool:
+    """Every addressed channel must be satisfied by the signature using ITS OWN secret, so a
+    payload signed for one channel cannot carry a change addressed to another."""
     from openacm.channels.whatsapp_cloud_channel import verify_signature
 
-    secrets = _secrets_for(payload)
-    if secrets:
-        return any(verify_signature(secret, raw, header) for secret in secrets)
+    secrets = [_secret_for(pid) for pid in (_phone_ids(payload) or [""])]
+    if all(secrets):
+        return all(verify_signature(secret, raw, header) for secret in secrets)
+    if any(secrets):
+        log.warning("WhatsApp webhook mixes channels with and without an app secret — rejected")
+        return False
     if os.environ.get(REQUIRE_SIGNATURE_ENV, "").lower() == "true":
         log.warning("WhatsApp webhook rejected: no app secret configured and a signature is required")
         return False
