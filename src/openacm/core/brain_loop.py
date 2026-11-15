@@ -815,12 +815,12 @@ class BrainLoopMixin:
                     prefix = "\n".join(f"ATTACHMENT:{att}" for att in generated_attachments)
                     _wf_result = await self._run_workflow_hook(
                         user_id, channel_id, content, _tool_sequence_for_turn,
-                        f"{prefix}\n{assistant_content}"
+                        f"{prefix}\n{assistant_content}", channel_type
                     )
                     return _wf_result
 
                 _wf_result = await self._run_workflow_hook(
-                    user_id, channel_id, content, _tool_sequence_for_turn, assistant_content
+                    user_id, channel_id, content, _tool_sequence_for_turn, assistant_content, channel_type
                 )
                 return _wf_result
 
@@ -1123,7 +1123,7 @@ class BrainLoopMixin:
                 _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
                 self._save_trace(_trace)
                 _wf_result = await self._run_workflow_hook(
-                    user_id, channel_id, content, _tool_sequence_for_turn, final_content
+                    user_id, channel_id, content, _tool_sequence_for_turn, final_content, channel_type
                 )
                 return _wf_result
             else:

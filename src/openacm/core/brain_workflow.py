@@ -26,12 +26,18 @@ class BrainWorkflowMixin:
         user_message: str,
         tool_sequence_for_turn: list[dict],
         final_response_text: str,
+        channel_type: str = "",
     ) -> str:
         """
         After each agentic turn with tool calls, record the workflow and
         optionally append a suggestion if a repeated pattern is detected.
         Returns final_response_text, possibly with suggestion appended.
         """
+        # Routines and workflows describe the OWNER's computer and habits: an agent talking to a
+        # customer, or a swarm worker, must neither show them nor consume them.
+        if getattr(self.config, "is_agent", False) or channel_type == "swarm":
+            return final_response_text
+
         if not self.workflow_tracker or not tool_sequence_for_turn:
             return await self._append_routine_mentions(final_response_text)
 
@@ -115,20 +121,30 @@ class BrainWorkflowMixin:
             return response_text
 
     def _check_workflow_confirmation(self, content: str) -> str:
-        """Returns 'yes', 'no', or 'unknown'."""
-        text = content.strip().lower()
-        if len(text) > 50:  # long message = probably not a confirmation
+        """Returns 'yes', 'no', or 'unknown'.
+
+        Only a message that is NOTHING BUT an answer counts. "ok, y qué hora es?" is a new
+        question, and "no, ok" is a no: a refusal word wins over an agreement word.
+        """
+        import re
+
+        tokens = re.findall(r"[\wáéíóúüñ]+", content.strip().lower())
+        if not tokens or len(tokens) > 6:
             return "unknown"
-        yes_words = {"sí", "si", "yes", "dale", "adelante", "hazlo", "confirmo",
-                     "ok", "claro", "por supuesto", "crear", "conviértelo", "convierte",
-                     "generar", "generate", "quiero", "va"}
-        no_words = {"no", "nope", "nah", "cancelar", "cancel", "omitir", "skip",
-                    "no gracias", "déjalo", "olvídalo", "paso"}
-        tokens = set(text.replace(",", " ").replace(".", " ").split())
-        if tokens & yes_words:
-            return "yes"
-        if tokens & no_words:
+        yes_words = {"sí", "si", "yes", "dale", "adelante", "hazlo", "confirmo", "ok", "okay",
+                     "claro", "crear", "créalo", "crealo", "conviértelo", "convierte", "generar",
+                     "generate", "quiero", "va", "vale", "listo"}
+        no_words = {"no", "nope", "nah", "cancelar", "cancel", "omitir", "skip", "déjalo",
+                    "dejalo", "olvídalo", "olvidalo", "paso"}
+        filler = {"por", "favor", "gracias", "supuesto", "thanks", "please", "lo", "la", "que",
+                  "sí", "si", "es", "eso", "hazlo"}
+        words = set(tokens)
+        if not words <= (yes_words | no_words | filler):
+            return "unknown"  # says something else too: not a plain answer
+        if words & no_words:
             return "no"
+        if words & yes_words:
+            return "yes"
         return "unknown"
 
     async def _handle_tool_creation_from_workflow(
