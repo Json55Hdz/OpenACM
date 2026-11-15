@@ -48,7 +48,46 @@ ALWAYS_INCLUDE_TOOLS = {
 
 # Tools that change things outside the chat, and what to tell the user when asking.
 # A tool is listed here only for the calls that actually change something.
-def confirmation_text(tool_name: str, arguments: dict[str, Any], mode: str = "confirmation") -> str | None:
+def is_sensitive_path(path: str, blocked_paths: list[str] | None = None) -> bool:
+    """Is this file somewhere a write must never be waved through?
+
+    OpenACM's own code, config and data, installed packages, dotfiles and dot-folders (ssh keys,
+    shell profiles), autostart/startup folders, and the owner's configured blocked paths.
+    """
+    from pathlib import Path
+
+    try:
+        target = Path(str(path)).resolve()
+    except (OSError, ValueError):
+        return True
+    low = str(target).lower().replace("\\", "/")
+    parts = [p.lower() for p in target.parts]
+    if any(p.startswith(".") and p not in (".", "..") for p in parts[1:]):
+        return True
+    if "site-packages" in parts or "startup" in parts or "autostart" in parts:
+        return True
+    for blocked in blocked_paths or []:
+        b = str(blocked).lower().replace("\\", "/").rstrip("/")
+        if b and (low == b or low.startswith(b + "/")):
+            return True
+    try:
+        from openacm.core.config import _find_project_root
+
+        root = _find_project_root().resolve()
+        for sub in ("src", "config", "data", "docker"):
+            if target == root / sub or (root / sub) in target.parents:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def confirmation_text(
+    tool_name: str,
+    arguments: dict[str, Any],
+    mode: str = "confirmation",
+    blocked_paths: list[str] | None = None,
+) -> str | None:
     """The question to show before running this tool call, or None when no approval is needed.
 
     Follows the owner's security mode like run_command does: "yolo" never asks; "auto" trusts
@@ -64,7 +103,11 @@ def confirmation_text(tool_name: str, arguments: dict[str, Any], mode: str = "co
     if mode == "yolo":
         return None
     if mode == "auto" and tool_name in ("write_file", "edit_file"):
-        return None
+        # Plain file work is trusted in auto mode, but not in places that change how OpenACM
+        # or the machine behaves: those are asked about even here.
+        target = arguments.get("path") or arguments.get("file_path") or "."
+        if not is_sensitive_path(target, blocked_paths):
+            return None
 
     def folder(path: str) -> str:
         # Resolved exactly as the file tools resolve it (symlinks and ".." followed), so the
@@ -479,6 +522,10 @@ class ToolRegistry:
 
         return self._merge_mcp(filtered)
 
+    def _blocked_paths(self) -> list[str]:
+        policy = getattr(getattr(self, "sandbox", None), "policy", None)
+        return list(getattr(getattr(policy, "config", None), "blocked_paths", None) or [])
+
     def _execution_mode(self) -> str:
         """The owner's security mode: confirmation | auto | yolo (unknown = the strictest)."""
         policy = getattr(getattr(self, "sandbox", None), "policy", None)
@@ -513,8 +560,19 @@ class ToolRegistry:
 
         tool = self.tools[tool_name]
 
+        # Blocked areas are blocked for writes in EVERY mode (yolo skips questions, not rules)
+        if tool_name in ("write_file", "edit_file"):
+            policy = getattr(getattr(self, "sandbox", None), "policy", None)
+            target = arguments.get("path") or arguments.get("file_path")
+            if target and callable(getattr(policy, "check_path", None)):
+                allowed, reason = policy.check_path(str(target))
+                if not allowed:
+                    return f"Error: {reason}"
+
         # Powerful tools ask the owner first (the dashboard shows Allow / Deny).
-        question = confirmation_text(tool_name, arguments, self._execution_mode())
+        question = confirmation_text(
+            tool_name, arguments, self._execution_mode(), self._blocked_paths()
+        )
         if question and self.confirm_callback and self._needs_owner_approval(_brain, channel_id):
             try:
                 approved = await self.confirm_callback(tool_name, question, channel_id)

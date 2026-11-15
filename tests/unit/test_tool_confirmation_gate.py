@@ -117,3 +117,51 @@ async def test_the_registry_reads_the_mode_from_its_sandbox_policy():
     reg.sandbox = SimpleNamespace(policy=SimpleNamespace(execution_mode="yolo"))
     assert await reg.execute("write_file", ARGS, channel_id="web") == "done"
     reg.confirm_callback.assert_not_awaited()
+
+
+class TestAutoModeStillGuardsSensitivePlaces:
+    def test_ordinary_project_files_are_trusted(self, tmp_path):
+        assert confirmation_text("write_file", {"path": str(tmp_path / "notes.txt")}, "auto") is None
+
+    @pytest.mark.parametrize("path", [
+        "~/.ssh/authorized_keys", "~/.bashrc",
+        "C:/Users/x/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/run.bat",
+        "/home/u/.config/autostart/x.desktop", "/usr/lib/python3/site-packages/pkg/__init__.py",
+    ])
+    def test_these_still_ask_in_auto_mode(self, path):
+        import os
+        assert confirmation_text("write_file", {"path": os.path.expanduser(path)}, "auto")
+
+    def test_the_owners_blocked_paths_still_ask(self, tmp_path):
+        assert confirmation_text("write_file", {"path": str(tmp_path / "secret" / "a")}, "auto", [str(tmp_path / "secret")])
+
+    def test_openacm_own_config_still_asks(self):
+        from openacm.core.config import _find_project_root
+        assert confirmation_text("write_file", {"path": str(_find_project_root() / "config" / ".env")}, "auto")
+
+    def test_yolo_still_never_asks_even_here(self):
+        assert confirmation_text("write_file", {"path": "~/.ssh/x"}, "yolo") is None
+
+
+class TestBlockedPathsAreEnforcedForWrites:
+    async def test_a_write_into_a_blocked_folder_never_runs_even_in_yolo(self, tmp_path):
+        from openacm.security.policies import SecurityPolicy
+        from openacm.core.config import SecurityConfig
+
+        blocked = tmp_path / "System32"
+        blocked.mkdir()
+        policy = SecurityPolicy(SecurityConfig(execution_mode="yolo", blocked_paths=[str(blocked)]))
+        reg, handler = _registry(approve=True)
+        reg.sandbox = SimpleNamespace(policy=policy)
+        out = await reg.execute("write_file", {"path": str(blocked / "x.dll"), "content": "c"}, channel_id="web")
+        assert out.startswith("Error") and not handler.await_count
+
+    def test_a_folder_that_only_shares_the_prefix_is_not_blocked(self, tmp_path):
+        from openacm.security.policies import SecurityPolicy
+        from openacm.core.config import SecurityConfig
+
+        (tmp_path / "System32").mkdir()
+        (tmp_path / "System32x").mkdir()
+        policy = SecurityPolicy(SecurityConfig(blocked_paths=[str(tmp_path / "System32")]))
+        assert policy.check_path(str(tmp_path / "System32x" / "a"))[0] is True
+        assert policy.check_path(str(tmp_path / "System32" / "a"))[0] is False

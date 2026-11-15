@@ -122,11 +122,13 @@ class SecurityPolicy:
         
         Returns: (allowed, reason)
         """
-        resolved = str(Path(path).resolve())
-        
+        resolved_path = Path(path).resolve()
+
         for blocked_path in self.config.blocked_paths:
-            blocked_resolved = str(Path(blocked_path).resolve())
-            if resolved.startswith(blocked_resolved):
+            blocked_resolved_path = Path(blocked_path).resolve()
+            # Inside the blocked folder, not merely sharing its name as a prefix
+            # ("C:\Windows\System32x" is not "C:\Windows\System32")
+            if resolved_path == blocked_resolved_path or blocked_resolved_path in resolved_path.parents:
                 reason = f"Path is in blocked area: {blocked_path}"
                 log.warning("Path blocked", path=path, reason=reason)
                 return False, reason
