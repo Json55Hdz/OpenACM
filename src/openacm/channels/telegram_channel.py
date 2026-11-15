@@ -143,14 +143,15 @@ class TelegramChannel(BaseChannel):
         await self.start()
 
     async def send_message(self, target_id: str, content: str, **kwargs) -> bool:
-        """Send a message to a Telegram chat."""
+        """Send a message to a Telegram chat. With plain=True nothing is parsed as Markdown, so
+        underscores in links and file names survive."""
         if not self._app:
             return False
         try:
             await self._app.bot.send_message(
                 chat_id=int(target_id),
                 text=content,
-                parse_mode="Markdown",
+                parse_mode=None if kwargs.get("plain") else "Markdown",
             )
             return True
         except Exception as e:

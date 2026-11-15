@@ -51,3 +51,19 @@ async def test_channel_that_cannot_name_the_conversation_only_sends(db, app_conf
     mem = MemoryManager(database=db, config=app_config.assistant)
     assert await _Channel(mem, knows_conversation=False).notify("42", "hello") is True
     assert await _history(mem) == ["system prompt"]
+
+
+class TestTelegramPlainText:
+    async def test_plain_messages_are_not_parsed_as_markdown(self):
+        from openacm.channels.telegram_channel import TelegramChannel
+
+        calls = []
+
+        async def send_message(**kwargs):
+            calls.append(kwargs)
+
+        channel = TelegramChannel.__new__(TelegramChannel)
+        channel._app = SimpleNamespace(bot=SimpleNamespace(send_message=send_message))
+        assert await channel.send_message("42", "a_b", plain=True)
+        assert await channel.send_message("42", "a_b")
+        assert calls[0]["parse_mode"] is None and calls[1]["parse_mode"] == "Markdown"
