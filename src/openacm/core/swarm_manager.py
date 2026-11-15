@@ -848,7 +848,9 @@ class SwarmManager:
                                 # Persist the failed attempt result so the next worker
                                 # gets a full history of what was tried and why it failed.
                                 import json as _json_retry
-                                prev_result = task.get("result") or ""
+                                # `task` was read before this attempt ran: take what the attempt wrote
+                                _latest = await self.db.get_swarm_task(task["id"])
+                                prev_result = (_latest or {}).get("result") or ""
                                 _, prev_fail = self._parse_task_status(prev_result)
                                 new_entry = {"result": prev_result, "fail_reason": prev_fail or "Task did not complete"}
                                 try:
@@ -1272,7 +1274,7 @@ class SwarmManager:
                 "worker_id": worker_id, "worker_name": worker["name"],
                 "task_title": task["title"], "error": err_str,
             })
-            return f"Error: {e}"
+            return "failed"  # so the retry / cascade logic in _run_swarm actually runs
 
     async def _execute_debate_task(
         self,
@@ -1893,7 +1895,10 @@ Rules:
             "task timed out",
         )
         response_lower = response.lower()
-        if any(sig.lower() in response_lower for sig in _BRAIN_INTERRUPTS):
+        _has_marker = _re.search(r"^\s*TASK_STATUS:\s*(COMPLETED|FAILED)", response, _re.IGNORECASE | _re.MULTILINE)
+        # An explicit marker is the worker's own verdict: a finished report that merely mentions
+        # "timed out" must not be turned into a failure. Phrases only decide when there is none.
+        if not _has_marker and any(sig.lower() in response_lower for sig in _BRAIN_INTERRUPTS):
             return "failed", "Worker hit step limit or connection timeout before completing"
 
         for line in reversed(response.strip().splitlines()):
