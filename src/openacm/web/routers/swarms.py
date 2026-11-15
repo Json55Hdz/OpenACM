@@ -159,7 +159,7 @@ def register_routes(app: FastAPI) -> None:
             context_dir.mkdir(parents=True, exist_ok=True)
             new_parts: list[str] = []
             for f in file_contents:
-                fname = f["filename"]
+                fname = Path(str(f["filename"]).replace("\\", "/")).name or "context.txt"  # no path parts
                 (context_dir / fname).write_text(f["content"], encoding="utf-8", errors="replace")
                 existing_files.append(fname)
                 new_parts.append(f"### {fname}\n{f['content']}")

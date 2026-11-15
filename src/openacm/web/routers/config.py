@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import html
 import json
 import os
 import re
@@ -262,7 +263,7 @@ def register_routes(app: FastAPI) -> None:
             return HTMLResponse(f"""
             <html><body style="font-family:sans-serif;text-align:center;padding:60px;background:#0f172a;color:#f87171">
             <h2>❌ Google Authorization Failed</h2>
-            <p>{error}</p>
+            <p>{html.escape(error)}</p>
             <p>You can close this tab.</p>
             </body></html>""")
 
