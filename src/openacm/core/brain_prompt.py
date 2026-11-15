@@ -132,6 +132,10 @@ class BrainPromptMixin:
         channel_type: str,
     ) -> dict | None:
         """Query RAG long-term memory and build the system message that carries the fragments."""
+        # The long-term memory holds what the owner told the assistant. A customer-facing agent
+        # talks to other people, so it must never be shown any of it.
+        if getattr(self.config, "is_agent", False):
+            return None
         rag_msg: dict | None = None
         try:
             from openacm.core.rag import _rag_engine

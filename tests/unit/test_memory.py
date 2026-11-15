@@ -227,7 +227,7 @@ def _call(call_id, name="run", args='{"cmd":"ls"}'):
 
 class TestRestoreKeepsWork:
     async def _restart(self, mem):
-        await mem.clear("u1", "web")
+        mem._cache.pop(mem._key("u1", "web"), None)  # a restart loses the cache, not the stored rows
         return await mem.get_or_create("u1", "web", "system prompt")
 
     async def test_tool_calls_and_results_survive_a_restart(self, db, app_config):
@@ -274,7 +274,7 @@ class TestNoteOutgoing:
     async def test_a_notice_to_an_unloaded_conversation_does_not_hide_its_history(self, db, app_config):
         mem = MemoryManager(database=db, config=app_config.assistant)
         await mem.add_message("u1", "web", "user", "earlier question")
-        await mem.clear("u1", "web")                      # as after a restart
+        mem._cache.pop(mem._key("u1", "web"), None)       # as after a restart
         await mem.note_outgoing("u1", "web", "Job 5 has a question")
         msgs = await mem.get_or_create("u1", "web", "system prompt")
         assert [m["content"] for m in msgs] == ["system prompt", "earlier question", "Job 5 has a question"]

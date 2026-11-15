@@ -24,6 +24,9 @@ log = structlog.get_logger()
 
 _KNOWLEDGE_CHAR_LIMIT = 40_000
 
+# Tool-call rounds an agent may take for one customer message before it must answer.
+AGENT_MAX_TOOL_ITERATIONS = 10
+
 
 def _build_flow_tool(flow: dict, executor) -> ToolDefinition:
     """Convert one flow DB row into a dynamically-callable ToolDefinition."""
@@ -122,6 +125,10 @@ class AgentRunner:
         self.event_bus = event_bus
         self.database = database
         self.skill_manager = skill_manager
+        # One conversation is answered one message at a time: a second message that arrives
+        # while the first is still being worked on waits for it (otherwise two loops write to
+        # the same history at once and the customer gets two interleaved answers).
+        self._conversation_locks: dict[tuple, asyncio.Lock] = {}
         from openacm.core.inactivity_tracker import AgentInactivityTracker
         self.inactivity_tracker = AgentInactivityTracker(
             event_bus=self.event_bus,
@@ -184,6 +191,32 @@ class AgentRunner:
         channel_id: str | None = None,
         channel_type: str = "agent",
         extra_system_context: str | None = None,
+        attachments: list | None = None,
+    ) -> str:
+        """Process a message through the agent, one message at a time per conversation."""
+        if channel_id is None:
+            channel_id = f"agent_{agent['id']}"
+        lock_key = (agent.get("id"), channel_id, user_id)
+        lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
+        try:
+            async with lock:
+                return await self._run_message(
+                    agent, message, user_id, channel_id, channel_type, extra_system_context, attachments
+                )
+        finally:
+            # Nobody else is waiting on this conversation: do not keep its lock around forever
+            if not lock.locked() and not getattr(lock, "_waiters", None):
+                self._conversation_locks.pop(lock_key, None)
+
+    async def _run_message(
+        self,
+        agent: dict[str, Any],
+        message: str,
+        user_id: str,
+        channel_id: str,
+        channel_type: str,
+        extra_system_context: str | None,
+        attachments: list | None,
     ) -> str:
         """
         Process a message through the given agent config.
@@ -271,25 +304,10 @@ class AgentRunner:
         if extra_system_context:
             system_prompt = f"{system_prompt}\n\n{extra_system_context}"
 
-        memory_ttl_hours = (
-            agent.get("memory_ttl_hours") if agent.get("memory_mode") == "session_ttl" else None
-        )
-
-        config = AssistantConfig(
-            name=agent["name"],
-            system_prompt=system_prompt,
-            max_tool_iterations=10,
-            onboarding_completed=True,
-            is_agent=True,
-            memory_ttl_hours=memory_ttl_hours,
-        )
-
-        if channel_id is None:
-            channel_id = f"agent_{agent['id']}"
-
         # Cancel any pending inactivity timer as user just sent a message
         self.inactivity_tracker.cancel(agent["id"], channel_type, channel_id)
 
+        # The customer's name must be in the prompt BEFORE the config is built from it
         if self.database:
             try:
                 customer_name = await self.database.get_customer_name(user_id, channel_id)
@@ -297,6 +315,19 @@ class AgentRunner:
                 log.warning("AgentRunner: failed to fetch customer name", agent_id=agent["id"], error=str(exc))
                 customer_name = None
             system_prompt = self._apply_customer_name(system_prompt, customer_name)
+
+        memory_ttl_hours = (
+            agent.get("memory_ttl_hours") if agent.get("memory_mode") == "session_ttl" else None
+        )
+
+        config = AssistantConfig(
+            name=agent["name"],
+            system_prompt=system_prompt,
+            max_tool_iterations=AGENT_MAX_TOOL_ITERATIONS,
+            onboarding_completed=True,
+            is_agent=True,
+            memory_ttl_hours=memory_ttl_hours,
+        )
 
         brain = Brain(
             config=config,
@@ -313,6 +344,7 @@ class AgentRunner:
                 user_id=user_id,
                 channel_id=channel_id,
                 channel_type=channel_type,
+                attachments=attachments,
             )
             # Schedule follow-up nudge if configured
             self.inactivity_tracker.schedule(

@@ -100,7 +100,10 @@ class AgentInactivityTracker:
         except asyncio.CancelledError:
             return
         finally:
-            self._timers.pop(key, None)
+            # Only remove our own entry: a newer timer for the same conversation may already
+            # have replaced it, and popping that one would make it impossible to cancel.
+            if self._timers.get(key) is asyncio.current_task():
+                self._timers.pop(key, None)
 
         # Check that agent is still valid and active
         agent = None

@@ -78,11 +78,6 @@ class MemoryManager:
         """Generate a unique key for a user/channel pair."""
         return f"{channel_id}:{user_id}"
 
-    async def clear(self, user_id: str, channel_id: str) -> None:
-        """Drop the in-memory cache for a conversation (DB rows are kept)."""
-        key = self._key(user_id, channel_id)
-        self._cache.pop(key, None)
-
     @staticmethod
     def _content_for_db(content: Any) -> str:
         """Serialize message content to a clean, human-readable DB string.
@@ -572,10 +567,19 @@ class MemoryManager:
             self._compacting.discard(key)
 
     async def clear(self, user_id: str, channel_id: str):
-        """Clear conversation history for a user/channel pair."""
+        """Forget a conversation for good: the cached copy, its counters and its stored rows.
+
+        Dropping only the cache would be undone by the next message, which reloads the
+        history from the database.
+        """
         key = self._key(user_id, channel_id)
         self._cache.pop(key, None)
-        log.info("Conversation cleared", user_id=user_id, channel_id=channel_id)
+        self._needs_compact.discard(key)
+        self._compact_baseline.pop(key, None)
+        self._tokens_used.pop(key, None)
+        self._last_activity.pop(key, None)
+        deleted = await self.database.delete_conversation_messages(user_id, channel_id)
+        log.info("Conversation cleared", user_id=user_id, channel_id=channel_id, rows_deleted=deleted)
 
     async def clear_all(self):
         """Clear all conversation history."""

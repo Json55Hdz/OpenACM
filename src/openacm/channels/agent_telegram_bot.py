@@ -57,14 +57,19 @@ class AgentBrainAdapter:
         # Scope user_id to agent to isolate each agent's conversation history —
         # without this, two agents serving the same Telegram user share the same
         # memory key (channel_id:user_id) and their histories bleed into each other.
-        scoped_user_id = f"a{self.agent['id']}_tg_{user_id}"
+        scoped_user_id = self.memory_user_id(user_id)
         return await self.agent_runner.run(
             agent=self.agent,
             message=content,
             user_id=scoped_user_id,
             channel_id=channel_id,
             channel_type=self.channel_type,  # ej: "telegram_a5" — único por agente
+            attachments=attachments,
         )
+
+    def memory_user_id(self, user_id: str) -> str:
+        """The id this agent's conversation memory is stored under for a Telegram user."""
+        return f"a{self.agent['id']}_tg_{user_id}"
 
 
 class AgentTelegramChannel(TelegramChannel):
