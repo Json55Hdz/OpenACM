@@ -76,3 +76,44 @@ async def test_without_a_callback_nothing_blocks():
     reg, handler = _registry(approve=False)
     reg.confirm_callback = None
     assert await reg.execute("write_file", ARGS, channel_id="web") == "done"
+
+
+class TestApprovalKeysAreExact:
+    def test_two_snippets_with_the_same_start_get_different_keys(self):
+        head = "x = 1\n" * 60  # longer than the 300 characters shown
+        assert confirmation_text("run_python", {"code": head + "print('a')"}) != \
+               confirmation_text("run_python", {"code": head + "import os; os.system('x')"})
+
+    def test_the_same_code_gets_the_same_key(self):
+        assert confirmation_text("run_python", {"code": "print(1)"}) == confirmation_text("run_python", {"code": "print(1)"})
+
+    def test_dotdot_and_symlink_style_paths_resolve_to_the_real_folder(self, tmp_path):
+        (tmp_path / "a").mkdir()
+        direct = confirmation_text("write_file", {"path": str(tmp_path / "x.txt")})
+        sneaky = confirmation_text("write_file", {"path": str(tmp_path / "a" / ".." / "x.txt")})
+        assert direct == sneaky
+
+
+class TestFollowsTheSecurityMode:
+    DANGEROUS = [("run_python", {"code": "1"}), ("delete_swarm", {"swarm_id": 1}), ("update_security_mode", {"mode": "x"})]
+
+    def test_yolo_never_asks(self):
+        for tool, args in self.DANGEROUS + [("write_file", {"path": "a/b"})]:
+            assert confirmation_text(tool, args, "yolo") is None
+
+    def test_auto_trusts_file_writes_but_asks_for_the_rest(self):
+        assert confirmation_text("write_file", {"path": "a/b"}, "auto") is None
+        assert confirmation_text("edit_file", {"path": "a/b"}, "auto") is None
+        for tool, args in self.DANGEROUS:
+            assert confirmation_text(tool, args, "auto")
+
+    def test_confirmation_mode_asks_for_everything(self):
+        for tool, args in self.DANGEROUS + [("write_file", {"path": "a/b"})]:
+            assert confirmation_text(tool, args, "confirmation")
+
+
+async def test_the_registry_reads_the_mode_from_its_sandbox_policy():
+    reg, handler = _registry(approve=False)
+    reg.sandbox = SimpleNamespace(policy=SimpleNamespace(execution_mode="yolo"))
+    assert await reg.execute("write_file", ARGS, channel_id="web") == "done"
+    reg.confirm_callback.assert_not_awaited()

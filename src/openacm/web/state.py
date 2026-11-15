@@ -35,6 +35,8 @@ class ServerState:
     pending_chat_response: dict | None = None
     # Tool confirmation: confirm_id → asyncio.Future[bool]
     pending_confirmations: dict = field(default_factory=dict)
+    # confirm_id -> the exact text that was asked about (what a session approval is keyed on)
+    pending_confirmation_commands: dict = field(default_factory=dict)
     session_allowed_commands: set = field(default_factory=set)
     # Per-channel persistent shell sessions
     channel_shells: dict = field(default_factory=dict)

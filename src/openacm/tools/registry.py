@@ -48,21 +48,40 @@ ALWAYS_INCLUDE_TOOLS = {
 
 # Tools that change things outside the chat, and what to tell the user when asking.
 # A tool is listed here only for the calls that actually change something.
-def confirmation_text(tool_name: str, arguments: dict[str, Any]) -> str | None:
+def confirmation_text(tool_name: str, arguments: dict[str, Any], mode: str = "confirmation") -> str | None:
     """The question to show before running this tool call, or None when no approval is needed.
+
+    Follows the owner's security mode like run_command does: "yolo" never asks; "auto" trusts
+    plain file writes (the equivalent of a whitelisted command) but still asks for code
+    execution, tool changes, security changes, posting and deletions; "confirmation" asks for all.
 
     The text doubles as the "allow for this session" key, so file tools name the folder:
     approving once covers that folder, not every file the model might write.
     """
-    import os
+    import hashlib
+    from pathlib import Path
+
+    if mode == "yolo":
+        return None
+    if mode == "auto" and tool_name in ("write_file", "edit_file"):
+        return None
 
     def folder(path: str) -> str:
-        return os.path.dirname(os.path.abspath(str(path or "."))) or "."
+        # Resolved exactly as the file tools resolve it (symlinks and ".." followed), so the
+        # folder we ask about is the folder that is actually written to.
+        try:
+            return str(Path(str(path or ".")).resolve().parent)
+        except (OSError, ValueError):
+            return str(path)
 
     if tool_name in ("write_file", "edit_file"):
         return f"{tool_name} → {folder(arguments.get('path') or arguments.get('file_path'))}/*"
     if tool_name == "run_python":
-        return "run_python: " + str(arguments.get("code", ""))[:300]
+        code = str(arguments.get("code", ""))
+        # The text is also the "allow for this session" key: it carries a hash of the WHOLE
+        # code, so approving one snippet can never approve another that starts the same way.
+        digest = hashlib.sha256(code.encode("utf-8", "replace")).hexdigest()[:16]
+        return f"run_python [{digest}]: {code[:300]}"
     if tool_name == "create_tool" and arguments.get("apply", False):  # without apply it is a preview
         return f"create_tool: {arguments.get('name', '')}"
     if tool_name in ("edit_tool", "delete_tool"):
@@ -460,6 +479,11 @@ class ToolRegistry:
 
         return self._merge_mcp(filtered)
 
+    def _execution_mode(self) -> str:
+        """The owner's security mode: confirmation | auto | yolo (unknown = the strictest)."""
+        policy = getattr(getattr(self, "sandbox", None), "policy", None)
+        return getattr(policy, "execution_mode", "confirmation") or "confirmation"
+
     @staticmethod
     def _needs_owner_approval(brain, channel_id: str) -> bool:
         """Who is asking? The owner's own chats are asked; an agent's tools were chosen by the
@@ -490,7 +514,7 @@ class ToolRegistry:
         tool = self.tools[tool_name]
 
         # Powerful tools ask the owner first (the dashboard shows Allow / Deny).
-        question = confirmation_text(tool_name, arguments)
+        question = confirmation_text(tool_name, arguments, self._execution_mode())
         if question and self.confirm_callback and self._needs_owner_approval(_brain, channel_id):
             try:
                 approved = await self.confirm_callback(tool_name, question, channel_id)

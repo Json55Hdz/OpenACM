@@ -58,6 +58,7 @@ async def request_tool_confirmation(tool: str, command: str, channel_id: str) ->
     loop = asyncio.get_event_loop()
     future: asyncio.Future = loop.create_future()
     _state.pending_confirmations[confirm_id] = future
+    _state.pending_confirmation_commands[confirm_id] = command
 
     if _state.event_bus:
         await _state.event_bus.emit(
@@ -76,6 +77,7 @@ async def request_tool_confirmation(tool: str, command: str, channel_id: str) ->
         return False
     finally:
         _state.pending_confirmations.pop(confirm_id, None)
+        _state.pending_confirmation_commands.pop(confirm_id, None)
 
 
 # ─── Custom Provider Helpers (module-level so create_web_server can call them) ──

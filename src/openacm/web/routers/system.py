@@ -438,7 +438,8 @@ def register_routes(app: FastAPI) -> None:
         confirm_id = data.get("confirm_id", "")
         approved = bool(data.get("approved", False))
         always_session = bool(data.get("always_session", False))
-        command = data.get("command", "")
+        # The approval is keyed on what the SERVER asked about, never on text the client sends back
+        command = _state.pending_confirmation_commands.get(confirm_id, "")
 
         if approved and always_session and command:
             _state.session_allowed_commands.add(command)
