@@ -1834,7 +1834,6 @@ Rules:
 - QA tasks (if needed) must depend on all implementation tasks
 - task_type: "debate" only for critical architectural decisions; everything else is "standard\""""
 
-    @staticmethod
     async def _cascade_fail(self, swarm_id: int, failed_title: str) -> None:
         """Recursively fail all tasks that (directly or transitively) depend on failed_title.
 

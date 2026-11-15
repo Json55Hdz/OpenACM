@@ -61,7 +61,13 @@ def _next_cron_datetime(expr: str, after: datetime) -> datetime:
     hours  = _parse_field(fields[1], 0, 23)
     mdays  = _parse_field(fields[2], 1, 31)
     months = _parse_field(fields[3], 1, 12)
-    wdays  = _parse_field(fields[4], 0, 6)  # 0=Sunday … 6=Saturday
+    wdays  = _parse_field(fields[4], 0, 7)  # 0 or 7 = Sunday … 6 = Saturday
+    if 7 in wdays:
+        wdays = (wdays - {7}) | {0}
+    # Standard cron: when both day-of-month and weekday are restricted, a day matches if EITHER
+    # does; when only one is restricted, only that one counts.
+    mday_any = fields[2].strip() == "*" or fields[2].strip().startswith("*/") and len(mdays) >= 28
+    wday_any = fields[4].strip() == "*"
 
     # Start searching from the next minute
     candidate = after.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -75,7 +81,13 @@ def _next_cron_datetime(expr: str, after: datetime) -> datetime:
             candidate += timedelta(days=32)
             candidate = candidate.replace(day=1)
             continue
-        if candidate.day not in mdays and (candidate.weekday() + 1) % 7 not in wdays:
+        day_ok = candidate.day in mdays
+        wday_ok = (candidate.weekday() + 1) % 7 in wdays
+        if mday_any or wday_any:
+            matches_day = (day_ok if wday_any else True) and (wday_ok if mday_any else True)
+        else:
+            matches_day = day_ok or wday_ok
+        if not matches_day:
             # weekday(): Mon=0…Sun=6 → cron: Sun=0…Sat=6
             candidate = candidate.replace(hour=0, minute=0) + timedelta(days=1)
             continue

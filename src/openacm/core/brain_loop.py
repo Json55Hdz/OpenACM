@@ -329,6 +329,11 @@ class BrainLoopMixin:
             _tool_trace["error"] = str(e)
             log.error("Tool execution error", tool=tool_name, error=str(e))
 
+        # Tools report most failures as an "Error..." string rather than raising. Count those as
+        # failures too, so the dashboard shows them and the model is asked to rethink (REFLECTION).
+        if _tool_trace["error"] is None and isinstance(result, str) and result.startswith("Error"):
+            _tool_trace["error"] = result[:200]
+
         await self.event_bus.emit(
             EVENT_TOOL_RESULT,
             {
@@ -1043,7 +1048,9 @@ class BrainLoopMixin:
                 )
             else:
                 _stop_content = (
-                    "Write your final response now as plain text. "
+                    "You ran out of steps for this request, so the work may be unfinished. "
+                    "Write your final response now as plain text. Say clearly what you completed "
+                    "and what is still pending, so the user can ask you to continue. "
                     "Summarize what you accomplished, what worked, and what the outcome is. "
                     "Do NOT call any tools."
                 )
