@@ -172,7 +172,7 @@ export function ToolConfirmationModal({
   command: string;
   onClose: () => void;
 }) {
-  const TIMEOUT = 5;
+  const TIMEOUT = 120; // the server waits 300 s; 5 s was too short to read what is being asked
   const [timeLeft, setTimeLeft] = useState(TIMEOUT);
   const [loading, setLoading] = useState(false);
   const token = useAuthStore((s) => s.token);
@@ -183,7 +183,7 @@ export function ToolConfirmationModal({
     doneRef.current = true;
     setLoading(true);
     try {
-      await fetch('/api/tool/confirm', {
+      const res = await fetch('/api/tool/confirm', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -191,7 +191,13 @@ export function ToolConfirmationModal({
         },
         body: JSON.stringify({ confirm_id: confirmId, approved, always_session: alwaysSession, command }),
       });
-    } catch { /* best-effort */ }
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      // The answer did not reach the server: stay open so the user can try again
+      doneRef.current = false;
+      setLoading(false);
+      return;
+    }
     onClose();
   };
 

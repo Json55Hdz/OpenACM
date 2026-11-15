@@ -801,6 +801,15 @@ def register_routes(app: FastAPI) -> None:
         if not expected or not hmac.compare_digest(secret.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="Invalid agent secret")
 
+        # The webhook is reachable from outside: an agent exposed through it must have an explicit
+        # tool list, never "all" (that would hand every tool, shell included, to whoever holds
+        # the secret).
+        if str(agent.get("allowed_tools") or "all").strip().lower() == "all":
+            raise HTTPException(
+                status_code=403,
+                detail="This agent allows every tool. Choose its tools explicitly (or 'none') before using the webhook.",
+            )
+
         data = await request.json()
         message = data.get("message", "").strip()
         if not message:

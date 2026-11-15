@@ -30,8 +30,8 @@ def client(real_db, monkeypatch):
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-async def _agent(db, name, secret="s3cret-value"):
-    created = await db.create_agent(name=name, description="d", system_prompt="p", webhook_secret=secret)
+async def _agent(db, name, secret="s3cret-value", tools='["web_search"]'):
+    created = await db.create_agent(name=name, description="d", system_prompt="p", webhook_secret=secret, allowed_tools=tools)
     return created if isinstance(created, int) else created["id"]
 
 
@@ -111,3 +111,21 @@ class TestChatWebhookUserIdIsUntrusted:
                 )
         uid = run.await_args.kwargs["user_id"]
         assert uid.startswith(f"a{a}_hook_") and len(uid) <= 80 and "\n" not in uid and "/" not in uid
+
+
+class TestWebhookNeedsAnExplicitToolList:
+    async def test_an_agent_with_every_tool_is_refused_even_with_the_right_secret(self, client, real_db):
+        a = await _agent(real_db, "Todo", tools="all")
+        with patch("openacm.core.agent_runner.AgentRunner.run", AsyncMock(return_value="x")) as run:
+            async with client as ac:
+                resp = await ac.post(f"/api/agents/{a}/chat", json={"message": "hi"},
+                                     headers={"X-Agent-Secret": "s3cret-value"})
+        assert resp.status_code == 403 and not run.await_count
+
+    async def test_text_only_agents_are_allowed(self, client, real_db):
+        a = await _agent(real_db, "Texto", tools="none")
+        with patch("openacm.core.agent_runner.AgentRunner.run", AsyncMock(return_value="ok")):
+            async with client as ac:
+                resp = await ac.post(f"/api/agents/{a}/chat", json={"message": "hi"},
+                                     headers={"X-Agent-Secret": "s3cret-value"})
+        assert resp.status_code == 200

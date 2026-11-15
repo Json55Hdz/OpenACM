@@ -46,6 +46,38 @@ ALWAYS_INCLUDE_TOOLS = {
 }
 
 
+# Tools that change things outside the chat, and what to tell the user when asking.
+# A tool is listed here only for the calls that actually change something.
+def confirmation_text(tool_name: str, arguments: dict[str, Any]) -> str | None:
+    """The question to show before running this tool call, or None when no approval is needed.
+
+    The text doubles as the "allow for this session" key, so file tools name the folder:
+    approving once covers that folder, not every file the model might write.
+    """
+    import os
+
+    def folder(path: str) -> str:
+        return os.path.dirname(os.path.abspath(str(path or "."))) or "."
+
+    if tool_name in ("write_file", "edit_file"):
+        return f"{tool_name} → {folder(arguments.get('path') or arguments.get('file_path'))}/*"
+    if tool_name == "run_python":
+        return "run_python: " + str(arguments.get("code", ""))[:300]
+    if tool_name == "create_tool" and arguments.get("apply", False):  # without apply it is a preview
+        return f"create_tool: {arguments.get('name', '')}"
+    if tool_name in ("edit_tool", "delete_tool"):
+        return f"{tool_name}: {arguments.get('name', '')}"
+    if tool_name == "update_security_mode":
+        return f"change the security mode to: {arguments.get('mode', '')}"
+    if tool_name in ("post_to_facebook", "post_to_reddit"):
+        return f"{tool_name}: " + str(arguments.get("message") or arguments.get("title") or arguments.get("text") or "")[:200]
+    if tool_name == "save_social_credentials":
+        return f"save credentials for: {arguments.get('platform', '')}"
+    if tool_name in ("delete_agent", "delete_swarm"):
+        return f"{tool_name}: {arguments.get('agent_id') or arguments.get('swarm_id') or arguments.get('name', '')}"
+    return None
+
+
 class ToolRegistry:
     """Central registry for all tools."""
 
@@ -428,6 +460,14 @@ class ToolRegistry:
 
         return self._merge_mcp(filtered)
 
+    @staticmethod
+    def _needs_owner_approval(brain, channel_id: str) -> bool:
+        """Who is asking? The owner's own chats are asked; an agent's tools were chosen by the
+        owner when configuring it, and a swarm's workers run unattended by design."""
+        if getattr(getattr(brain, "config", None), "is_agent", False):
+            return False
+        return not (channel_id or "").startswith("swarm_")
+
     async def execute(
         self,
         tool_name: str,
@@ -448,6 +488,18 @@ class ToolRegistry:
 
 
         tool = self.tools[tool_name]
+
+        # Powerful tools ask the owner first (the dashboard shows Allow / Deny).
+        question = confirmation_text(tool_name, arguments)
+        if question and self.confirm_callback and self._needs_owner_approval(_brain, channel_id):
+            try:
+                approved = await self.confirm_callback(tool_name, question, channel_id)
+            except Exception as e:
+                log.warning("Tool confirmation failed — treating as denied", tool=tool_name, error=str(e))
+                approved = False
+            if not approved:
+                return f"Not run: the user denied '{tool_name}'."
+
         start_time = time.time()
         success = True
 
