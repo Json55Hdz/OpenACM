@@ -443,8 +443,8 @@ class BrainLoopMixin:
         # Build system prompt + fetch/create conversation messages
         _system_prompt, messages = await self._build_system_prompt(content, user_id, channel_id, channel_type)
 
-        # Inject RAG long-term memory context
-        messages = await self._inject_rag_context(content, channel_id, channel_type, messages)
+        # Long-term memory (RAG): built once per turn, added on every read of the history below
+        rag_msg = await self._rag_message(content, channel_id, channel_type)
 
         # Build structured content if there are attachments
         final_content = content
@@ -469,7 +469,7 @@ class BrainLoopMixin:
             except Exception as compact_err:
                 log.error("Auto-compaction failed", error=str(compact_err))
 
-        messages = await self.memory.get_messages(user_id, channel_id)
+        messages = self._with_rag_message(await self.memory.get_messages(user_id, channel_id), rag_msg)
 
         # Get tools in OpenAI format — filtered by user intent to save tokens
         tools = None
@@ -592,7 +592,7 @@ class BrainLoopMixin:
                         for _t in self.tool_registry.get_tools_by_intent(_s_content) or []:
                             if _t.get("function", {}).get("name") not in _have:
                                 tools.append(_t)
-                messages = await self.memory.get_messages(user_id, channel_id)
+                messages = self._with_rag_message(await self.memory.get_messages(user_id, channel_id), rag_msg)
                 log.info("User message injected mid-run", count=len(_steered), iteration=iterations)
 
             iterations += 1
@@ -837,7 +837,7 @@ class BrainLoopMixin:
                 tool_calls=clean_tool_calls,
                 reasoning_content=response.get("reasoning_content"),  # "" is valid, None means skip
             )
-            messages = await self.memory.get_messages(user_id, channel_id)
+            messages = self._with_rag_message(await self.memory.get_messages(user_id, channel_id), rag_msg)
 
             # If the LLM wrote something before calling tools, emit it immediately
             # so the frontend shows it in real-time (not just after all tools finish).
@@ -946,7 +946,7 @@ class BrainLoopMixin:
                     name=_tc_name,
                 )
 
-            messages = await self.memory.get_messages(user_id, channel_id)
+            messages = self._with_rag_message(await self.memory.get_messages(user_id, channel_id), rag_msg)
 
             # Analysis-paralysis guard: track consecutive iterations with no write actions.
             # After 3 read-only iterations, force the worker to act or declare failure.

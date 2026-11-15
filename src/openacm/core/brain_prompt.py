@@ -8,6 +8,9 @@ from openacm.core.messages import PROMPT_SETUP_MODE, PROMPT_RESURRECTION_HINT
 
 log = structlog.get_logger()
 
+# Each long-term memory fragment shown to the model is cut here, with an ellipsis when it is
+RAG_FRAGMENT_CHARS = 600
+
 
 class BrainPromptMixin:
 
@@ -107,20 +110,35 @@ class BrainPromptMixin:
 
         return system_prompt, messages
 
-    async def _inject_rag_context(
+    @staticmethod
+    def _with_rag_message(messages: list, rag_msg: dict | None) -> list:
+        """A copy of `messages` with the long-term memory block right after the system prompt.
+
+        The block is never stored in the conversation: it is added on every read of the history,
+        because the agent loop re-reads the history from memory on each iteration.
+        """
+        if not rag_msg or not messages or messages[0].get("role") != "system":
+            return messages
+        kept = [
+            m for m in messages
+            if not (m.get("role") == "system" and "Long-term memory" in str(m.get("content", "")))
+        ]
+        return kept[:1] + [rag_msg] + kept[1:]
+
+    async def _rag_message(
         self,
         content: str,
         channel_id: str,
         channel_type: str,
-        messages: list,
-    ) -> list:
-        """Query RAG long-term memory and inject relevant context into messages."""
+    ) -> dict | None:
+        """Query RAG long-term memory and build the system message that carries the fragments."""
+        rag_msg: dict | None = None
         try:
             from openacm.core.rag import _rag_engine
             from openacm.core.events import EVENT_MEMORY_RECALL
 
             if not (_rag_engine and _rag_engine.is_ready and content):
-                return messages
+                return None
 
             _rag_key = f"{channel_id}"
             _prev_query, _cached_memories = self._rag_cache.get(_rag_key, ("", []))
@@ -151,8 +169,11 @@ class BrainPromptMixin:
                     "channel_type": channel_type,
                     "count": len(memories),
                 })
-                memory_block = "\n".join(f"- {m[:200]}" for m in memories)
-                memory_msg = {
+                memory_block = "\n".join(
+                    f"- {m[:RAG_FRAGMENT_CHARS]}{'…' if len(m) > RAG_FRAGMENT_CHARS else ''}"
+                    for m in memories
+                )
+                rag_msg = {
                     "role": "system",
                     "content": (
                         f"[Long-term memory — relevant fragments retrieved]:\n"
@@ -167,12 +188,6 @@ class BrainPromptMixin:
                         f"principios limpios, modernos y robustos antes de usarlo o dárselo."
                     ),
                 }
-                if len(messages) > 1 and messages[0]["role"] == "system":
-                    messages = [
-                        m for m in messages
-                        if not (m.get("role") == "system" and "Long-term memory" in str(m.get("content", "")))
-                    ]
-                    messages.insert(1, memory_msg)
             else:
                 await self.event_bus.emit(EVENT_MEMORY_RECALL, {
                     "status": "empty",
@@ -180,7 +195,9 @@ class BrainPromptMixin:
                     "channel_type": channel_type,
                     "count": 0,
                 })
-        except Exception:
-            pass  # RAG is optional, never break the main flow
+        except Exception as e:
+            # RAG is optional and must never break the turn, but say that memory was not used
+            log.warning("Long-term memory lookup failed; answering without it", error=str(e))
+            return None
 
-        return messages
+        return rag_msg
