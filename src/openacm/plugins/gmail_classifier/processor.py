@@ -231,6 +231,7 @@ class GmailBatchProcessor:
                     )
 
             self._total = len(msg_ids)
+            self._skipped_unclassified = 0
             await self._emit("gmail_classifier.progress", {"processed": 0, "total": self._total})
 
             # 2. Process in batches
@@ -280,7 +281,11 @@ class GmailBatchProcessor:
 
             # Persist last_sync_at so the next cron tick can use an incremental
             # window instead of re-fetching since_date_default every time.
+            # Only a run that finished and answered for every email moves the window forward:
+            # otherwise the next incremental run would never look at the ones left behind.
             try:
+                if self._stop_requested or self._skipped_unclassified:
+                    raise RuntimeError("run incomplete — sync window not advanced")
                 await self._db._db.execute(
                     "INSERT INTO gmail_classifier_settings (key, value) "
                     "VALUES ('last_sync_at', ?) "
@@ -289,7 +294,7 @@ class GmailBatchProcessor:
                 )
                 await self._db._db.commit()
             except Exception as exc:
-                log.warning("Failed to persist last_sync_at", error=str(exc))
+                log.info("last_sync_at not updated", reason=str(exc))
 
             await self._emit("gmail_classifier.completed", {
                 "total": self._total,
@@ -567,7 +572,13 @@ class GmailBatchProcessor:
         saved: list[tuple[dict, int]] = []
 
         for email in emails:
-            cat_name = classifications.get(email["gmail_id"], "Otros")
+            if email["gmail_id"] not in classifications:
+                # The classifier gave no answer (LLM down, bad JSON, email left out). Saving it as
+                # "Otros" would mark it classified for good and it would never be retried.
+                log.warning("Email left unclassified for the next run", gmail_id=email["gmail_id"])
+                self._skipped_unclassified = getattr(self, "_skipped_unclassified", 0) + 1
+                continue
+            cat_name = classifications[email["gmail_id"]]
             cat_id = cat_by_name.get(cat_name, otros_id)
 
             params = (
