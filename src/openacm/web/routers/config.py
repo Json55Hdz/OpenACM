@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 from openacm.web.state import _state
+from openacm.utils.text import mask_secrets
 from openacm.web.broadcast import broadcast_event, _safe_ws_send, _broadcast_to_terminal
 from openacm.web.server import (
     _load_custom_providers, _save_custom_providers, _apply_custom_providers,
@@ -83,20 +84,8 @@ def register_routes(app: FastAPI) -> None:
         """Get current configuration (sanitized)."""
         if not _state.config:
             return {}
-        config_dict = _state.config.model_dump()
-        # Remove sensitive data
-        for provider in config_dict.get("llm", {}).get("providers", {}).values():
-            if "api_key" in provider:
-                provider["api_key"] = "***"
-        if "token" in config_dict.get("channels", {}).get("discord", {}):
-            config_dict["channels"]["discord"]["token"] = (
-                "***" if config_dict["channels"]["discord"]["token"] else ""
-            )
-        if "token" in config_dict.get("channels", {}).get("telegram", {}):
-            config_dict["channels"]["telegram"]["token"] = (
-                "***" if config_dict["channels"]["telegram"]["token"] else ""
-            )
-        return config_dict
+        # Every secret anywhere in the config (channels, WhatsApp app secret, providers...) is masked
+        return mask_secrets(_state.config.model_dump())
 
     @app.get("/api/config/model")
     async def get_current_model():

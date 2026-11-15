@@ -16,6 +16,26 @@ def join_message_parts(text: str) -> str:
     return "\n\n".join(split_message_parts(text)) if MESSAGE_SPLIT_MARKER in text else text
 
 
+SECRET_KEY_PARTS = ("token", "secret", "api_key", "apikey", "password", "passwd", "private_key", "credential")
+
+
+def mask_secrets(value):
+    """Copy of a config-like structure with every secret value replaced by '***'.
+
+    A key counts as secret when its name contains token, secret, api_key, password... Empty
+    values stay empty, so the UI can still tell "not set" from "set".
+    """
+    if isinstance(value, dict):
+        return {
+            k: ("***" if isinstance(k, str) and any(p in k.lower() for p in SECRET_KEY_PARTS)
+                and isinstance(v, str) and v else mask_secrets(v))
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [mask_secrets(v) for v in value]
+    return value
+
+
 CUSTOMER_NAME_MAX_CHARS = 40
 
 
