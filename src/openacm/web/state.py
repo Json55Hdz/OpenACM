@@ -18,6 +18,7 @@ class ServerState:
     command_processor: object = None
     channels: list = field(default_factory=list)
     agent_channel_manager: object = None
+    agent_runner: object = None
     mcp_manager: object = None
     activity_watcher: object = None
     cron_scheduler: object = None
@@ -40,3 +41,25 @@ class ServerState:
 
 
 _state = ServerState()
+
+
+def shared_agent_runner():
+    """The one AgentRunner the whole app uses, or None while the brain does not exist yet.
+
+    A single runner means a single set of per-conversation locks and one inactivity tracker:
+    a customer who writes through a channel and through the webhook is still answered one
+    message at a time. It reuses the channels' runner when there is one.
+    """
+    runner = getattr(_state.agent_channel_manager, "agent_runner", None) or _state.agent_runner
+    if runner is None and _state.brain is not None:
+        from openacm.core.agent_runner import AgentRunner
+
+        _state.agent_runner = runner = AgentRunner(
+            llm_router=_state.brain.llm_router,
+            tool_registry=_state.brain.tool_registry,
+            memory=_state.brain.memory,
+            event_bus=_state.brain.event_bus,
+            database=_state.database,
+            skill_manager=_state.brain.skill_manager,
+        )
+    return runner

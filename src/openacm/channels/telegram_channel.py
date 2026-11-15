@@ -460,9 +460,25 @@ class TelegramChannel(BaseChannel):
             parse_mode="Markdown",
         )
 
+    # Commands that act on the whole system (switch the model, read global usage). A channel
+    # that talks to the public (an agent's bot) turns this off.
+    allow_system_commands = True
+
+    def memory_user_id(self, user_id: str) -> str:
+        """The user id this channel's conversation memory is stored under."""
+        return user_id
+
+    async def _refuse(self, update: Update) -> bool:
+        """Answer and return True when the sender may not use this bot or this command."""
+        if not update.message:
+            return True
+        if update.effective_user and not self._is_allowed(update.effective_user.id):
+            return True
+        return False
+
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
-        if not update.message:
+        if await self._refuse(update):
             return
         result = await self._cmd.handle("/help", "", "", "")
         await update.message.reply_text(result.text)
@@ -473,14 +489,17 @@ class TelegramChannel(BaseChannel):
             return
         if not self._is_allowed(update.effective_user.id):
             return
-        user_id = str(update.effective_user.id)
+        user_id = self.memory_user_id(str(update.effective_user.id))
         channel_id = str(update.message.chat_id)
         result = await self._cmd.handle("/clear", "", user_id, channel_id)
         await update.message.reply_text(result.text)
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /model command."""
-        if not update.message:
+        if await self._refuse(update):
+            return
+        if not self.allow_system_commands:
+            await update.message.reply_text("Este comando no está disponible aquí.")
             return
         args = " ".join(context.args) if context.args else ""
         user_id = str(update.effective_user.id) if update.effective_user else ""
@@ -490,7 +509,10 @@ class TelegramChannel(BaseChannel):
 
     async def _cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stats command."""
-        if not update.message:
+        if await self._refuse(update):
+            return
+        if not self.allow_system_commands:
+            await update.message.reply_text("Este comando no está disponible aquí.")
             return
         result = await self._cmd.handle("/stats", "", "", "")
         await update.message.reply_text(result.text)
@@ -501,7 +523,7 @@ class TelegramChannel(BaseChannel):
             return
         if not self._is_allowed(update.effective_user.id):
             return
-        user_id = str(update.effective_user.id)
+        user_id = self.memory_user_id(str(update.effective_user.id))
         channel_id = str(update.message.chat_id)
         result = await self._cmd.handle("/export", "", user_id, channel_id)
 

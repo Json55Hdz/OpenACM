@@ -2236,9 +2236,9 @@ class Database:
             return False
         updates.append("updated_at = CURRENT_TIMESTAMP")
         params.append(agent_id)
-        await self._db.execute(f"UPDATE agents SET {', '.join(updates)} WHERE id = ?", params)
+        cursor = await self._db.execute(f"UPDATE agents SET {', '.join(updates)} WHERE id = ?", params)
         await self._db.commit()
-        return True
+        return bool(cursor.rowcount)  # False for an agent that does not exist
 
     async def delete_agent(self, agent_id: int) -> bool:
         if not self._db:
@@ -2277,7 +2277,8 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
-    async def update_agent_knowledge(self, kid: int, **kwargs: Any) -> bool:
+    async def update_agent_knowledge(self, kid: int, agent_id: int | None = None, **kwargs: Any) -> bool:
+        """Change a knowledge item. With agent_id, only if that agent owns it."""
         if not self._db:
             return False
         allowed = {"title", "content"}
@@ -2288,19 +2289,23 @@ class Database:
                 params.append(val)
         if not updates:
             return False
-        params.append(kid)
-        await self._db.execute(
-            f"UPDATE agent_knowledge SET {', '.join(updates)} WHERE id = ?", params
+        where, params = "id = ?", params + [kid]
+        if agent_id is not None:
+            where, params = where + " AND agent_id = ?", params + [agent_id]
+        cursor = await self._db.execute(
+            f"UPDATE agent_knowledge SET {', '.join(updates)} WHERE {where}", params
         )
         await self._db.commit()
-        return True
+        return bool(cursor.rowcount)
 
-    async def delete_agent_knowledge(self, kid: int) -> bool:
+    async def delete_agent_knowledge(self, kid: int, agent_id: int | None = None) -> bool:
+        """Delete a knowledge item. With agent_id, only if that agent owns it."""
         if not self._db:
             return False
-        cursor = await self._db.execute(
-            "DELETE FROM agent_knowledge WHERE id = ?", (kid,)
-        )
+        sql, params = "DELETE FROM agent_knowledge WHERE id = ?", [kid]
+        if agent_id is not None:
+            sql, params = sql + " AND agent_id = ?", params + [agent_id]
+        cursor = await self._db.execute(sql, params)
         await self._db.commit()
         return cursor.rowcount > 0
 

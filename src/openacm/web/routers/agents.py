@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hmac
 import json
 import os
 import re
@@ -20,7 +21,7 @@ from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 
-from openacm.web.state import _state
+from openacm.web.state import _state, shared_agent_runner
 from openacm.web.broadcast import broadcast_event, _safe_ws_send, _broadcast_to_terminal
 from openacm.constants import TRUNCATE_RAG_CONTEXT_CHARS
 from openacm.utils.text import truncate
@@ -124,10 +125,15 @@ def register_routes(app: FastAPI) -> None:
 
         # When is_active changes, restart all channels for this agent
         if _state.agent_channel_manager and "is_active" in kwargs:
-            for ch_type in ["telegram", "whatsapp"]:
-                asyncio.create_task(
-                    _state.agent_channel_manager.restart_channel(agent_id, ch_type)
-                )
+            # Awaited (not fire-and-forget) so a channel that cannot restart is logged here
+            results = await asyncio.gather(
+                *(_state.agent_channel_manager.restart_channel(agent_id, ch_type)
+                  for ch_type in ["telegram", "whatsapp"]),
+                return_exceptions=True,
+            )
+            for ch_type, result in zip(["telegram", "whatsapp"], results):
+                if isinstance(result, Exception):
+                    log.warning("Agent channel restart failed", agent_id=agent_id, type=ch_type, error=str(result))
 
         agent = await _state.database.get_agent(agent_id)
         return _agent_public(agent)
@@ -275,16 +281,9 @@ def register_routes(app: FastAPI) -> None:
         async def get_connection(connection_id: int):
             return await _state.database.get_connection(connection_id)
 
-        agent_runner = None
+        agent_runner = shared_agent_runner()
         get_agent = None
-        if _state.brain:
-            from openacm.core.agent_runner import AgentRunner
-
-            agent_runner = AgentRunner(
-                llm_router=_state.brain.llm_router, tool_registry=_state.brain.tool_registry,
-                memory=_state.brain.memory, event_bus=_state.brain.event_bus,
-                database=_state.database, skill_manager=_state.brain.skill_manager,
-            )
+        if agent_runner is not None:
 
             async def get_agent(agent_id: int):
                 return await _state.database.get_agent(agent_id)
@@ -518,7 +517,7 @@ def register_routes(app: FastAPI) -> None:
             updates["content"] = (data["content"] or "").strip()
         if not updates:
             raise HTTPException(status_code=400, detail="title or content required")
-        ok = await _state.database.update_agent_knowledge(kid, **updates)
+        ok = await _state.database.update_agent_knowledge(kid, agent_id=agent_id, **updates)
         if not ok:
             raise HTTPException(status_code=404, detail="Knowledge item not found")
         items = await _state.database.get_agent_knowledge(agent_id)
@@ -534,7 +533,7 @@ def register_routes(app: FastAPI) -> None:
         agent = await _state.database.get_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        ok = await _state.database.delete_agent_knowledge(kid)
+        ok = await _state.database.delete_agent_knowledge(kid, agent_id=agent_id)
         if not ok:
             raise HTTPException(status_code=404, detail="Knowledge item not found")
         return {"ok": True}
@@ -797,7 +796,9 @@ def register_routes(app: FastAPI) -> None:
 
         # Verify secret
         secret = request.headers.get("X-Agent-Secret", "")
-        if secret != agent["webhook_secret"]:
+        expected = str(agent.get("webhook_secret") or "")
+        # An agent with no secret must not be callable by anyone: "" would equal "".
+        if not expected or not hmac.compare_digest(secret.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="Invalid agent secret")
 
         data = await request.json()
@@ -806,16 +807,7 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail="message required")
         user_id = data.get("user_id", "webhook_user")
 
-        from openacm.core.agent_runner import AgentRunner
-        runner = AgentRunner(
-            llm_router=_state.brain.llm_router,
-            tool_registry=_state.brain.tool_registry,
-            memory=_state.brain.memory,
-            event_bus=_state.brain.event_bus,
-            database=_state.database,
-            skill_manager=_state.brain.skill_manager,
-        )
-        response = await runner.run(agent=agent, message=message, user_id=user_id)
+        response = await shared_agent_runner().run(agent=agent, message=message, user_id=user_id)
         return {"response": response, "agent": agent["name"]}
 
     @app.post("/api/agents/generate")
@@ -928,16 +920,7 @@ def register_routes(app: FastAPI) -> None:
         channel_id = data.get("channel_id")
         extra_system_context = data.get("extra_system_context")
 
-        from openacm.core.agent_runner import AgentRunner
-        runner = AgentRunner(
-            llm_router=_state.brain.llm_router,
-            tool_registry=_state.brain.tool_registry,
-            memory=_state.brain.memory,
-            event_bus=_state.brain.event_bus,
-            database=_state.database,
-            skill_manager=_state.brain.skill_manager,
-        )
-        response = await runner.run(
+        response = await shared_agent_runner().run(
             agent=agent, message=message, user_id="dashboard_test",
             channel_id=channel_id, extra_system_context=extra_system_context,
         )

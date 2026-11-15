@@ -26,6 +26,9 @@ from openacm.web.server import _get_version, _load_custom_providers, _save_custo
 
 log = structlog.get_logger()
 
+# POST /api/agents/<id>/chat: called by outside systems that hold the agent's own secret
+_AGENT_CHAT_PATH = re.compile(r"/api/agents/\d+/chat")
+
 
 
 def register_routes(app: FastAPI) -> None:
@@ -75,6 +78,11 @@ def register_routes(app: FastAPI) -> None:
             # their configured auth_scheme (see webhook_auth.py) — never
             # the dashboard token.
             if path.startswith("/api/webhooks/"):
+                return await call_next(request)
+
+            # An agent's chat webhook is called by outside systems with the agent's own secret
+            # (X-Agent-Secret), which the route itself checks.
+            if request.method == "POST" and _AGENT_CHAT_PATH.fullmatch(path):
                 return await call_next(request)
 
             # Check token for other API routes

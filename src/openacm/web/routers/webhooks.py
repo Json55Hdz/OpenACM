@@ -17,7 +17,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from openacm.web.state import _state
+from openacm.web.state import _state, shared_agent_runner
 
 log = structlog.get_logger()
 
@@ -123,16 +123,9 @@ def register_routes(app: FastAPI) -> None:
 
         start = time.monotonic()
 
-        agent_runner = None
+        agent_runner = shared_agent_runner()
         get_agent = None
-        if _state.brain:
-            from openacm.core.agent_runner import AgentRunner
-
-            agent_runner = AgentRunner(
-                llm_router=_state.brain.llm_router, tool_registry=_state.brain.tool_registry,
-                memory=_state.brain.memory, event_bus=_state.brain.event_bus,
-                database=_state.database, skill_manager=_state.brain.skill_manager,
-            )
+        if agent_runner is not None:
 
             async def get_agent(agent_id: int):
                 return await _state.database.get_agent(agent_id)

@@ -81,9 +81,17 @@ class AgentTelegramChannel(TelegramChannel):
     responder al mismo chat.
     """
 
+    # An agent's bot talks to the public: nobody there may switch the system's model or read its usage
+    allow_system_commands = False
+
     def __init__(self, config, brain: AgentBrainAdapter, event_bus, database=None):
         super().__init__(config, brain, event_bus, database)
         self._agent_channel_type = brain.channel_type  # ej: "telegram_a5"
+
+    def memory_user_id(self, user_id: str) -> str:
+        # The agent keeps each customer's conversation under a scoped id: /clear and /export
+        # must look there, not under the raw Telegram id.
+        return self.brain.memory_user_id(user_id)
 
     def _owns_event(self, data: dict) -> bool:
         return data.get("channel_type") == self._agent_channel_type
@@ -135,6 +143,23 @@ class AgentChannelManager:
         self._channels: dict[int, dict[str, object]] = {}
         # phone_number_id → AgentWhatsAppChannel (for webhook routing)
         self._whatsapp_by_phone: dict[str, object] = {}
+        # Channel start-up tasks: kept so they are not garbage collected and so a start that
+        # raises is logged instead of vanishing.
+        self._start_tasks: set[asyncio.Task] = set()
+
+    def _run_channel(self, channel, agent_name: str, channel_type: str) -> None:
+        task = asyncio.create_task(channel.start())
+        self._start_tasks.add(task)
+
+        def _finished(done: asyncio.Task) -> None:
+            self._start_tasks.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                log.error(
+                    "Agent channel stopped with an error",
+                    agent=agent_name, type=channel_type, error=str(done.exception()),
+                )
+
+        task.add_done_callback(_finished)
 
     async def start_all(self):
         """Start channels for all active agents."""
@@ -194,7 +219,7 @@ class AgentChannelManager:
             if phone_id:
                 self._whatsapp_by_phone[phone_id] = channel
 
-        asyncio.create_task(channel.start())
+        self._run_channel(channel, agent["name"], channel_type)
         await asyncio.wait_for(channel.ready_event.wait(), timeout=15)
 
         if channel.is_connected:
@@ -260,8 +285,8 @@ class AgentChannelManager:
                 del self._whatsapp_by_phone[k]
         try:
             await ch.stop()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Agent channel did not stop cleanly", agent_id=agent_id, type=channel_type, error=str(exc))
         log.info("Agent channel stopped", agent_id=agent_id, type=channel_type)
 
     async def restart_channel(self, agent_id: int, channel_type: str):
