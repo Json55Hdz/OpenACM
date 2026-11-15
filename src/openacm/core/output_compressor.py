@@ -20,6 +20,21 @@ import re
 # Public API
 # ---------------------------------------------------------------------------
 
+# Tools whose output the model uses as exact text (to copy into an edit): never condensed.
+EXACT_TOOLS = frozenset({"read_file_range", "edit_file"})
+
+# Appended when a file read was condensed, so the model knows it can ask for the exact text.
+CONDENSED_NOTE = (
+    "\n\n[Shown condensed to save space. "
+    "Pass raw=true to read_file for the exact, complete text.]"
+)
+
+
+def wants_exact(tool_name: str, tool_args: dict | None) -> bool:
+    """True when this result must reach the model exactly as the tool produced it."""
+    return tool_name in EXACT_TOOLS or (tool_args or {}).get("raw") is True
+
+
 def compress(result: str, tool_name: str = "", tool_args: dict | None = None) -> tuple[str, int, int]:
     """
     Compress a tool result string.
@@ -33,6 +48,9 @@ def compress(result: str, tool_name: str = "", tool_args: dict | None = None) ->
         (compressed_text, original_chars, compressed_chars)
     """
     original = len(result)
+
+    if wants_exact(tool_name, tool_args):
+        return result, original, original
 
     # Pick the right compressor based on tool name
     if tool_name in ("run_command", "run_python"):
@@ -50,6 +68,8 @@ def compress(result: str, tool_name: str = "", tool_args: dict | None = None) ->
         compressed = _compress_generic(result)
 
     compressed = _shared_cleanup(compressed)
+    if tool_name == "read_file" and compressed != result.strip():
+        compressed += CONDENSED_NOTE
     return compressed, original, len(compressed)
 
 

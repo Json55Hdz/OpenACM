@@ -13,7 +13,9 @@ from openacm.tools.base import tool
     name="read_file",
     description=(
         "Read the contents of a file. Returns the text content of the file. "
-        "Use this to inspect files on the system."
+        "Use this to inspect files on the system. Long files are shown condensed "
+        "(comments and docstrings trimmed, logs summarized) to save space: pass raw=true "
+        "when you need the exact, complete text, for example before editing it."
     ),
     parameters={
         "type": "object",
@@ -27,13 +29,18 @@ from openacm.tools.base import tool
                 "description": "Maximum lines to read. Default 500. Pass max_lines=0 to read the ENTIRE file (use this for log output, test results, or any file where you need everything).",
                 "default": 500,
             },
+            "raw": {
+                "type": "boolean",
+                "description": "Return the exact text with nothing condensed or trimmed. Use it when you must see every line, or copy text into an edit.",
+                "default": False,
+            },
         },
         "required": ["path"],
     },
     risk_level="medium",
     category="file",
 )
-async def read_file(path: str, max_lines: int = 500, **kwargs) -> str:
+async def read_file(path: str, max_lines: int = 500, raw: bool = False, **kwargs) -> str:
     """Read file contents."""
     try:
         file_path = Path(path).resolve()

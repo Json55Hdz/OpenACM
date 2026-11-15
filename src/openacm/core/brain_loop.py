@@ -28,7 +28,7 @@ from openacm.core.messages import (
     MSG_THINKING,
     MSG_TOOL_EXECUTING,
 )
-from openacm.core.output_compressor import compress as compress_output, compression_summary
+from openacm.core.output_compressor import compress as compress_output, compression_summary, wants_exact
 
 log = structlog.get_logger()
 
@@ -349,6 +349,9 @@ class BrainLoopMixin:
             DEFAULT_TOOL_RESULT_CHARS,
             min(int(getattr(_td, "max_result_chars", None) or 0), MAX_TOOL_RESULT_CHARS_CEILING),
         )
+        if wants_exact(tool_name, tool_args):
+            # The model asked for the exact text: give it the largest allowance we have
+            MAX_TOOL_RESULT_CHARS = MAX_TOOL_RESULT_CHARS_CEILING
         _tool_trace["truncated"] = len(str(result)) > MAX_TOOL_RESULT_CHARS
         result_for_memory, _orig_len, _comp_len = compress_output(
             _strip_ansi(str(result)), tool_name, tool_args

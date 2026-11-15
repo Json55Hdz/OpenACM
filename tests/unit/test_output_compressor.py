@@ -74,3 +74,33 @@ class TestDirectoryListings:
         text = "\n".join(f"./src/pkg{i % 7}/file{i}.py" for i in range(400))
         out = _c(text, "run_command", command="find . -type f")
         assert len(out) < len(text) // 2
+
+
+class TestExactText:
+    """The model must be able to get a file exactly as it is: to edit it, or when it needs all of it."""
+
+    CODE = 'def f():\n    """\n' + "\n".join(f"    detail {i}" for i in range(10)) + '\n    """\n    x  =  1   # aligned\n'
+
+    def test_raw_returns_the_text_untouched(self):
+        assert _c(self.CODE, "read_file", path="a.py", raw=True) == self.CODE
+
+    def test_raw_log_keeps_every_line(self):
+        log = "\n".join(f"plain line {i}" for i in range(40))
+        assert _c(log, "read_file", path="app.log", raw=True) == log
+
+    def test_read_file_range_is_never_condensed(self):
+        text = "   12 | x  =  1   # two spaces\n   13 | \n\n\n\n   14 | y\n"
+        assert _c(text, "read_file_range") == text
+
+    def test_a_condensed_read_tells_the_model_how_to_get_the_exact_text(self):
+        out = _c(self.CODE, "read_file", path="a.py")
+        assert "raw=true" in out
+
+    def test_an_unchanged_read_gets_no_note(self):
+        assert "raw=true" not in _c("just text", "read_file", path="a.txt")
+
+    def test_read_file_accepts_raw(self):
+        import inspect
+        from openacm.tools.file_ops import read_file
+
+        assert "raw" in inspect.signature(read_file).parameters
