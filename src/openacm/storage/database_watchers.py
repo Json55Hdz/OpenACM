@@ -57,11 +57,16 @@ class WatchersMixin:
         return cursor.lastrowid or 0
 
     async def get_app_activities(self, limit: int = 5000) -> list[dict[str, Any]]:
-        """Return decrypted app activity records ordered by session_start ASC."""
+        """Return the most recent `limit` decrypted app activity records, oldest first.
+
+        (Taking the first `limit` rows instead would freeze routine detection on the oldest
+        sessions once the table outgrows the limit.)
+        """
         if not self._db:
             return []
         cursor = await self._db.execute(
-            "SELECT * FROM app_activities ORDER BY session_start ASC LIMIT ?",
+            "SELECT * FROM (SELECT * FROM app_activities ORDER BY session_start DESC LIMIT ?) "
+            "ORDER BY session_start ASC",
             (limit,),
         )
         rows = await cursor.fetchall()

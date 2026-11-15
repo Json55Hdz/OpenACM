@@ -35,3 +35,11 @@ async def test_a_dismissed_pattern_is_not_offered_again_for_a_week(db):
     await tracker.resolve_suggestion(sid, accepted=False)
     assert await tracker._was_recently_dismissed("u", "h1") is True
     assert await tracker._was_recently_dismissed("u", "other") is False
+
+
+async def test_routine_detection_sees_the_newest_sessions_not_the_oldest(db):
+    for day in range(1, 8):
+        stamp = f"2026-11-{day:02d}T10:00:00"
+        await db.log_app_activity(f"App{day}", "t", "p", 60, stamp, stamp, 0, 10)
+    seen = [a["app_name"] for a in await db.get_app_activities(limit=3)]
+    assert seen == ["App5", "App6", "App7"]  # the latest three, oldest first
