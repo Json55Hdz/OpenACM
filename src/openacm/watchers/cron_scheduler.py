@@ -424,6 +424,7 @@ class CronScheduler:
         goal = goal_override or template["goal_template"]
         goal = goal.replace("{date}", today)
 
+        workers = json.loads(template.get("workers") or "[]")
         # Create the swarm the way the dashboard does (workspace folders included), let the
         # planner design the team and tasks for this goal, then run it.
         created = await self._swarm_manager.create_swarm(
@@ -433,8 +434,33 @@ class CronScheduler:
         )
         swarm_id = created["id"]
         await self._swarm_manager.plan_swarm(swarm_id)
+        await self._clamp_planned_tools(swarm_id, workers)
         await self._swarm_manager.start_swarm(swarm_id)
         return f"Swarm '{template['name']}' started from template (swarm_id={swarm_id}, date={today})"
+
+    async def _clamp_planned_tools(self, swarm_id: int, template_workers: list[dict]) -> None:
+        """Keep an unattended swarm inside the tools its template allows.
+
+        The planner invents the workers, so it must not be able to hand itself every tool: a
+        worker may only use what the template's own workers were allowed. A template that says
+        "all" explicitly opts in; a template with no workers allows no outside tools at all.
+        """
+        allowed: set[str] | None = set()
+        for w in template_workers:
+            spec = w.get("allowed_tools", "all")
+            if spec == "all":
+                allowed = None  # the template opted in to everything
+                break
+            if spec != "none":
+                try:
+                    allowed |= set(json.loads(spec))
+                except Exception:
+                    pass
+        if allowed is None:
+            return
+        value = json.dumps(sorted(allowed)) if allowed else "none"
+        for worker in await self._db.get_swarm_workers(swarm_id):
+            await self._db.update_swarm_worker(worker["id"], allowed_tools=value)
 
     async def _custom_command(self, payload: dict) -> str:
         command = payload.get("command", "")

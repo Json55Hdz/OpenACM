@@ -71,10 +71,33 @@ async def test_a_cron_swarm_template_creates_plans_and_starts_a_real_swarm():
     manager.start_swarm = AsyncMock()
     db = MagicMock()
     db.get_swarm_template = AsyncMock(return_value={
-        "name": "Informe", "goal_template": "Resumen del {date}", "global_model": ""})
+        "name": "Informe", "goal_template": "Resumen del {date}", "global_model": "",
+        "workers": '[{"name": "a", "allowed_tools": "all"}]'})
+    db.get_swarm_workers = AsyncMock(return_value=[])
     cron = CronScheduler(db, swarm_manager=manager)
     out = await cron._run_swarm_template({"template_id": 1})
     assert "swarm_id=9" in out
     assert "{date}" not in manager.create_swarm.await_args.kwargs["goal"]
     manager.plan_swarm.assert_awaited_once_with(9)
     manager.start_swarm.assert_awaited_once_with(9)
+
+
+class TestUnattendedSwarmToolScope:
+    async def _clamped(self, template_workers):
+        from openacm.watchers.cron_scheduler import CronScheduler
+
+        db = MagicMock()
+        db.get_swarm_workers = AsyncMock(return_value=[{"id": 1}, {"id": 2}])
+        db.update_swarm_worker = AsyncMock()
+        await CronScheduler(db)._clamp_planned_tools(9, template_workers)
+        return [c.kwargs["allowed_tools"] for c in db.update_swarm_worker.await_args_list]
+
+    async def test_planner_workers_cannot_exceed_the_templates_tools(self):
+        out = await self._clamped([{"allowed_tools": '["read_file"]'}, {"allowed_tools": '["web_search"]'}])
+        assert out == ['["read_file", "web_search"]'] * 2
+
+    async def test_a_template_without_workers_allows_no_outside_tools(self):
+        assert await self._clamped([]) == ["none", "none"]
+
+    async def test_a_template_that_says_all_is_an_explicit_opt_in(self):
+        assert await self._clamped([{"allowed_tools": "all"}]) == []

@@ -1511,7 +1511,9 @@ class SwarmManager:
                         all_base = self_inner._base.get_tools_schema()
                         base_tools = [t for t in all_base if t["function"]["name"] in names]
                     except Exception:
-                        base_tools = self_inner._base.get_tools_schema()
+                        # An unreadable allow-list must not become "every tool"
+                        log.warning("Worker allowed_tools is not valid JSON — no outside tools", value=str(allowed)[:80])
+                        base_tools = []
 
                 swarm_schemas = [td.to_openai_schema() for td in swarm_tool_defs.values()]
                 return base_tools + swarm_schemas

@@ -779,12 +779,15 @@ class VoiceDaemon:
                 subprocess.run(["espeak", text], timeout=30, check=False)
                 return True
             elif sys.platform == "win32":
-                safe = text.replace('"', "'").replace('`', "'")
+                # The text travels in an environment variable and is never part of the script:
+                # inside a double-quoted PowerShell string "$(...)" would run as code.
+                import os
                 subprocess.run(
                     ["powershell", "-NonInteractive", "-Command",
-                     f'Add-Type -AssemblyName System.Speech;'
-                     f'(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("{safe}")'],
+                     "Add-Type -AssemblyName System.Speech;"
+                     "(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak($env:OPENACM_SPEAK_TEXT)"],
                     timeout=60, check=False,
+                    env={**os.environ, "OPENACM_SPEAK_TEXT": text},
                 )
                 return True
         except Exception:
