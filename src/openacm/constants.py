@@ -30,6 +30,10 @@ TRUNCATE_FILE_CONTEXT_CHARS = 12_000
 TRUNCATE_BROWSER_PAGE_CHARS = 8_000
 TRUNCATE_BROWSER_HTML_CHARS = 4_000
 
+# A tool that has not answered after this long is stopped and the model is told so.
+# A tool can set its own limit (timeout_s) or opt out with 0 when it waits on a person.
+DEFAULT_TOOL_TIMEOUT_SECONDS = 300
+
 # Individual tool execution result stored in the DB
 TRUNCATE_TOOL_RESULT_CHARS = 5_000
 

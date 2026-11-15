@@ -92,6 +92,7 @@ def _is_gui_command(command: str) -> bool:
         "EXAMPLES: 'dir', 'ls -la', 'git status', 'python script.py', "
         "'npm run dev' (background=true), 'mitmweb --listen-port 8888' (background=true)"
     ),
+    timeout_s=0,  # waits for the user to confirm, then enforces its own `timeout`
     parameters={
         "type": "object",
         "properties": {

@@ -5,6 +5,7 @@ Handles tool registration, schema generation, and execution
 with security policy enforcement.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -14,7 +15,12 @@ from typing import Any
 import numpy as np
 import structlog
 
-from openacm.constants import SEMANTIC_TOOL_THRESHOLD, TRUNCATE_TOOL_RESULT_CHARS
+from openacm.constants import (
+    DEFAULT_TOOL_TIMEOUT_SECONDS,
+    SEMANTIC_TOOL_THRESHOLD,
+    TRUNCATE_TOOL_RESULT_CHARS,
+)
+from openacm.core.messages import MSG_TOOL_TIMED_OUT
 from openacm.utils.text import truncate
 from openacm.core.events import EventBus
 from openacm.security.sandbox import Sandbox
@@ -445,19 +451,29 @@ class ToolRegistry:
         start_time = time.time()
         success = True
 
+        limit = DEFAULT_TOOL_TIMEOUT_SECONDS if tool.timeout_s is None else tool.timeout_s
         try:
-            # Inject context into tool call
-            result = await tool.handler(
-                **arguments,
-                _sandbox=self.sandbox,
-                _event_bus=self.event_bus,
-                _brain=_brain,
-                _user_id=user_id,
-                _channel_id=channel_id,
-                _channel_type=channel_type,
-                _confirm_callback=self.confirm_callback,
-            )
+            # Inject context into tool call. asyncio.timeout (not wait_for) so a timeout raised
+            # by the tool itself is not mistaken for ours: only our own expiry is reported as one.
+            async with asyncio.timeout(limit if limit and limit > 0 else None) as deadline:
+                result = await tool.handler(
+                    **arguments,
+                    _sandbox=self.sandbox,
+                    _event_bus=self.event_bus,
+                    _brain=_brain,
+                    _user_id=user_id,
+                    _channel_id=channel_id,
+                    _channel_type=channel_type,
+                    _confirm_callback=self.confirm_callback,
+                )
             result_str = str(result)
+        except TimeoutError as e:
+            if not deadline.expired():
+                result_str = f"Error: {e or 'timed out'}"
+            else:
+                result_str = MSG_TOOL_TIMED_OUT.format(tool_name=tool_name, seconds=int(limit))
+                log.error("Tool timed out", tool=tool_name, seconds=limit)
+            success = False
         except Exception as e:
             result_str = f"Error: {str(e)}"
             success = False

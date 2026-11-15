@@ -269,3 +269,76 @@ class TestKeywordFallbackRanksByCategoryHits:
         }
         got = [t["function"]["name"] for t in tool_registry.get_tools_by_intent("mueve el mouse y haz clic en la pantalla del navegador")]
         assert got.index("d1") < got.index("b1") < got.index("g1")
+
+
+# ---------------------------------------------------------------------------
+# Tool time limit
+# ---------------------------------------------------------------------------
+
+def _add_tool(registry, handler, **kwargs):
+    registry.tools["probe"] = ToolDefinition(
+        name="probe", description="probe", parameters={"type": "object", "properties": {}},
+        handler=handler, **kwargs,
+    )
+
+
+class TestToolTimeLimit:
+    async def test_a_tool_that_hangs_is_stopped_and_the_model_is_told(self, tool_registry):
+        import asyncio
+
+        async def hang(**_):
+            await asyncio.sleep(30)
+            return "never"
+
+        _add_tool(tool_registry, hang, timeout_s=0.05)
+        result = await tool_registry.execute("probe", {})
+        assert "did not finish within" in result and "probe" in result
+        assert "may have done part of the work" in result
+
+    async def test_a_tool_inside_its_limit_returns_normally(self, tool_registry):
+        async def fast(**_):
+            return "done"
+
+        _add_tool(tool_registry, fast, timeout_s=5)
+        assert await tool_registry.execute("probe", {}) == "done"
+
+    async def test_zero_means_no_limit(self, tool_registry, monkeypatch):
+        import asyncio
+        from openacm.tools import registry as reg
+
+        monkeypatch.setattr(reg, "DEFAULT_TOOL_TIMEOUT_SECONDS", 0.01)
+
+        async def slowish(**_):
+            await asyncio.sleep(0.1)
+            return "finished"
+
+        _add_tool(tool_registry, slowish, timeout_s=0)
+        assert await tool_registry.execute("probe", {}) == "finished"
+
+    async def test_the_default_limit_applies_when_a_tool_sets_none(self, tool_registry, monkeypatch):
+        import asyncio
+        from openacm.tools import registry as reg
+
+        monkeypatch.setattr(reg, "DEFAULT_TOOL_TIMEOUT_SECONDS", 0.05)
+
+        async def hang(**_):
+            await asyncio.sleep(30)
+
+        _add_tool(tool_registry, hang)
+        assert "did not finish within" in await tool_registry.execute("probe", {})
+
+    async def test_a_timeout_raised_inside_the_tool_is_not_reported_as_ours(self, tool_registry):
+        async def inner(**_):
+            raise TimeoutError("upstream API timed out")
+
+        _add_tool(tool_registry, inner, timeout_s=5)
+        result = await tool_registry.execute("probe", {})
+        assert "upstream API timed out" in result
+        assert "did not finish within" not in result
+
+    def test_run_command_keeps_its_own_limit(self):
+        from openacm.tools.base import get_registered_tools
+        import openacm.tools.system_cmd  # noqa: F401  (registers the tool)
+
+        rc = next(t for t in get_registered_tools() if t.name == "run_command")
+        assert rc.timeout_s == 0

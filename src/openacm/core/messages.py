@@ -37,6 +37,12 @@ MSG_COMPACTING = "🗜️ Compacting context..."
 MSG_STEP = "🔄 Step {iterations}/{max_iterations}..."
 # Use as: MSG_TOOL_EXECUTING.format(tool_name=name)
 MSG_TOOL_EXECUTING = "⚙️ Running {tool_name}..."
+# Use as: MSG_TOOL_TIMED_OUT.format(tool_name=name, seconds=n)
+MSG_TOOL_TIMED_OUT = (
+    "Error: tool '{tool_name}' did not finish within {seconds} seconds and was stopped. "
+    "Its result is unknown: it may have done part of the work. Do not assume it succeeded; "
+    "check the state before retrying, or try a smaller step."
+)
 
 # ── Errors & fallbacks ───────────────────────────────────────────────────────
 

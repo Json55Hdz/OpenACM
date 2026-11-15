@@ -19,6 +19,9 @@ class ToolDefinition:
     # Result size kept for the LLM (None = the default). A tool whose output is already
     # budgeted and must arrive whole (a page outline) can ask for more.
     max_result_chars: int | None = None
+    # Seconds the tool may run before it is stopped. None = the default limit, 0 = no limit
+    # (for a tool that waits on a person or enforces its own limits).
+    timeout_s: float | None = None
 
     def to_openai_schema(self) -> dict[str, Any]:
         """Convert to OpenAI function calling format."""
@@ -78,6 +81,7 @@ def tool(
     needs_sandbox: bool = False,
     category: str = "general",
     max_result_chars: int | None = None,
+    timeout_s: float | None = None,
 ):
     """
     Decorator to register an async function as a tool.
@@ -108,6 +112,7 @@ def tool(
             needs_sandbox=needs_sandbox,
             category=category,
             max_result_chars=max_result_chars,
+            timeout_s=timeout_s,
         )
         _registered_tools.append(tool_def)
         func._tool_definition = tool_def
