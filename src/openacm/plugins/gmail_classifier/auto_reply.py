@@ -9,6 +9,9 @@ import structlog
 
 log = structlog.get_logger()
 
+# Minimum cosine similarity for a learned reply to be shown to the model as an example
+MIN_EXAMPLE_SIMILARITY = 0.35
+
 NOREPLY_PATTERNS = (
     "noreply", "no-reply", "donotreply",
     "notifications", "mailer-daemon", "bounce",
@@ -168,6 +171,31 @@ class AutoReplyGenerator:
             log.warning("AutoReply embedding failed", error=str(exc))
             return []
 
+        # Examples saved while the embedding model was not loaded have no embedding and could
+        # never be found: compute it now, once.
+        try:
+            missing = await (await self._db._db.execute(
+                "SELECT e.id, m.body_text FROM gmail_reply_examples e "
+                "JOIN gmail_emails m ON m.id = e.source_email_id "
+                "WHERE e.category_id = ? AND e.embedding IS NULL LIMIT 50",
+                (category_id,),
+            )).fetchall()
+            for row in missing:
+                if (row["body_text"] or "").strip():
+                    vec = await loop.run_in_executor(
+                        None,
+                        lambda t=row["body_text"]: model.encode(
+                            t[:2000], convert_to_numpy=True, show_progress_bar=False),
+                    )
+                    await self._db._db.execute(
+                        "UPDATE gmail_reply_examples SET embedding = ? WHERE id = ?",
+                        (vec.astype("float32").tobytes(), row["id"]),
+                    )
+            if missing:
+                await self._db._db.commit()
+        except Exception as exc:
+            log.warning("AutoReply embedding backfill failed", error=str(exc))
+
         cursor = await self._db._db.execute(
             "SELECT subtype_label, email_context, final_response, embedding "
             "FROM gmail_reply_examples "
@@ -190,4 +218,6 @@ class AutoReplyGenerator:
                 continue
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [ex for _, ex in scored[:3]]
+        # Only examples that actually resemble this email: a learned reply to something
+        # unrelated would steer the draft the wrong way.
+        return [ex for sim, ex in scored[:3] if sim >= MIN_EXAMPLE_SIMILARITY]

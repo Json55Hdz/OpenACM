@@ -168,6 +168,31 @@ created: "{datetime.now().isoformat()}"
                             )
                             log.info("Skill synced from file", name=skill_data["name"])
 
+    _SKILL_STOPWORDS = frozenset({
+        "para", "cuando", "como", "este", "esta", "esto", "sobre", "with", "that", "this", "when",
+        "from", "your", "have", "will", "skill", "usar", "usa", "debe", "make", "into", "that",
+        "para", "todos", "toda", "cada", "ayuda", "using", "used", "user", "usuario", "response",
+    })
+
+    @classmethod
+    def matches_custom_skill(cls, skill: dict, user_lower: str) -> bool:
+        """Is this user-created skill about what the message asks?
+
+        A word of the skill's NAME (4+ letters) in the message is enough; the description needs
+        two distinctive words, so a single common word does not switch the skill on.
+        """
+        import re
+
+        def words(text: str, minimum: int) -> set[str]:
+            return {w for w in re.findall(r"[\wáéíóúüñ]+", (text or "").lower())
+                    if len(w) >= minimum and w not in cls._SKILL_STOPWORDS}
+
+        message_words = set(re.findall(r"[\wáéíóúüñ]+", user_lower))
+        name_words = words((skill.get("name") or "").replace("-", " ").replace("_", " "), 4)
+        if name_words & message_words:
+            return True
+        return len(words(skill.get("description") or "", 5) & message_words) >= 2
+
     async def get_active_skills_prompt(self, user_message: str = "") -> str:
         """Get combined prompt from relevant active skills based on user message.
 
@@ -218,12 +243,18 @@ created: "{datetime.now().isoformat()}"
             if skill_name.replace("-", " ") in user_lower or skill_name in user_lower:
                 is_relevant = True
 
+            # Skills the user (or the AI) created have no hand-written keyword list: derive
+            # one from their own name and description, or they would never switch on.
+            if not is_relevant and skill_name not in skill_keywords:
+                is_relevant = self.matches_custom_skill(skill, user_lower)
+
             if is_relevant:
                 relevant_skills.append(skill)
 
         if not relevant_skills:
             self.last_matched_skill_names = []
             return ""  # No agregar skills si ninguna es relevante
+        relevant_skills = relevant_skills[:4]  # a long list would drown the actual request
 
         self.last_matched_skill_names = [s["name"] for s in relevant_skills]
 
