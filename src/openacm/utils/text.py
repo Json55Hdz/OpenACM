@@ -16,6 +16,45 @@ def join_message_parts(text: str) -> str:
     return "\n\n".join(split_message_parts(text)) if MESSAGE_SPLIT_MARKER in text else text
 
 
+CUSTOMER_NAME_MAX_CHARS = 40
+
+
+def sanitize_customer_name(name: str) -> str:
+    """A customer's name, safe to show to the model: letters, spaces, apostrophes, dots, hyphens.
+
+    The customer types it themselves and it goes into the agent's prompt on every turn, so
+    line breaks, symbols and long text (which could carry instructions) are removed.
+    """
+    import re
+
+    cleaned = re.sub(r"[^\w .'’-]|[\d_]", "", str(name or ""))
+    return " ".join(cleaned.split())[:CUSTOMER_NAME_MAX_CHARS].strip()
+
+
+def chunk_text(text: str, limit: int) -> list[str]:
+    """Split a long message into pieces of at most `limit` characters, nothing lost.
+
+    Chat platforms refuse (or silently cut) messages over their size limit, so a long reply
+    has to go out as several messages. Pieces break at a paragraph, then a line, then a space;
+    only text with no break point at all is cut in the middle of a word.
+    """
+    text = text.strip()
+    if limit <= 0 or len(text) <= limit:
+        return [text] if text else []
+    pieces: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        window = rest[:limit]
+        cut = max(window.rfind("\n\n"), window.rfind("\n"), window.rfind(" "))
+        if cut < limit // 2:  # no sensible break in the second half: fall back to the limit
+            cut = limit
+        pieces.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    if rest:
+        pieces.append(rest)
+    return pieces
+
+
 def truncate(text: str, max_len: int, suffix: str = "...[truncated]") -> str:
     if len(text) <= max_len:
         return text

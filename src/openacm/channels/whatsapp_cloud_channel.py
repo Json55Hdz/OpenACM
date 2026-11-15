@@ -24,9 +24,12 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import WhatsAppConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
-from openacm.utils.text import extract_and_strip_thinking, split_message_parts
+from openacm.utils.text import chunk_text, extract_and_strip_thinking, split_message_parts
 
 log = structlog.get_logger()
+
+# WhatsApp Cloud refuses a text message longer than this
+WHATSAPP_MESSAGE_LIMIT = 4096
 
 _MEDIA_CAPTION_LIMIT = 1024  # WhatsApp Cloud API max caption length for documents/images
 _MESSAGE_GAP_SECONDS = 0.7  # pause between the parts of a split reply
@@ -146,24 +149,27 @@ class WhatsAppCloudChannel(BaseChannel):
         """Send a text message to a WhatsApp user (target_id = their wa_id / phone)."""
         if not self._http or not content.strip():
             return False
-        try:
-            resp = await self._http.post(
-                f"/{self.config.phone_number_id}/messages",
-                json={
-                    "messaging_product": "whatsapp",
-                    "recipient_type": "individual",
-                    **recipient_fields(target_id),
-                    "type": "text",
-                    "text": {"preview_url": True, "body": content[:4096]},
-                },
-            )
-            if resp.status_code >= 400:
-                log.error("WhatsApp send failed", status=resp.status_code, body=resp.text[:300])
-                return False
-            return True
-        except Exception as exc:
-            log.error("WhatsApp send error", error=str(exc))
-            return False
+        sent_all = True
+        # WhatsApp refuses a text over its limit: a long reply goes out as several messages
+        for piece in chunk_text(content, WHATSAPP_MESSAGE_LIMIT):
+            try:
+                resp = await self._http.post(
+                    f"/{self.config.phone_number_id}/messages",
+                    json={
+                        "messaging_product": "whatsapp",
+                        "recipient_type": "individual",
+                        **recipient_fields(target_id),
+                        "type": "text",
+                        "text": {"preview_url": True, "body": piece},
+                    },
+                )
+                if resp.status_code >= 400:
+                    log.error("WhatsApp send failed", status=resp.status_code, body=resp.text[:300])
+                    sent_all = False
+            except Exception as exc:
+                log.error("WhatsApp send error", error=str(exc))
+                sent_all = False
+        return sent_all
 
     async def _send_media(self, target_id: str, fpath: Path, caption: str) -> bool:
         """Upload a local file to Meta and send it as a document/image."""

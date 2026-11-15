@@ -18,7 +18,7 @@ from telegram.ext import (
 
 from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
-from openacm.utils.text import MESSAGE_GAP_SECONDS, split_message_parts
+from openacm.utils.text import MESSAGE_GAP_SECONDS, chunk_text, split_message_parts
 from openacm.core.commands import CommandProcessor
 from openacm.core.config import TelegramConfig
 from openacm.core.events import (
@@ -30,6 +30,9 @@ from openacm.core.events import (
 )
 
 log = structlog.get_logger()
+
+# Telegram refuses a message longer than this
+TELEGRAM_MESSAGE_LIMIT = 4096
 
 
 class TelegramChannel(BaseChannel):
@@ -147,12 +150,31 @@ class TelegramChannel(BaseChannel):
         underscores in links and file names survive."""
         if not self._app:
             return False
+        plain = bool(kwargs.get("plain"))
+        sent_all = True
+        for piece in chunk_text(content, TELEGRAM_MESSAGE_LIMIT):
+            if not await self._send_piece(target_id, piece, plain):
+                sent_all = False
+        return sent_all
+
+    async def _send_piece(self, target_id: str, text: str, plain: bool) -> bool:
+        """Send one message that already fits Telegram's size limit.
+
+        Markdown is strict: an unbalanced `_` or `*` makes Telegram refuse the whole message, so
+        a refused Markdown message is sent again as plain text instead of being lost.
+        """
         try:
             await self._app.bot.send_message(
-                chat_id=int(target_id),
-                text=content,
-                parse_mode=None if kwargs.get("plain") else "Markdown",
+                chat_id=int(target_id), text=text, parse_mode=None if plain else "Markdown"
             )
+            return True
+        except Exception as e:
+            if plain:
+                log.error("Telegram send failed", error=str(e))
+                return False
+            log.warning("Telegram refused the Markdown message; sending it as plain text", error=str(e))
+        try:
+            await self._app.bot.send_message(chat_id=int(target_id), text=text, parse_mode=None)
             return True
         except Exception as e:
             log.error("Telegram send failed", error=str(e))

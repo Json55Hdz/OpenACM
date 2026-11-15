@@ -14,9 +14,12 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import DiscordConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
-from openacm.utils.text import MESSAGE_GAP_SECONDS, split_message_parts
+from openacm.utils.text import MESSAGE_GAP_SECONDS, chunk_text, split_message_parts
 
 log = structlog.get_logger()
+
+# Discord refuses a message longer than this
+DISCORD_MESSAGE_LIMIT = 2000
 
 
 class DiscordChannel(BaseChannel):
@@ -139,26 +142,17 @@ class DiscordChannel(BaseChannel):
                     if discord_files:
                         send_kwargs["files"] = discord_files
 
-                    first, *later_parts = split_message_parts(clean_text) or [""]
-                    clean_text = first
-                    if later_parts:
-                        # the agent split its reply: first part with the files, the rest as follow-ups
-                        await message.reply(clean_text[:2000] or "​", **send_kwargs)
-                        for part in later_parts:
-                            await asyncio.sleep(MESSAGE_GAP_SECONDS)
-                            await message.channel.send(part[:2000])
-                    elif not clean_text and discord_files:
+                    # The agent may split its reply on purpose; every part is further split to
+                    # Discord's size limit instead of being cut. The files go with the first one.
+                    parts = split_message_parts(clean_text) or [""]
+                    pieces = [p for part in parts for p in (chunk_text(part, DISCORD_MESSAGE_LIMIT) or [""])]
+                    if not any(pieces) and discord_files:
                         await message.reply(**send_kwargs)
-                    elif len(clean_text) <= 2000:
-                        await message.reply(clean_text or "\u200b", **send_kwargs)
                     else:
-                        chunks = [clean_text[i:i+1990] for i in range(0, len(clean_text), 1990)]
-                        for i, chunk in enumerate(chunks):
-                            kw = send_kwargs if i == 0 else {}
-                            if i == 0:
-                                await message.reply(chunk, **kw)
-                            else:
-                                await message.channel.send(chunk)
+                        await message.reply(pieces[0] or "\u200b", **send_kwargs)
+                        for piece in pieces[1:]:
+                            await asyncio.sleep(MESSAGE_GAP_SECONDS)
+                            await message.channel.send(piece)
 
                 except Exception as e:
                     log.error("Discord message error", error=str(e))
@@ -200,17 +194,12 @@ class DiscordChannel(BaseChannel):
     async def send_message(self, target_id: str, content: str, **kwargs) -> bool:
         """Send a message to a Discord channel or user."""
         try:
-            channel = self._client.get_channel(int(target_id))
-            if channel:
-                await channel.send(content)
-                return True
-            
-            user = self._client.get_user(int(target_id))
-            if user:
-                await user.send(content)
-                return True
-            
-            return False
+            target = self._client.get_channel(int(target_id)) or self._client.get_user(int(target_id))
+            if not target:
+                return False
+            for piece in chunk_text(content, DISCORD_MESSAGE_LIMIT):
+                await target.send(piece)
+            return True
         except Exception as e:
             log.error("Discord send failed", error=str(e))
             return False

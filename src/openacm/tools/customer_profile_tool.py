@@ -4,6 +4,7 @@ conversation, independent of memory_ttl resets (see MemoryManager.get_or_create
 and AgentRunner.run's customer-name injection).
 """
 
+from openacm.utils.text import sanitize_customer_name
 from openacm.tools.base import tool
 
 
@@ -36,9 +37,9 @@ async def save_customer_name(name: str, **kwargs) -> str:
     if brain is None or not getattr(brain, "memory", None) or not brain.memory.database:
         return "Error: database context not available."
 
-    clean_name = name.strip()
+    clean_name = sanitize_customer_name(name)
     if not clean_name:
-        return "Error: 'name' cannot be empty."
+        return "Error: 'name' must be a name (letters only, up to 40 characters)."
 
     await brain.memory.database.set_customer_name(user_id, channel_id, clean_name)
     return f"Saved: this customer's name is '{clean_name}'."
