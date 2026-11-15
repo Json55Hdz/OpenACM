@@ -643,8 +643,8 @@ def build_swarm_tools(
                     "UPDATE swarms SET parent_swarm_id = ? WHERE id = ?",
                     (swarm_id, child_id),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Could not mark the swarm as a child of its parent", error=str(e))
 
             await event_bus.emit("swarm:subswarm_created", {
                 "parent_swarm_id": swarm_id,

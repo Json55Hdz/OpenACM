@@ -234,8 +234,8 @@ class Database:
                             changed = True
                     if changed:
                         updates.append((row["id"], _json.dumps(data)))
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("Could not repair tool-call ids in a stored message", error=str(e))
             for row_id, new_content in updates:
                 await self._db.execute(
                     "UPDATE messages SET content = ? WHERE id = ?",

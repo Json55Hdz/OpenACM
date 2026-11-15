@@ -689,48 +689,48 @@ class OpenACM:
         for channel in self._channels:
             try:
                 await channel.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: a channel did not stop cleanly", error=str(e))
 
         if self._agent_channel_manager:
             try:
                 await self._agent_channel_manager.stop_all()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the agent channel manager did not stop cleanly", error=str(e))
 
         # Stop cron scheduler
         if self._cron_scheduler:
             try:
                 await self._cron_scheduler.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the cron scheduler did not stop cleanly", error=str(e))
 
         # Stop activity watcher
         if self._activity_watcher:
             try:
                 await self._activity_watcher.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the activity watcher did not stop cleanly", error=str(e))
 
         if getattr(self, "_resurrection_watcher", None):
             try:
                 await self._resurrection_watcher.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the resurrection watcher did not stop cleanly", error=str(e))
 
         # Stop all plugins (they manage their own watchers/connections)
         if self._plugin_manager:
             try:
                 await self._plugin_manager.stop_all()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the plugin manager did not stop cleanly", error=str(e))
 
         # Stop web server
         if self._web_server:
             try:
                 self._web_server.should_exit = True
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: the web server did not stop cleanly", error=str(e))
 
         # Close database
         if self.database:
@@ -741,23 +741,23 @@ class OpenACM:
             from openacm.tools import browser_agent
 
             await browser_agent.stop_browser()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Shutdown: the browser did not close cleanly", error=str(e))
 
         # Stop Python Kernel
         try:
             from openacm.tools import python_kernel
 
             await python_kernel.stop_kernel()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Shutdown: the python kernel did not stop cleanly", error=str(e))
 
         # Disconnect MCP servers
         if self._mcp_manager:
             try:
                 await self._mcp_manager.disconnect_all()
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Shutdown: MCP servers did not disconnect cleanly", error=str(e))
 
         console.print("[green]✓ OpenACM stopped. Goodbye! 👋[/green]")
 

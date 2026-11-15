@@ -799,5 +799,5 @@ class VoiceDaemon:
         if self._event_bus:
             try:
                 await self._event_bus.emit("voice:daemon_state", {"state": state})
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("The voice daemon state event could not be delivered", error=str(e))

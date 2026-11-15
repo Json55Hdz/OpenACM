@@ -340,8 +340,8 @@ def register_routes(app: FastAPI) -> None:
             agents = await _state.database.get_all_agents()
             agent_map = {a["id"]: a["name"] for a in agents}
             agent_show_map = {a["id"]: bool(a.get("show_in_chat", True)) for a in agents}
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Could not load agent names for the conversation list", error=str(e))
 
         import re
         result = []

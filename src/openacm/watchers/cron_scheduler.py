@@ -279,8 +279,8 @@ class CronScheduler:
 
         try:
             run_id = await self._db.create_cron_run(job.id, now_str, triggered_by)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("Cron run could not be recorded; the job still runs but has no history entry", error=str(e))
 
         output = ""
         error_msg = ""

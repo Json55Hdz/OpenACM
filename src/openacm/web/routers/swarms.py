@@ -285,8 +285,8 @@ def register_routes(app: FastAPI) -> None:
                     if running_task:
                         try:
                             await _asyncio.wait_for(_asyncio.shield(running_task), timeout=120)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.warning("The swarm did not finish its current run in time before resuming", error=str(e))
                     _sw = await _state.database.get_swarm(swarm_id)
                     _tasks = await _state.database.get_swarm_tasks(swarm_id)
                     if (

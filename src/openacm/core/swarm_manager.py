@@ -1057,8 +1057,8 @@ class SwarmManager:
                 stored = task.get("retry_history_json") or "[]"
                 extra = _rjson.loads(stored) if stored != "[]" else []
                 retry_history = extra + retry_history
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Could not read a task's retry history; the worker retries without it", error=str(e))
 
             # Build context: shared contract + dependency outputs + messages + task description
             messages_in = await self.db.get_swarm_messages(swarm_id, to_worker_id=worker_id)
@@ -1317,8 +1317,8 @@ class SwarmManager:
                     for dt in dep_titles:
                         if dt in done_map and done_map[dt].get("result"):
                             dep_outputs.append((dt, done_map[dt]["result"]))
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("Could not load the outputs of the tasks this one depends on; the worker runs without them", error=str(e))
 
             messages_in = (await self.db.get_swarm_messages(swarm_id, to_worker_id=worker["id"]))[-10:]
             context = self._build_worker_context(swarm, worker, task, messages_in, dep_outputs or None)
@@ -2301,8 +2301,8 @@ Rules:
         payload["_ts"] = datetime.now(timezone.utc).isoformat()
         try:
             await self.event_bus.emit(event_type, payload)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("A swarm event could not be delivered to its listeners", error=str(e))
 
     # Convenience wrappers kept for readability
     async def _emit_swarm_event(self, swarm_id: int, status: str, extra: dict | None = None):

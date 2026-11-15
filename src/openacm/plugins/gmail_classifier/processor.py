@@ -683,5 +683,5 @@ class GmailBatchProcessor:
         if self._event_bus:
             try:
                 await self._event_bus.emit(event, data)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("A gmail classifier event could not be delivered", error=str(e))
