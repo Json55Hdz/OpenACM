@@ -10,7 +10,8 @@ import asyncio
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
@@ -28,12 +29,13 @@ MIN_TURNS_BEFORE_SUGGESTING = 5  # usuario necesita historial mínimo
 SUGGESTION_COOLDOWN_HOURS = 24   # horas entre sugerencias por usuario/canal
 SUGGESTION_EXPIRY_TURNS = 3      # turnos antes de expirar una sugerencia sin respuesta
 DISMISSED_COOLDOWN_DAYS = 7      # días antes de re-sugerir un hash rechazado
+SUGGESTION_ANSWER_WINDOW_S = 600  # segundos que una sugerencia puede ser aceptada
 
 # ── Noise filtering ───────────────────────────────────────────────────────────
 
 # Tools that are always noise regardless of arguments
 _ALWAYS_NOISE_TOOLS = {
-    "system_info", "screenshot", "list_tools", "list_skills",
+    "system_info", "screenshot", "take_screenshot", "list_tools", "list_skills",
     "list_agents", "stats",
 }
 
@@ -99,6 +101,11 @@ class SuggestionResult:
     append_text: str
     cluster_size: int
     tool_args_hash: str
+    created_at: float = field(default_factory=time.monotonic)
+
+    def is_stale(self, max_age_s: float = SUGGESTION_ANSWER_WINDOW_S) -> bool:
+        """An unanswered offer stops being one: a 'sí' hours later is about something else."""
+        return time.monotonic() - self.created_at > max_age_s
 
 
 # ── WorkflowTracker ───────────────────────────────────────────────────────────
@@ -282,12 +289,10 @@ class WorkflowTracker:
     async def _was_recently_dismissed(self, user_id: str, tool_args_hash: str) -> bool:
         """Check if this exact hash was dismissed within DISMISSED_COOLDOWN_DAYS."""
         try:
-            rows = await self._db.get_workflow_executions_by_hash(user_id, tool_args_hash, limit=1)
-            if not rows:
-                return False
-            # Safe default — let the count threshold handle it
-            return False
-        except Exception:
+            since = (datetime.now(timezone.utc) - timedelta(days=DISMISSED_COOLDOWN_DAYS)).isoformat()
+            return tool_args_hash in await self._db.get_dismissed_workflow_hashes(user_id, since)
+        except Exception as e:
+            log.warning("Could not check dismissed workflow suggestions", error=str(e))
             return False
 
     async def _generate_intent_summary(

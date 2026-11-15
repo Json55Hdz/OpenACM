@@ -592,6 +592,19 @@ class Database(MigrationsMixin, SwarmsMixin, AgentsMixin, WatchersMixin, SkillsS
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def get_dismissed_workflow_hashes(self, user_id: str, since_iso: str) -> set[str]:
+        """Workflow patterns this user answered 'no' to since the given moment."""
+        if not self._db:
+            return set()
+        cursor = await self._db.execute(
+            "SELECT DISTINCT e.tool_args_hash FROM workflow_suggestions s "
+            "JOIN json_each(s.representative_ids) r "
+            "JOIN workflow_executions e ON e.id = r.value "
+            "WHERE s.user_id = ? AND s.status = 'dismissed' AND s.responded_at >= ?",
+            (user_id, since_iso),
+        )
+        return {row[0] for row in await cursor.fetchall()}
+
     async def get_workflow_executions_by_ids(self, ids: list[int]) -> list[dict[str, Any]]:
         """Fetch workflow executions by a list of ids."""
         if not self._db or not ids:

@@ -413,6 +413,13 @@ class BrainLoopMixin:
         # ── Workflow suggestion interception ──────────────────────────────────────
         _suggestion_key = f"{channel_id}:{user_id}"
         _pending_sug = self._pending_suggestions.get(_suggestion_key)
+        if _pending_sug is not None and _pending_sug.is_stale():
+            self._pending_suggestions.pop(_suggestion_key, None)
+            if self.workflow_tracker:
+                await self.workflow_tracker.resolve_suggestion(
+                    _pending_sug.suggestion_id, accepted=False, reason="expired"
+                )
+            _pending_sug = None
         if _pending_sug:
             _confirmation = self._check_workflow_confirmation(content)
             if _confirmation == "yes":
