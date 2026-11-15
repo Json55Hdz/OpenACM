@@ -57,6 +57,7 @@ export function useWebSocket() {
   const chatWsRef = useRef<WebSocket | null>(null);
   const eventsWsRef = useRef<WebSocket | null>(null);
   const chatReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const connectionLostRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventsReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -133,6 +134,11 @@ export function useWebSocket() {
 
     ws.onopen = () => {
       storeRef.current.setWsConnected(true);
+      // Back online: the "connection lost" warning no longer applies
+      if (connectionLostRef.current) {
+        clearTimeout(connectionLostRef.current);
+        connectionLostRef.current = null;
+      }
     };
 
     ws.onmessage = (event) => {
@@ -199,9 +205,14 @@ export function useWebSocket() {
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
       if (authStore.getState().token) {
         chatReconnectRef.current = setTimeout(connectChatWs, 3000);
-        // Safety-net spinner reset: fires only if reconnection keeps failing
-        setTimeout(() => {
-          if (!chatWsRef.current || chatWsRef.current.readyState !== WebSocket.OPEN) {
+        // Safety-net spinner reset, once per outage (every failed reconnect fires onclose again,
+        // and a timer per failure piled up a warning each time). Only when a reply is actually
+        // pending: with nothing in flight there is nothing to warn about.
+        if (connectionLostRef.current) clearTimeout(connectionLostRef.current);
+        connectionLostRef.current = setTimeout(() => {
+          connectionLostRef.current = null;
+          const down = !chatWsRef.current || chatWsRef.current.readyState !== WebSocket.OPEN;
+          if (down && storeRef.current.isWaitingResponse) {
             resetSpinner('Connection lost. The response may have been buffered — try sending your message again.');
           }
         }, 12000);
@@ -522,6 +533,7 @@ export function useWebSocket() {
       unsubscribeTamaGuard();
       // Only clear timers on unmount — WS connections stay alive
       if (chatReconnectRef.current) clearTimeout(chatReconnectRef.current);
+      if (connectionLostRef.current) clearTimeout(connectionLostRef.current);
       if (eventsReconnectRef.current) clearTimeout(eventsReconnectRef.current);
       if (keepAliveRef.current) clearInterval(keepAliveRef.current);
     };
