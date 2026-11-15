@@ -412,6 +412,7 @@ def _compress_code(text: str) -> str:
     in_docstring = False
     docstring_char = None
     docstring_lines = 0
+    dropped_in_docstring = 0
 
     for line in lines:
         stripped = line.strip()
@@ -428,6 +429,7 @@ def _compress_code(text: str) -> str:
                     in_docstring = True
                     docstring_char = q
                     docstring_lines = 1
+                    dropped_in_docstring = 0
                     result.append(line)  # keep opening line
                     break
             else:
@@ -443,6 +445,10 @@ def _compress_code(text: str) -> str:
             if docstring_char and docstring_char in stripped:
                 # Closing line
                 in_docstring = False
+                if dropped_in_docstring:
+                    # Say that lines are gone: the model may be reading this to edit it
+                    indent = line[: len(line) - len(line.lstrip())]
+                    result.append(f"{indent}[{dropped_in_docstring} docstring lines omitted]")
                 if docstring_lines > 4:
                     # Replace body with placeholder, keep closing
                     result.append(line.split(docstring_char)[0] + docstring_char)
@@ -450,7 +456,8 @@ def _compress_code(text: str) -> str:
                     result.append(line)
             elif docstring_lines <= 2:
                 result.append(line)  # keep first content line of short docstrings
-            # else: skip — long docstring body
+            else:
+                dropped_in_docstring += 1  # long docstring body: skipped, but counted
 
     return "\n".join(result)
 
@@ -508,6 +515,8 @@ def _compress_log(text: str) -> str:
 
     if other:
         parts.extend(other[:10])
+        if len(other) > 10:
+            parts.append(f"  ... [{len(other) - 10} more lines without a log level omitted]")
 
     if debug_count:
         parts.append(f"[{debug_count} DEBUG lines omitted]")

@@ -2217,21 +2217,35 @@ Rules:
         """
         Best-effort repair of common LLM JSON mistakes:
         - Trailing commas before } or ]
-        - Truncated JSON (attempt to close open brackets)
+        - Truncated JSON: close what is still open, innermost first.
+
+        Walks the text so braces inside strings are not counted. A reply cut off inside a
+        string cannot be repaired honestly, so it is returned as is and fails to parse.
         """
         import re as _re
         # Remove trailing commas before closing brackets/braces
         text = _re.sub(r",\s*([}\]])", r"\1", text)
-        # If JSON appears truncated (unbalanced braces), try to close it
-        opens = text.count("{") - text.count("}")
-        arr_opens = text.count("[") - text.count("]")
-        if opens > 0 or arr_opens > 0:
-            # Truncate to last complete value boundary and close
-            # Find last complete "...": "..." or "...": [...] or "...": {...}
-            text = text.rstrip().rstrip(",")
-            text += "]" * max(arr_opens, 0)
-            text += "}" * max(opens, 0)
-        return text
+
+        stack: list[str] = []
+        in_string = False
+        escaped = False
+        for ch in text:
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+            elif ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append("}" if ch == "{" else "]")
+            elif ch in "}]" and stack and stack[-1] == ch:
+                stack.pop()
+        if in_string or not stack:
+            return text
+        return text.rstrip().rstrip(",") + "".join(reversed(stack))
 
     def _parse_plan(self, text: str) -> dict:
         """Extract JSON plan from LLM response."""
@@ -2260,22 +2274,23 @@ Rules:
         # 3. Find any {...} JSON object in the text (greedy — catches the outermost object)
         obj_match = re.search(r"\{[\s\S]*\}", stripped)
         if obj_match:
-            candidate = obj_match.group()
             try:
-                return json.loads(candidate)
-            except Exception:
-                try:
-                    return json.loads(self._repair_json(candidate))
-                except Exception:
-                    pass
-
-        # 4. The fence may be unclosed (model cut off mid-response) — try from first { to end
-        first_brace = stripped.find("{")
-        if first_brace != -1:
-            try:
-                return json.loads(self._repair_json(stripped[first_brace:]))
+                return json.loads(obj_match.group())
             except Exception:
                 pass
+
+        # 4. Repair from the first { to the end of the reply. A reply cut off mid-task must be
+        #    closed from the END: repairing only up to the last } would drop the cut-off tasks
+        #    and the swarm would start with a smaller plan than the model wrote.
+        first_brace = stripped.find("{")
+        if first_brace != -1:
+            for candidate in (stripped[first_brace:], obj_match.group() if obj_match else ""):
+                try:
+                    plan = json.loads(self._repair_json(candidate))
+                except Exception:
+                    continue
+                log.warning("Swarm plan looked cut off and was repaired; the last task may be incomplete")
+                return plan
 
         log.error("Failed to parse swarm plan", text=text[:500])
         raise ValueError("Could not extract valid JSON from swarm plan response")
