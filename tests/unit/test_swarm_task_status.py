@@ -41,3 +41,40 @@ async def test_a_crashing_task_reports_failed_so_it_can_be_retried():
     worker = {"id": 2, "name": "w", "workspace_path": "."}
     task = {"id": 3, "title": "t", "description": "d", "depends_on": "[]"}
     assert await mgr._execute_task(swarm, worker, task, [worker]) == "failed"
+
+
+async def test_stopping_a_swarm_puts_running_work_back_so_it_can_resume():
+    mgr = SwarmManager.__new__(SwarmManager)
+    mgr._running = {}
+    mgr._emit = mgr._emit_swarm_event = AsyncMock()
+    mgr.db = MagicMock()
+    mgr.db.get_swarm_tasks = AsyncMock(return_value=[
+        {"id": 1, "status": "running"}, {"id": 2, "status": "completed"}])
+    mgr.db.get_swarm_workers = AsyncMock(return_value=[
+        {"id": 7, "status": "busy"}, {"id": 8, "status": "idle"}])
+    mgr.db.update_swarm_task = AsyncMock()
+    mgr.db.update_swarm_worker = AsyncMock()
+    mgr.db.update_swarm = AsyncMock()
+    await mgr.stop_swarm(5)
+    mgr.db.update_swarm_task.assert_awaited_once()
+    assert mgr.db.update_swarm_task.await_args.args[0] == 1
+    mgr.db.update_swarm_worker.assert_awaited_once_with(7, status="idle")
+    mgr.db.update_swarm.assert_awaited_with(5, status="paused")
+
+
+async def test_a_cron_swarm_template_creates_plans_and_starts_a_real_swarm():
+    from openacm.watchers.cron_scheduler import CronScheduler
+
+    manager = MagicMock()
+    manager.create_swarm = AsyncMock(return_value={"id": 9})
+    manager.plan_swarm = AsyncMock()
+    manager.start_swarm = AsyncMock()
+    db = MagicMock()
+    db.get_swarm_template = AsyncMock(return_value={
+        "name": "Informe", "goal_template": "Resumen del {date}", "global_model": ""})
+    cron = CronScheduler(db, swarm_manager=manager)
+    out = await cron._run_swarm_template({"template_id": 1})
+    assert "swarm_id=9" in out
+    assert "{date}" not in manager.create_swarm.await_args.kwargs["goal"]
+    manager.plan_swarm.assert_awaited_once_with(9)
+    manager.start_swarm.assert_awaited_once_with(9)

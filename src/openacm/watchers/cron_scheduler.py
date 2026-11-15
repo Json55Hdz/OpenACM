@@ -424,26 +424,16 @@ class CronScheduler:
         goal = goal_override or template["goal_template"]
         goal = goal.replace("{date}", today)
 
-        # Create swarm from template
-        workers = json.loads(template.get("workers", "[]"))
-        swarm_id = await self._db.create_swarm(
+        # Create the swarm the way the dashboard does (workspace folders included), let the
+        # planner design the team and tasks for this goal, then run it.
+        created = await self._swarm_manager.create_swarm(
             name=f"{template['name']} — {today}",
             goal=goal,
-            global_model=template.get("global_model") or "",
+            global_model=template.get("global_model") or None,
         )
-        for w in workers:
-            await self._db.create_swarm_worker(
-                swarm_id=swarm_id,
-                name=w["name"],
-                role=w.get("role", "worker"),
-                description=w.get("description", ""),
-                system_prompt=w.get("system_prompt", ""),
-                model=w.get("model"),
-                allowed_tools=w.get("allowed_tools", "all"),
-            )
-
-        # Start the swarm in the background
-        asyncio.create_task(self._swarm_manager.start(swarm_id))
+        swarm_id = created["id"]
+        await self._swarm_manager.plan_swarm(swarm_id)
+        await self._swarm_manager.start_swarm(swarm_id)
         return f"Swarm '{template['name']}' started from template (swarm_id={swarm_id}, date={today})"
 
     async def _custom_command(self, payload: dict) -> str:

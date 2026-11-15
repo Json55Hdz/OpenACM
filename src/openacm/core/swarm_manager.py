@@ -694,6 +694,14 @@ class SwarmManager:
                 await task
             except asyncio.CancelledError:
                 pass
+        # Whatever was in flight died with the cancel: put it back so a restart picks it up
+        # instead of leaving tasks "running" and workers "busy" forever.
+        for t in await self.db.get_swarm_tasks(swarm_id):
+            if t["status"] == "running":
+                await self.db.update_swarm_task(t["id"], status="pending", result="[Stopped — will resume]")
+        for w in await self.db.get_swarm_workers(swarm_id):
+            if w["status"] == "busy":
+                await self.db.update_swarm_worker(w["id"], status="idle")
         await self.db.update_swarm(swarm_id, status="paused")
         await self._emit_swarm_event(swarm_id, "paused")
 
