@@ -103,8 +103,12 @@ async def dispatch(
     if learned:
         try:
             result = await brain.tool_registry.execute(
-                learned["tool"], learned["args"], user_id, channel_id, _brain=brain
+                learned["tool"], learned["args"], user_id, channel_id, channel_type, _brain=brain
             )
+            if isinstance(result, str) and result.startswith("Error"):
+                # Never say "done" for something that failed: let the model deal with it
+                log.warning("Fast-path: learned action reported an error", result=result[:200])
+                return None
             return learned.get("response") or MSG_FAST_DONE
         except Exception as e:
             log.warning("Fast-path: learned action failed, trying handler", error=str(e))

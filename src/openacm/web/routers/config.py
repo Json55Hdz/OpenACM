@@ -515,13 +515,37 @@ def register_routes(app: FastAPI) -> None:
             _state.brain.local_router.observation_mode = not bool(data["enabled"])
         if "confidence_threshold" in data:
             val = float(data["confidence_threshold"])
-            if 0.5 <= val <= 1.0:
+            if 0.75 <= val <= 1.0:  # lower and the router would act on weak guesses
                 _state.brain.local_router.confidence_threshold = val
         return {
             "status": "ok",
             "enabled": not _state.brain.local_router.observation_mode,
             "confidence_threshold": _state.brain.local_router.confidence_threshold,
         }
+
+    @app.get("/api/config/local_router/learned")
+    async def get_learned():
+        """What the router has learned on its own (phrases and replayable actions)."""
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        return _state.brain.local_router.list_learned()
+
+    @app.delete("/api/config/local_router/learned/actions/{index}")
+    async def forget_learned_action(index: int):
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        if not await _state.brain.local_router.forget_action(index):
+            raise HTTPException(status_code=404, detail="No such learned action")
+        return {"ok": True}
+
+    @app.post("/api/config/local_router/learned/forget_example")
+    async def forget_learned_example(request: Request):
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        data = await request.json()
+        if not await _state.brain.local_router.forget_example(str(data.get("intent", "")), str(data.get("phrase", ""))):
+            raise HTTPException(status_code=404, detail="No such learned phrase")
+        return {"ok": True}
 
     # ─── Code Resurrection API ────────────────────────────────
 

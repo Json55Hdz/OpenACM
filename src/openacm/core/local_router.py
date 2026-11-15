@@ -36,6 +36,10 @@ LEARNED_ACTIONS_PATH = Path(__file__).parent.parent.parent.parent / "data" / "ro
 # Minimum similarity to replay a learned action (stricter than intent classification)
 ACTION_LOOKUP_THRESHOLD = 0.90
 
+# Learned phrases kept per intent (and learned actions overall)
+MAX_LEARNED_PER_INTENT = 200
+MAX_LEARNED_ACTIONS = 200
+
 # Tools allowed to be stored as learned actions (safety whitelist)
 # run_command is only stored when the LLM used it for OPEN_APP — see brain._maybe_learn_action
 LEARNABLE_TOOLS = {"open_url", "run_command"}
@@ -339,6 +343,8 @@ class LocalRouter:
         # Add to disk
         if intent not in learned_on_disk:
             learned_on_disk[intent] = []
+        if len(learned_on_disk[intent]) >= MAX_LEARNED_PER_INTENT:
+            return False  # a runaway or hostile stream of phrases must not grow this forever
         learned_on_disk[intent].append(message)
         self._save_learned_examples(learned_on_disk)
 
@@ -429,6 +435,8 @@ class LocalRouter:
         # Deduplicate: exact same phrase already stored
         if any(a["phrase"].lower() == phrase.lower() for a in actions):
             return False
+        if len(actions) >= MAX_LEARNED_ACTIONS:
+            return False
 
         actions.append({
             "phrase": phrase,
@@ -465,6 +473,29 @@ class LocalRouter:
         except Exception:
             return None
 
+    # Words that can come or go in a request without changing what it asks for
+    _FILLER_WORDS = frozenset({
+        "por", "favor", "porfa", "please", "pls", "me", "puedes", "podrias", "podrías", "quiero",
+        "ahora", "ya", "una", "uno", "unos", "unas", "los", "las", "del", "que", "can", "you",
+        "the", "now", "hey", "oye", "hola", "gracias", "thanks",
+    })
+
+    @staticmethod
+    def phrases_compatible(a: str, b: str) -> bool:
+        """Do two phrases ask for the same thing, not just sound alike?
+
+        Embeddings rate "abre el proyecto alfa" and "abre el proyecto beta" as near-identical,
+        but replaying one's command for the other would open the wrong thing. Apart from
+        filler words ("por favor"), the two phrases must use the same words.
+        """
+        import re
+
+        def words(t: str) -> set[str]:
+            return {w for w in re.findall(r"\w+", t.lower()) if len(w) >= 3} - LocalRouter._FILLER_WORDS
+
+        wa, wb = words(a), words(b)
+        return bool(wa) and wa == wb
+
     def _lookup_action_sync(self, message: str) -> dict | None:
         """Cosine similarity lookup against stored action phrases. Thread-safe."""
         import numpy as np
@@ -482,6 +513,11 @@ class LocalRouter:
         max_idx = int(np.argmax(sims))
         max_score = float(sims[max_idx])
 
+        if max_score >= ACTION_LOOKUP_THRESHOLD and not self.phrases_compatible(
+            message, LocalRouter._action_list[max_idx]["phrase"]
+        ):
+            log.info("LocalRouter: action match rejected (different target)", score=f"{max_score:.3f}")
+            return None
         if max_score >= ACTION_LOOKUP_THRESHOLD:
             log.info(
                 "LocalRouter: action match",
@@ -575,6 +611,33 @@ class LocalRouter:
         except Exception as e:
             log.debug("LocalRouter: observe error", error=str(e))
             return None
+
+    # ── Review / forget what was learned ─────────────────────────────────
+
+    def list_learned(self) -> dict:
+        """Everything learned so far, so the owner can review it."""
+        return {
+            "examples": {i: list(p) for i, p in self._load_learned_examples().items() if p},
+            "actions": [{"index": n, **a} for n, a in enumerate(self._load_actions())],
+        }
+
+    async def forget_action(self, index: int) -> bool:
+        actions = self._load_actions()
+        if not 0 <= index < len(actions):
+            return False
+        del actions[index]
+        self._save_actions(actions)
+        await asyncio.get_running_loop().run_in_executor(None, self._reload_action_embeddings_sync)
+        return True
+
+    async def forget_example(self, intent: str, phrase: str) -> bool:
+        learned = self._load_learned_examples()
+        if phrase not in learned.get(intent, []):
+            return False
+        learned[intent].remove(phrase)
+        self._save_learned_examples(learned)
+        await asyncio.get_running_loop().run_in_executor(None, self._reload_intent_embeddings, intent, learned)
+        return True
 
     def get_stats(self) -> dict:
         return {

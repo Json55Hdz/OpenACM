@@ -859,12 +859,10 @@ class BrainLoopMixin:
                     },
                 )
 
-            # Passive learning: on the first iteration, infer intent from tool calls
-            # and teach the LocalRouter so it can fast-path next time.
-            if iterations == 1 and response["tool_calls"]:
-                asyncio.create_task(self._maybe_learn_from_tools(
-                    content, response["tool_calls"], _router_task
-                ))
+            _learn_from_this_turn = (
+                iterations == 1 and bool(response["tool_calls"]) and channel_type != "swarm"
+            )
+            _first_calls = list(response["tool_calls"]) if _learn_from_this_turn else []
 
             # Loop detection: if the model calls the exact same tool+args twice in a
             # row it's stuck. Break early to avoid burning tokens indefinitely.
@@ -925,6 +923,13 @@ class BrainLoopMixin:
                 _trace["total_elapsed_ms"] = int((_time.monotonic() - _trace_t0) * 1000)
                 self._save_trace(_trace)
                 return MSG_CANCELLED_FOLLOWUP
+
+            # Passive learning, only from a first step that WORKED: a failed call must not teach
+            # the router that this phrase means that call.
+            if _learn_from_this_turn and not any(
+                isinstance(_r, Exception) or _r[5]["error"] for _r in _tool_results
+            ):
+                asyncio.create_task(self._maybe_learn_from_tools(content, _first_calls, _router_task))
 
             _results_sig = "|".join(
                 str(_r[3]) for _r in _tool_results if not isinstance(_r, Exception)

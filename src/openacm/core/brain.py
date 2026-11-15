@@ -105,7 +105,9 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         _lr = getattr(config, "local_router", None)
         self.local_router = LocalRouter(
             confidence_threshold=_lr.confidence_threshold if _lr else 0.88,
-            observation_mode=not _lr.enabled if _lr else False,
+            # An agent talks to outside people and a swarm worker to nobody: neither may have the
+            # router run host commands for a phrase (screenshots, apps, system info) on its own.
+            observation_mode=(not _lr.enabled if _lr else False) or bool(getattr(config, "is_agent", False)),
         )
 
     async def _execute_fast_path(
@@ -161,6 +163,8 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         """
         from openacm.core.local_router import TOOL_TO_INTENT, RUN_COMMAND_HINTS
 
+        if getattr(self.config, "is_agent", False):
+            return  # a customer's phrasing must never become a host action for everyone
         if len(tool_calls) != 1:
             return  # ambiguous — multiple tools called
 
