@@ -645,6 +645,7 @@ def register_routes(app: FastAPI) -> None:
         threshold = max(0.1, min(0.95, threshold))  # clamp to [0.1, 0.95]
         _state.config.assistant.rag_relevance_threshold = threshold
         # Persist to yaml
+        from openacm.core.config import _find_project_root
         root = _find_project_root()
         config_file = root / "config" / "local.yaml"
         cfg_data = {}
