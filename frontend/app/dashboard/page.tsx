@@ -6,6 +6,7 @@ import { useStats, useActivityHistory, useMediaFiles, useDetailedStats } from '@
 import { useDashboardStore } from '@/stores/dashboard-store';
 import { ActivityChart } from '@/components/dashboard/activity-chart';
 import { StatsCard } from '@/components/dashboard/stats-card';
+import { LlmHealthPanel } from '@/components/dashboard/llm-health';
 import { ChannelList } from '@/components/dashboard/channel-list';
 import { EventLog } from '@/components/dashboard/event-log';
 import {
@@ -716,6 +717,8 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+
+          <LlmHealthPanel />
 
         </div>
       </div>

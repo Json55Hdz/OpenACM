@@ -19,13 +19,14 @@ from openacm.utils.text import truncate
 from openacm.storage.database_agents import AgentsMixin
 from openacm.storage.database_migrations import MigrationsMixin
 from openacm.storage.database_skills_stats import SkillsStatsMixin
+from openacm.storage.database_llm_monitor import LlmMonitorMixin
 from openacm.storage.database_swarms import SwarmsMixin
 from openacm.storage.database_watchers import WatchersMixin
 
 log = structlog.get_logger()
 
 
-class Database(MigrationsMixin, SwarmsMixin, AgentsMixin, WatchersMixin, SkillsStatsMixin):
+class Database(MigrationsMixin, SwarmsMixin, AgentsMixin, WatchersMixin, SkillsStatsMixin, LlmMonitorMixin):
     """Async SQLite database wrapper."""
 
     def __init__(self, db_path: str, encryptor: Any = None):
@@ -127,6 +128,19 @@ class Database(MigrationsMixin, SwarmsMixin, AgentsMixin, WatchersMixin, SkillsS
                 ON tool_executions(timestamp);
             CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp 
                 ON llm_usage(timestamp);
+
+            CREATE TABLE IF NOT EXISTS llm_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT,
+                role TEXT,
+                error_class TEXT,
+                message TEXT,
+                failover_to TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_llm_errors_timestamp
+                ON llm_errors(timestamp);
 
             CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

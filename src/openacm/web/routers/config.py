@@ -114,6 +114,32 @@ def register_routes(app: FastAPI) -> None:
             "main": {"provider": router._current_provider, "model": router.current_model},
         }
 
+    @app.put("/api/llm/fallbacks")
+    async def set_model_fallbacks(request: Request):
+        """Body: {fallbacks: [{provider, model}, ...]} in the order they should be tried."""
+        from openacm.core.model_routes import RouteError
+
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        data = await request.json()
+        try:
+            saved = await _state.brain.llm_router.routes.set_fallbacks(
+                data.get("fallbacks") if isinstance(data, dict) else None
+            )
+        except RouteError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"ok": True, "fallbacks": saved}
+
+    @app.get("/api/llm/monitor")
+    async def llm_monitor(days: int = 7):
+        """Cost, speed and errors per model, recent errors and which providers are cooling down."""
+        if not _state.database or not _state.brain:
+            return {"models": [], "totals": {}, "errors_by_provider": [], "errors": [], "health": {}}
+        report = await _state.database.get_llm_monitor(days)
+        report["errors"] = await _state.database.get_llm_errors(days, 50)
+        report["health"] = _state.brain.llm_router.provider_health()
+        return report
+
     @app.put("/api/llm/routes")
     async def set_model_routes(request: Request):
         """Set or clear routes. Body: {scope: global|workspace|chat, id, routes: {role: {provider, model} | null}}."""

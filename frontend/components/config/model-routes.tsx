@@ -17,6 +17,7 @@ interface Data {
   chats: Record<string, RouteMap>;
   providers: { id: string; default_model: string; configured: boolean }[];
   main: { provider: string; model: string };
+  fallbacks: Route[];
 }
 
 const inputStyle: React.CSSProperties = {
@@ -63,6 +64,68 @@ function RoleRow({
           Guardar
         </button>
       </div>
+    </div>
+  );
+}
+
+function FallbackEditor({ data }: { data: Data }) {
+  const { fetchAPI } = useAPI();
+  const qc = useQueryClient();
+  const [list, setList] = useState<Route[]>(data.fallbacks ?? []);
+  const [provider, setProvider] = useState('');
+  const [model, setModel] = useState('');
+  const save = useMutation<unknown, Error, Route[]>({
+    mutationFn: (fallbacks) => fetchAPI('/api/llm/fallbacks', { method: 'PUT', body: JSON.stringify({ fallbacks }) }),
+    onSuccess: () => { toast.success('Guardado'); qc.invalidateQueries({ queryKey: ['model-routes'] }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const apply = (next: Route[]) => { setList(next); save.mutate(next); };
+  const move = (i: number, d: number) => {
+    const next = [...list];
+    [next[i], next[i + d]] = [next[i + d], next[i]];
+    apply(next);
+  };
+  return (
+    <div style={{ marginTop: 18, borderTop: '1px solid var(--acm-border)', paddingTop: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>Modelos de respaldo</div>
+      <div style={{ fontSize: 12, color: 'var(--acm-fg-4)', marginBottom: 8 }}>
+        Si el modelo de una tarea falla (caída, límite de uso, clave inválida), se prueba el siguiente de esta lista, en orden.
+        Un proveedor que acaba de fallar se omite unos segundos para no esperar de más.
+      </div>
+      {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--acm-fg-4)' }}>Sin respaldos: si un modelo falla, el error llega al chat.</div>}
+      {list.map((r, i) => (
+        <div key={`${r.provider}/${r.model}`} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, padding: '3px 0', flexWrap: 'wrap' }}>
+          <span className="mono" style={{ flex: 1, minWidth: 160 }}>{i + 1}. {r.provider}/{r.model || 'por defecto'}</span>
+          <button className="btn-secondary" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Subir">↑</button>
+          <button className="btn-secondary" disabled={i === list.length - 1} onClick={() => move(i, 1)} aria-label="Bajar">↓</button>
+          <button className="btn-secondary" onClick={() => apply(list.filter((_, j) => j !== i))} aria-label="Quitar">
+            <Trash2 size={12} />
+          </button>
+        </div>
+      ))}
+      {list.length < 5 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+          <select
+            style={inputStyle}
+            value={provider}
+            onChange={(e) => { setProvider(e.target.value); setModel(data.providers.find((x) => x.id === e.target.value)?.default_model ?? ''); }}
+            aria-label="Proveedor de respaldo"
+          >
+            <option value="">Elegir proveedor…</option>
+            {data.providers.map((p) => (<option key={p.id} value={p.id}>{p.id}</option>))}
+          </select>
+          {provider && (
+            <input className="mono" style={{ ...inputStyle, minWidth: 200 }} value={model} onChange={(e) => setModel(e.target.value)} placeholder="modelo" aria-label="Modelo de respaldo" />
+          )}
+          <button
+            className="btn-primary"
+            disabled={!provider || save.isPending}
+            onClick={() => { apply([...list, { provider, model: model.trim() }]); setProvider(''); setModel(''); }}
+          >
+            Añadir respaldo
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -142,6 +205,8 @@ export function ModelRoutesSection() {
           />
         ))
       )}
+
+      <FallbackEditor key={JSON.stringify(data.fallbacks)} data={data} />
 
       {Object.keys(data.chats).length > 0 && (
         <div style={{ marginTop: 14 }}>

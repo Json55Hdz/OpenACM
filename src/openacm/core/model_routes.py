@@ -69,7 +69,7 @@ class ModelRoutes:
     def __init__(self, router: "LLMRouter"):
         self._router = router
         self._database: Any = None
-        self.data: dict[str, Any] = {"global": {}, "workspaces": {}, "chats": {}}
+        self.data: dict[str, Any] = {"global": {}, "workspaces": {}, "chats": {}, "fallbacks": []}
 
     # ── persistence ──────────────────────────────────────────────────────────
     async def load(self, database: Any) -> None:
@@ -81,6 +81,8 @@ class ModelRoutes:
                 for scope in ("global", "workspaces", "chats"):
                     if isinstance(loaded.get(scope), dict):
                         self.data[scope] = loaded[scope]
+                if isinstance(loaded.get("fallbacks"), list):
+                    self.data["fallbacks"] = loaded["fallbacks"]
         except Exception as exc:  # noqa: BLE001
             log.warning("Could not load model routes", error=str(exc))
 
@@ -101,6 +103,25 @@ class ModelRoutes:
         if len(model) > 200 or _CONTROL.search(model):
             raise RouteError("Nombre de modelo inválido.")
         return {"provider": provider, "model": model}
+
+    # ── fallbacks (failover order) ───────────────────────────────────────────
+    MAX_FALLBACKS = 5
+
+    def fallbacks(self) -> list[dict[str, str]]:
+        return [f for f in self.data.get("fallbacks", []) if f.get("provider") in self._router.config.providers]
+
+    async def set_fallbacks(self, items: Any) -> list[dict[str, str]]:
+        """Replace the ordered list of models to try when the chosen one fails."""
+        if not isinstance(items, list) or len(items) > self.MAX_FALLBACKS:
+            raise RouteError(f"Máximo {self.MAX_FALLBACKS} modelos de respaldo.")
+        cleaned = []
+        for item in items:
+            route = self._clean_route(item)
+            if route and route not in cleaned:
+                cleaned.append(route)
+        self.data["fallbacks"] = cleaned
+        await self._save()
+        return cleaned
 
     # ── editing ──────────────────────────────────────────────────────────────
     async def set_routes(self, scope: str, scope_id: str, routes: dict[str, Any]) -> dict[str, Any]:
@@ -176,4 +197,5 @@ class ModelRoutes:
             "global": self.data["global"],
             "workspaces": self.data["workspaces"],
             "chats": self.data["chats"],
+            "fallbacks": self.fallbacks(),
         }

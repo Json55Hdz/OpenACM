@@ -20,6 +20,7 @@ from openacm.utils.text import truncate, extract_and_strip_thinking
 from openacm.core.config import LLMConfig
 from openacm.core.events import EventBus, EVENT_LLM_REQUEST, EVENT_LLM_RESPONSE
 from openacm.core.llm_custom_provider import CustomProviderMixin
+from openacm.core.llm_failover import FailoverMixin
 from openacm.core.llm_pricing import (  # noqa: F401  (re-exported for other modules)
     _PROVIDER_PRICING_PREFIX,
     _count_tokens,
@@ -48,7 +49,7 @@ litellm.set_verbose = False
 _route_override: ContextVar[tuple[str, str | None] | None] = ContextVar("llm_route_override", default=None)
 
 
-class LLMRouter(CustomProviderMixin):
+class LLMRouter(FailoverMixin, CustomProviderMixin):
     """Unified LLM interface using LiteLLM."""
 
     @property
@@ -390,17 +391,12 @@ class LLMRouter(CustomProviderMixin):
     async def chat(self, *args: Any, role: str | None = None, **kwargs: Any) -> dict[str, Any]:
         """Chat completion. ``role`` ("orchestrator" | "tools" | "background") applies the
         owner's model routes for that kind of work; without it the main model is used."""
-        token = None
-        if role and not kwargs.get("model_override"):
-            route = self.routes.resolve(role)
-            if route:
-                token = _route_override.set(route)
-                log.debug("Model route applied", role=role, provider=route[0], model=route[1])
-        try:
-            return await self._chat(*args, **kwargs)
-        finally:
-            if token is not None:
-                _route_override.reset(token)
+        if kwargs.get("model_override"):
+            return await self._chat(*args, **kwargs)  # a named model: that one or the error
+        primary = self.routes.resolve(role) if role else None
+        if primary:
+            log.debug("Model route applied", role=role, provider=primary[0], model=primary[1])
+        return await self._chat_with_failover(primary, role, args, kwargs)
 
     async def _chat(
         self,
