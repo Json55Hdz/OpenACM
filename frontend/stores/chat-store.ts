@@ -92,7 +92,7 @@ interface ChatState {
   finalizeReasoning: (content: string) => void;
   // forKey: if provided and different from currentTarget, add to savedMessages instead
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>, forKey?: string) => void;
-  setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'>>) => void;
+  setMessages: (messages: Array<Omit<Message, 'id' | 'timestamp'> & { timestamp?: Date | string }>) => void;
   // Update the most recent running tool call message for the given tool in-place
   updateToolCall: (tool: string, result: string, status: 'completed' | 'error') => void;
   upsertValidationStep: (tool: string, step: ValidationStep, done?: boolean, passed?: boolean) => void;
@@ -214,7 +214,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const stamped = messages.map((m, i) => ({
       ...m,
       id: `${now}-${i}-${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: new Date(),
+      // The stored time of a saved message; "now" only for ones that have none
+      timestamp: m.timestamp && !isNaN(new Date(m.timestamp).getTime()) ? new Date(m.timestamp) : new Date(),
     }));
     set({ messages: stamped });
   },

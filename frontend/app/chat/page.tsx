@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useChatStore } from '@/stores/chat-store';
@@ -13,7 +13,7 @@ import { useTerminalStore } from '@/stores/terminal-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { ChannelIcon, RouterLearningIndicator, MemoryRecallIndicator, SkillActiveIndicator, ContextBadge, TypingIndicator } from '@/components/chat/indicators';
 import { ValidationBubble, ToolConfirmationBubble, ToolConfirmationModal } from '@/components/chat/confirmations';
-import { ReasoningBubble, CompactionNoteBubble, MessageBubble } from '@/components/chat/chat-messages';
+import { ReasoningBubble, CompactionNoteBubble, MessageBubble, DateSeparator, sameDay } from '@/components/chat/chat-messages';
 import { cn } from '@/components/chat/shared';
 
 const CHAT_FOLDERS_STORAGE_KEY = 'openacm_chat_open_folders';
@@ -147,7 +147,7 @@ export default function ChatPage() {
             if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
             return true;
           })
-          .map((msg: { role: string; content: string }) => {
+          .map((msg: { role: string; content: string; timestamp?: string }) => {
             // Parse [IMAGE:filename] markers back into attachment objects
             const attachments: Array<{ id: string; name: string; type: string }> = [];
             const content = msg.content.replace(/\[IMAGE:([^\]]+)\]/g, (_, fileId) => {
@@ -163,6 +163,7 @@ export default function ChatPage() {
             return {
               content,
               role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+              timestamp: msg.timestamp,
               ...(attachments.length > 0 ? { attachments } : {}),
             };
           });
@@ -839,7 +840,11 @@ export default function ChatPage() {
             ) : (
               messages
                 .filter((msg) => msg.reasoning || msg.compactionNote || showToolLogs || (!msg.toolCall && !msg.validation && !msg.toolConfirmation))
-                .map((msg) => {
+                .map((msg, idx, arr) => {
+                  const separator = idx === 0 || !sameDay(arr[idx - 1].timestamp, msg.timestamp)
+                    ? <DateSeparator key={`day-${msg.id}`} date={msg.timestamp} />
+                    : null;
+                  const node = ((): React.ReactNode => {
                   if (msg.reasoning) {
                     return <ReasoningBubble key={msg.id} content={msg.reasoning} streaming={msg.reasoningStreaming} />;
                   }
@@ -882,7 +887,15 @@ export default function ChatPage() {
                       toolCall={msg.toolCall}
                       usage={msg.usage}
                       debugMode={debugMode}
+                      timestamp={msg.timestamp}
                     />
+                  );
+                  })();
+                  return (
+                    <Fragment key={msg.id}>
+                      {separator}
+                      {node}
+                    </Fragment>
                   );
                 })
             )}

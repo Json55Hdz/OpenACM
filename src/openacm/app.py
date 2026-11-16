@@ -249,6 +249,15 @@ class OpenACM:
             skill_manager=self.skill_manager,
         )
 
+        # Who may use the assistant from Telegram / Discord / WhatsApp, and with which tools
+        try:
+            await self.brain.channel_access.load(
+                self.database,
+                legacy_owners={"telegram": list(self.config.channels.telegram.allowed_users)},
+            )
+        except Exception as exc:
+            log.warning("Channel access not loaded", error=str(exc))
+
         # Workflow Tracker — detects repeated tool patterns and suggests automation
         try:
             from openacm.core.workflow_tracker import WorkflowTracker

@@ -456,7 +456,9 @@ class BrainLoopMixin:
         _system_prompt, messages = await self._build_system_prompt(content, user_id, channel_id, channel_type)
 
         # Long-term memory (RAG): built once per turn, added on every read of the history below
-        rag_msg = await self._rag_message(content, channel_id, channel_type)
+        _grant = self.channel_access.resolve(channel_type, user_id, channel_id)
+        rag_msg = await self._rag_message(content, channel_id, channel_type) if _grant.owner or \
+            getattr(self.config, "is_agent", False) else None
 
         # Build structured content if there are attachments
         final_content = content
@@ -487,6 +489,8 @@ class BrainLoopMixin:
         tools = None
         if self.tool_registry:
             tools = self.tool_registry.get_tools_by_intent(content)
+            if not getattr(self.config, "is_agent", False):
+                tools = self.channel_access.filter_tools(tools, _grant)
             # During onboarding, always include save_user_profile so the LLM can call it
             if not getattr(self.config, "onboarding_completed", False):
                 sp_def = self.tool_registry.tools.get("save_user_profile")

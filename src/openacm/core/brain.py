@@ -101,6 +101,8 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         # Messages sent while a run is busy, read by the tool loop between steps.
         from openacm.core.debounce import MessageDebouncer
         self._debouncer = MessageDebouncer()
+        from openacm.core.channel_access import ChannelAccess
+        self.channel_access = ChannelAccess()
         self._channel_inbox: dict[str, list[tuple[str, str, str]]] = {}
         self._inbox_meta: dict[str, str] = {}
         self._MAX_TRACES = 20
@@ -288,6 +290,16 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         - Any other message → queue it (latest wins) and notify the user.
           The queued message is processed automatically once the current task finishes.
         """
+        # External channels: ignore people who may not talk to the assistant at all
+        _access = getattr(self, "channel_access", None)
+        if _access is not None and not getattr(getattr(self, "config", None), "is_agent", False) and not is_transparent:
+            _grant = _access.resolve(channel_type, user_id, channel_id)
+            if not _grant.owner:
+                _access.note_unknown(channel_type, user_id, channel_id, _grant.talk)
+            if not _grant.talk:
+                log.info("Message ignored: sender not allowed", channel=channel_type, user=user_id, why=_grant.reason)
+                return ""
+
         _task_key = f"{channel_type}:{channel_id}"
         _prev = self._channel_tasks.get(_task_key)
 

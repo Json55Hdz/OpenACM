@@ -219,7 +219,9 @@ export function MessageBubble({
   toolCall,
   usage,
   debugMode,
+  timestamp,
 }: {
+  timestamp?: Date;
   content: string;
   role: 'user' | 'assistant' | 'error' | 'system';
   badge?: string;
@@ -382,10 +384,49 @@ export function MessageBubble({
           </div>
         )}
 
+        {timestamp && (
+          <div className={cn("mono text-[10px] text-[var(--acm-fg-4)] mt-1", isUser && "text-right")}>
+            {timeLabel(timestamp)}
+          </div>
+        )}
+
         {!isUser && !isError && usage && usage.total_tokens > 0 && (
           <TokenBadge usage={usage} />
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Dates and times (WhatsApp style: one separator per day, then only the hour) ──
+
+export function sameDay(a?: Date, b?: Date): boolean {
+  if (!a || !b) return false;
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+export function timeLabel(d: Date): string {
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function dayLabel(d: Date): string {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (sameDay(d, today)) return 'Hoy';
+  if (sameDay(d, yesterday)) return 'Ayer';
+  const days = (today.getTime() - d.getTime()) / 86_400_000;
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: 'long' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: d.getFullYear() === today.getFullYear() ? undefined : 'numeric' });
+}
+
+export function DateSeparator({ date }: { date?: Date }) {
+  if (!date) return null;
+  return (
+    <div className="flex justify-center my-2" role="separator" aria-label={dayLabel(date)}>
+      <span className="mono text-[11px] px-3 py-1 rounded-full bg-[var(--acm-card)] border border-[var(--acm-border)] text-[var(--acm-fg-3)] capitalize">
+        {dayLabel(date)}
+      </span>
     </div>
   );
 }

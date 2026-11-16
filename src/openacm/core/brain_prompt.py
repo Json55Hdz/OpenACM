@@ -4,7 +4,7 @@ import structlog
 
 from openacm.core.acm_context import get_openacm_context, get_short_context
 from openacm.core.events import EVENT_SKILL_ACTIVE
-from openacm.core.messages import PROMPT_SETUP_MODE
+from openacm.core.messages import PROMPT_GUEST_NOTICE, PROMPT_SETUP_MODE
 
 log = structlog.get_logger()
 
@@ -26,6 +26,15 @@ class BrainPromptMixin:
 
         if not getattr(self.config, "onboarding_completed", False):
             system_prompt = PROMPT_SETUP_MODE
+
+        # Someone who is not the owner gets the persona and nothing of the owner's world: no profile,
+        # workspace, terminal history, skills or plugin context.
+        if not getattr(self.config, "is_agent", False) and \
+                not self.channel_access.resolve(channel_type, user_id, channel_id).owner:
+            system_prompt = f"{system_prompt}\n\n{PROMPT_GUEST_NOTICE}"
+            ttl_hours = getattr(self.config, "memory_ttl_hours", None)
+            messages = await self.memory.get_or_create(user_id, channel_id, system_prompt, ttl_hours=ttl_hours)
+            return system_prompt, messages
 
         existing_messages = await self.memory.get_messages(user_id, channel_id)
         is_new_conversation = len(existing_messages) == 0

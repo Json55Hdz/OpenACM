@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ModelRoutesSection, FallbackSection } from '@/components/config/model-routes';
 import { ModelsOverview } from '@/components/config/models-overview';
+import { ChannelAccessSection } from '@/components/config/channel-access';
 import { ConfigSection, Divider, ToggleRow, StatTile, InfoRow, NavItem, NavGroupLabel } from '@/components/config/primitives';
 import { ProviderCard, AddProviderCard } from '@/components/config/provider-cards';
 import { RagThresholdControl, AssistantSection, VoiceConfigSection } from '@/components/config/sections';
@@ -1557,6 +1558,9 @@ export default function ConfigPage() {
                 )}
               </div>
             </ConfigSection>
+
+            {/* ── Who may use the assistant from external channels ── */}
+            <ChannelAccessSection />
 
             {/* ── Telegram ── */}
             <ConfigSection

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Layers, LifeBuoy, Route, Bot, Brain, Globe2, Mic, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
+import { Layers, LifeBuoy, ShieldCheck, Route, Bot, Brain, Globe2, Mic, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
 
 export type NavSection =
   | 'assistant'
@@ -10,6 +10,7 @@ export type NavSection =
   | 'fallbacks'
   | 'models-overview'
   | 'memory'
+  | 'channel-access'
   | 'telegram'
   | 'whatsapp'
   | 'google'
@@ -41,6 +42,7 @@ export const NAV_GROUPS: { group: string; items: { id: NavSection; label: string
   {
     group: 'Integrations',
     items: [
+      { id: 'channel-access', label: 'Acceso y permisos', icon: ShieldCheck },
       { id: 'telegram', label: 'Telegram', icon: Send },
       { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone },
       { id: 'google', label: 'Google Services', icon: Globe2 },

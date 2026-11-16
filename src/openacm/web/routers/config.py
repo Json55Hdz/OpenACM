@@ -114,6 +114,29 @@ def register_routes(app: FastAPI) -> None:
             "main": {"provider": router._current_provider, "model": router.current_model},
         }
 
+    @app.get("/api/channel-access")
+    async def get_channel_access():
+        """Who may use the assistant from Telegram / Discord / WhatsApp, and with which tools."""
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        return _state.brain.channel_access.snapshot()
+
+    @app.put("/api/channel-access")
+    async def set_channel_access(request: Request):
+        from openacm.core.channel_access import AccessError
+
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        payload = await request.json()
+        registry = getattr(_state.brain, "tool_registry", None)
+        try:
+            await _state.brain.channel_access.update(
+                payload, known_tools=set(registry.tools) if registry else None
+            )
+        except AccessError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"ok": True, **_state.brain.channel_access.snapshot()}
+
     @app.put("/api/llm/fallbacks")
     async def set_model_fallbacks(request: Request):
         """Body: {fallbacks: [{provider, model}, ...]} in the order they should be tried."""

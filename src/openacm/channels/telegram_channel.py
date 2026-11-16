@@ -190,6 +190,13 @@ class TelegramChannel(BaseChannel):
             return True  # No restrictions
         return str(user_id) in self.config.allowed_users
 
+    def _is_owner(self, user_id: int | str) -> bool:
+        """Owner of the assistant (system commands are theirs only). Agent bots have no owner role."""
+        access = getattr(getattr(self, "brain", None), "channel_access", None)
+        if access is None:
+            return True
+        return access.resolve("telegram", str(user_id), str(user_id)).owner
+
     def _owns_event(self, data: dict) -> bool:
         """Return True if this channel instance should handle the event."""
         return data.get("channel_type") == "telegram"
@@ -501,6 +508,9 @@ class TelegramChannel(BaseChannel):
         if not self.allow_system_commands:
             await update.message.reply_text("Este comando no está disponible aquí.")
             return
+        if update.effective_user and not self._is_owner(update.effective_user.id):
+            await update.message.reply_text("Solo el propietario puede usar este comando.")
+            return
         args = " ".join(context.args) if context.args else ""
         user_id = str(update.effective_user.id) if update.effective_user else ""
         channel_id = str(update.message.chat_id)
@@ -513,6 +523,9 @@ class TelegramChannel(BaseChannel):
             return
         if not self.allow_system_commands:
             await update.message.reply_text("Este comando no está disponible aquí.")
+            return
+        if update.effective_user and not self._is_owner(update.effective_user.id):
+            await update.message.reply_text("Solo el propietario puede usar este comando.")
             return
         result = await self._cmd.handle("/stats", "", "", "")
         await update.message.reply_text(result.text)

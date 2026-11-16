@@ -560,6 +560,13 @@ class ToolRegistry:
 
         tool = self.tools[tool_name]
 
+        # People on an external channel only get what their profile allows (agents have their own list)
+        access = getattr(_brain, "channel_access", None)
+        if access is not None and not getattr(getattr(_brain, "config", None), "is_agent", False):
+            if not access.resolve(channel_type, user_id, channel_id).allows(tool_name):
+                log.warning("Tool refused by channel access", tool=tool_name, channel=channel_type, user=user_id)
+                return f"Error: you do not have permission to use '{tool_name}' in this chat."
+
         # Blocked areas are blocked for writes in EVERY mode (yolo skips questions, not rules)
         if tool_name in ("write_file", "edit_file"):
             policy = getattr(getattr(self, "sandbox", None), "policy", None)
