@@ -34,6 +34,7 @@ log = structlog.get_logger()
 CAPABILITIES = ("vision", "audio")
 PROBE_VERSION = 2  # 2: the audio probe counts beeps instead of asking "is there a sound?"
 PROBE_BEEPS = 4
+MAX_ONDEMAND_PROBES = 3  # unverified models measured on demand when nobody is verified
 SETTINGS_KEY = "llm.capabilities"
 PROBE_TIMEOUT_S = 45
 _NATIVE_PREFIX = {"anthropic": "anthropic", "gemini": "gemini", "openrouter": "openrouter", "xai": "xai"}
@@ -211,7 +212,32 @@ class ModelCapabilities:
             t = float(caps.get("tested_at") or 0)
             if best is None or t > best[0]:
                 best = (t, p, m)
-        return (best[1], best[2]) if best else None
+        if best:
+            return best[1], best[2]
+
+        # Nobody is verified yet. Models seen before whose answer is still unknown (never measured,
+        # or the old measurement was discarded) get measured NOW, newest first, so the first audio
+        # or image does not fail just because nobody re-selected the model after an update.
+        stale = sorted(
+            (k for k, caps in self._caps.items() if caps.get(capability) is None and "::" in k),
+            key=lambda k: float(self._caps[k].get("tested_at") or 0), reverse=True,
+        )
+        tried = 0
+        for k in stale:
+            p, m = k.split("::", 1)
+            if p not in providers or (p, m) == (cp, cm) or (keep_local and not self.is_local(p)):
+                continue
+            if tried >= MAX_ONDEMAND_PROBES:
+                break
+            tried += 1
+            try:
+                res = await self.probe(p, m, force=True)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("On-demand capability probe failed", provider=p, model=m, error=str(exc))
+                continue
+            if res.get(capability) is True:
+                return p, m
+        return None
 
     # ── raw completion against any configured provider ───────────────────────
 

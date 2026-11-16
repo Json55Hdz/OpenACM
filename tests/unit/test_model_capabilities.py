@@ -160,3 +160,24 @@ async def test_old_audio_yes_is_forgotten_on_load():
     caps = ModelCapabilities(_router())
     await caps.load(DB())
     assert caps._caps["p::m"]["audio"] is None and caps._caps["p::m"]["vision"] is True
+
+
+async def test_pick_measures_unverified_models_on_demand():
+    """After an update the old "audio yes" is forgotten; the first audio must not fail for that."""
+    router = _router(providers={"opencode_go": {"base_url": "https://x/v1"}, "gemini": {}})
+    caps = _caps(router, {("m1", "vision"): "Red.", ("m1", "audio"): "no",
+                          ("gem", "vision"): "Red.", ("gem", "audio"): "4"})
+    caps._caps["opencode_go::m1"] = {"vision": True, "audio": False, "tested_at": 1}
+    caps._caps["gemini::gem"] = {"vision": True, "audio": None, "tested_at": 2}   # forgotten by the update
+    assert await caps.pick("audio") == ("gemini", "gem")
+    assert caps._caps["gemini::gem"]["audio"] is True                             # and it stays measured
+    assert [c for c in caps.calls if c[1] == "gem"]                               # it really probed it
+
+
+async def test_pick_gives_up_when_nobody_hears():
+    router = _router(providers={"opencode_go": {"base_url": "https://x/v1"}, "gemini": {}})
+    caps = _caps(router, {("m1", "vision"): "Red.", ("m1", "audio"): "no",
+                          ("gem", "vision"): "Red.", ("gem", "audio"): "I hear nothing"})
+    caps._caps["opencode_go::m1"] = {"vision": True, "audio": False, "tested_at": 1}
+    caps._caps["gemini::gem"] = {"vision": True, "audio": None, "tested_at": 2}
+    assert await caps.pick("audio") is None
