@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, Paperclip, Download, Wrench, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { MediaGallery } from './media-viewer';
+import { Bot, Wrench, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -57,28 +58,11 @@ export function MessageContent({ content, token }: { content: string; token?: st
         </ReactMarkdown>
       )}
       {mediaMatches.length > 0 && (
-        <div className={cn('space-y-2', cleanText && 'mt-3')}>
-          {mediaMatches.map(({ filename }, idx) => {
-            const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(filename);
-            const previewUrl = `/api/media/${filename}${token ? `?token=${token}` : ''}`;
-            const downloadUrl = `/api/media/${filename}?download=true${token ? `&token=${token}` : ''}`;
-            return (
-              <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
-                {isImage && (
-                  <img src={previewUrl} alt={filename} className="max-w-xs max-h-64 object-contain bg-[var(--acm-base)] block" />
-                )}
-                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-card)] text-[11px]">
-                  <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
-                  <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{filename}</span>
-                  <a href={downloadUrl} download={filename} className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0">
-                    <Download size={10} />
-                    Download
-                  </a>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <MediaGallery
+          className={cn('space-y-2', cleanText && 'mt-3')}
+          token={token ?? null}
+          files={mediaMatches.map(({ filename }) => ({ name: filename }))}
+        />
       )}
     </div>
   );

@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Paperclip, Bot, User, Loader2, Wrench, Download, Sparkles, ChevronDown, ChevronUp, DollarSign, ArrowUp, ArrowDown, Info, ScrollText } from 'lucide-react';
+import { Bot, User, Loader2, Wrench, Sparkles, ChevronDown, ChevronUp, DollarSign, ArrowUp, ArrowDown, Info, ScrollText } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth-store';
 import type { MessageUsage } from '@/stores/chat-store';
 import { cn } from './shared';
+import { MediaGallery } from './media-viewer';
 
 // Captures the filename (everything after /api/media/ up to whitespace or end).
 const MEDIA_LINK_RE = /\/api\/media\/([\w.\-]+)/g;
@@ -58,36 +59,11 @@ export function MessageContent({ content, token }: { content: string; token: str
         </ReactMarkdown>
       )}
       {mediaMatches.length > 0 && (
-        <div className={cn("space-y-2", cleanText && "mt-3")}>
-          {mediaMatches.map(({ filename }, idx) => {
-            const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(filename);
-            const previewUrl = `/api/media/${filename}${token ? `?token=${token}` : ''}`;
-            const downloadUrl = `/api/media/${filename}?download=true${token ? `&token=${token}` : ''}`;
-            return (
-              <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
-                {isImage && (
-                  <img
-                    src={previewUrl}
-                    alt={filename}
-                    className="max-w-xs max-h-64 object-contain bg-[var(--acm-base)] block"
-                  />
-                )}
-                <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-card)] text-[11px]">
-                  <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
-                  <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{filename}</span>
-                  <a
-                    href={downloadUrl}
-                    download={filename}
-                    className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
-                  >
-                    <Download size={10} />
-                    Download
-                  </a>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <MediaGallery
+          className={cn("space-y-2", cleanText && "mt-3")}
+          token={token}
+          files={mediaMatches.map(({ filename }) => ({ name: filename }))}
+        />
       )}
     </div>
   );
@@ -384,37 +360,11 @@ export function MessageBubble({
             <MessageContent content={content} token={token} />
 
             {attachments && attachments.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {attachments.map((att, idx) => {
-                  const fileId = att.id || att.name;
-                  const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
-                  const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
-                  const previewUrl = `/api/media/${fileId}?token=${token}`;
-                  return (
-                    <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
-                      {isMedia && (
-                        <img
-                          src={previewUrl}
-                          alt={att.name}
-                          className="max-w-xs max-h-48 object-contain bg-[var(--acm-base)]"
-                        />
-                      )}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-elev)] text-[11px]">
-                        <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
-                        <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{att.name}</span>
-                        <a
-                          href={downloadUrl}
-                          download={att.name}
-                          className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
-                        >
-                          <Download size={10} />
-                          Download
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <MediaGallery
+                className="mt-3 space-y-2"
+                token={token}
+                files={attachments.map((a) => ({ name: a.name, fileId: a.id || a.name }))}
+              />
             )}
           </div>
         ) : (
@@ -423,37 +373,11 @@ export function MessageBubble({
             <MessageContent content={content} token={token} />
 
             {attachments && attachments.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {attachments.map((att, idx) => {
-                  const fileId = att.id || att.name;
-                  const isMedia = /\.(png|jpg|jpeg|gif|webp)$/i.test(att.name);
-                  const downloadUrl = `/api/media/${fileId}?download=true&token=${token}`;
-                  const previewUrl = `/api/media/${fileId}?token=${token}`;
-                  return (
-                    <div key={idx} className="rounded-[6px] overflow-hidden border border-[var(--acm-border)]">
-                      {isMedia && (
-                        <img
-                          src={previewUrl}
-                          alt={att.name}
-                          className="max-w-xs max-h-48 object-contain bg-[var(--acm-base)]"
-                        />
-                      )}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-[var(--acm-elev)] text-[11px]">
-                        <Paperclip size={11} className="text-[var(--acm-fg-4)] flex-shrink-0" />
-                        <span className="mono truncate text-[var(--acm-fg-3)] flex-1">{att.name}</span>
-                        <a
-                          href={downloadUrl}
-                          download={att.name}
-                          className="btn-primary !py-[4px] !px-[8px] !text-[11px] flex-shrink-0"
-                        >
-                          <Download size={10} />
-                          Download
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <MediaGallery
+                className="mt-3 space-y-2"
+                token={token}
+                files={attachments.map((a) => ({ name: a.name, fileId: a.id || a.name }))}
+              />
             )}
           </div>
         )}

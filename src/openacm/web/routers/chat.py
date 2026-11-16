@@ -150,6 +150,28 @@ async def _handle_chat_turn(
             return
 
 
+def _parse_byte_range(header: str | None, total: int):
+    """Parse a single ``Range: bytes=a-b`` header. None = no range, "invalid" = unsatisfiable."""
+    if not header or not header.startswith("bytes=") or "," in header:
+        return None
+    spec = header[6:].strip()
+    start_s, _, end_s = spec.partition("-")
+    try:
+        if start_s == "":  # suffix: the last N bytes
+            length = int(end_s)
+            if length <= 0:
+                return "invalid"
+            start, end = max(0, total - length), total - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else total - 1
+    except ValueError:
+        return None
+    if start >= total or start > end:
+        return "invalid"
+    return start, min(end, total - 1)
+
+
 def register_routes(app: FastAPI) -> None:
     # ─── API: Media & Uploads ─────────────────────────────────
 
@@ -194,7 +216,7 @@ def register_routes(app: FastAPI) -> None:
         return files
 
     @app.get("/api/media/{file_name}")
-    async def get_media(file_name: str, download: bool = False):
+    async def get_media(request: Request, file_name: str, download: bool = False):
         """Retrieve a media file. Handles legacy Fernet-encrypted files transparently."""
         from openacm.security.crypto import decrypt_file, get_media_dir
 
@@ -225,7 +247,19 @@ def register_routes(app: FastAPI) -> None:
             ".webp": "image/webp",
             ".pdf": "application/pdf",
             ".mp3": "audio/mpeg",
+            ".wav": "audio/wav",
+            ".ogg": "audio/ogg",
+            ".oga": "audio/ogg",
+            ".opus": "audio/ogg",
+            ".m4a": "audio/mp4",
+            ".aac": "audio/aac",
+            ".flac": "audio/flac",
+            ".weba": "audio/webm",
             ".mp4": "video/mp4",
+            ".m4v": "video/mp4",
+            ".webm": "video/webm",
+            ".mov": "video/quicktime",
+            ".ogv": "video/ogg",
             ".glb": "model/gltf-binary",
             ".gltf": "model/gltf+json",
             ".obj": "text/plain",
@@ -244,7 +278,9 @@ def register_routes(app: FastAPI) -> None:
         content_type = mime_map.get(ext, "application/octet-stream")
 
         # Files that render inline in the browser (no forced download)
-        inline_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".html", ".htm", ".svg"}
+        inline_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".m4v", ".webm", ".mov", ".ogv",
+                       ".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".flac", ".weba",
+                       ".html", ".htm", ".svg"}
         # Never let the browser guess a more dangerous type than the one declared.
         headers = {"X-Content-Type-Options": "nosniff"}
         # Active content (it can carry scripts) still previews inline, but sandboxed:
@@ -256,6 +292,16 @@ def register_routes(app: FastAPI) -> None:
             safe_name = "".join(c for c in file_name if c not in '"\\\r\n')
             headers["Content-Disposition"] = f'attachment; filename="{safe_name}"'
 
+        headers["Accept-Ranges"] = "bytes"
+        total = len(file_bytes)
+        byte_range = _parse_byte_range(request.headers.get("range"), total)
+        if byte_range == "invalid":
+            return Response(status_code=416, headers={**headers, "Content-Range": f"bytes */{total}"})
+        if byte_range:
+            start, end = byte_range
+            headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+            return Response(content=file_bytes[start:end + 1], status_code=206,
+                            media_type=content_type, headers=headers)
         return Response(content=file_bytes, media_type=content_type, headers=headers)
 
     @app.get("/api/config/available_models")
