@@ -15,6 +15,12 @@ Use this skill when:
 - A video clip is required to troubleshoot, document, or demonstrate a moving process on the PC.
 - The user needs to capture a short animation, video playback, or sequence of actions occurring on their primary monitor.
 
+## Requirements and limits
+
+- Needs a graphical desktop session on the machine where OpenACM runs. It does NOT work on a headless server, NAS or Docker container (no display): `mss` fails there. In that case tell the user it is not possible instead of retrying.
+- Install the dependencies if missing: `mss`, `opencv-python`, `numpy`.
+- After saving the file, call the `send_file_to_chat` tool with its path so the user gets it in the chat (the in-chat viewer plays video).
+
 ## Guidelines
 
 ### Execution Strategy

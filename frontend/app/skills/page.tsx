@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { SkillMarketplace } from '@/components/skills/skill-marketplace';
 import { AppLayout } from '@/components/layout/app-layout';
 import { useSkills } from '@/hooks/use-api';
 import {
@@ -26,6 +27,7 @@ interface Skill {
   category: string;
   is_active: boolean;
   is_builtin: boolean;
+  source?: string;
   created_at: string;
   updated_at: string;
 }
@@ -253,7 +255,7 @@ function SkillCard({
           </span>
         )}
 
-        {skill.is_builtin && (
+        {skill.source && skill.source !== 'user' && (
           <span
             className="mono"
             style={{
@@ -263,7 +265,7 @@ function SkillCard({
               color: 'var(--acm-accent)',
             }}
           >
-            builtin
+            {skill.source === 'system' ? 'sistema' : skill.source === 'market' ? 'marketplace' : skill.source.replace('plugin:', 'plugin · ')}
           </span>
         )}
 
@@ -826,6 +828,8 @@ export default function SkillsPage() {
             ))}
           </div>
         )}
+
+        <SkillMarketplace />
 
         {/* ── Create Modal ── */}
         <SkillModal

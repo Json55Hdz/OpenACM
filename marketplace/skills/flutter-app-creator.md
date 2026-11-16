@@ -1,11 +1,11 @@
 ---
 name: "flutter-app-creator"
-description: "Expert Flutter/Dart mobile app creator. When activated, follows a strict professional workflow: 1) Asks detailed questions about the app (name, description, target users, main features, design preferences). 2) Agrees on the visual direction. 3) Discusses complete architecture (state management, folder structure, navigation, data layer). 4) Asks about backend/API connections, authentication, databases. 5) Generates professional architecture documentation (PDF + Markdown). 6) Creates complete Flutter project in workspace with proper structure. 7) Asks about Git initialization and remote. 8) Delivers fully working app following best practices. Always suggests improvements to architecture when appropriate and waits for user confirmation before proceeding. Reuses all available tools (stitch_generate_ui, run_command, run_python, file_ops, etc.)."
+description: "Crea apps móviles Flutter/Dart con un flujo profesional: preguntas, arquitectura, documentación, proyecto completo y Git, confirmando cada paso contigo."
 category: "development"
-created: "2026-03-31T19:23:32.102078"
+author: "OpenACM"
 ---
 
-**# Flutter App Creator**
+# Flutter App Creator
 
 ## Overview
 

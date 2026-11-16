@@ -182,6 +182,7 @@ export interface ToolInfo {
   description: string;
   risk_level: string;
   category: string;
+  source?: string;
   parameters: Record<string, unknown>;
 }
 

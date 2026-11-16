@@ -173,16 +173,19 @@ class ToolRegistry:
             self._tool_names_order = []
         log.debug("Tool registered", name=tool.name, risk=tool.risk_level)
 
-    def register_module(self, module: types.ModuleType):
+    def register_module(self, module: types.ModuleType, source: str | None = None):
         """
         Register all @tool-decorated functions from a module.
         Imports the module to trigger decorator registration, then
         collects tools that have _tool_definition attributes.
+        ``source`` names who provides them (a plugin); omitted = built into OpenACM.
         """
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if callable(attr) and hasattr(attr, "_tool_definition"):
                 tool_def: ToolDefinition = attr._tool_definition
+                if source:
+                    tool_def.source = source
                 self.register(tool_def)
 
     def precompute_tool_embeddings(self, model: Any) -> None:

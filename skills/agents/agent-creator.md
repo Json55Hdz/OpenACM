@@ -47,9 +47,17 @@ Reglas:
 )
 ```
 
+## Tools (allowed_tools)
+
+- Use `"none"` (text only) for FAQ / support bots. It is the default.
+- If the agent needs tools, pass an explicit comma-separated list of tool names (only the ones it needs), never the whole set.
+- Do NOT use `"all"` for agents reachable from outside: the webhook refuses agents whose `allowed_tools` is `"all"` (HTTP error asking to choose tools explicitly or `none`). Also never give customer-facing agents machine tools such as `run_command`, `run_python` or file tools.
+- Besides the webhook, an agent can be connected to a messaging channel (e.g. WhatsApp) from the Agents page of the dashboard; those agent channels talk to end customers, so keep the tool list minimal.
+
 ## After creating
 
 Always show the user:
 - The webhook URL
 - The secret key (only shown once — remind them to save it)
-- How to call it with curl or from their app
+- How to call it with curl or from their app (`POST` with header `X-Agent-Secret` and body `{"message": "...", "user_id": "..."}`)
+- The URL uses `localhost`: if OpenACM runs on a server/NAS, replace it with the server's address

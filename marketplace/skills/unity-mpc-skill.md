@@ -1,8 +1,8 @@
 ---
 name: "unity-mpc-skill"
-description: "Especialista en MCP (Model Context Protocol) para Unity. Configura, conecta y gestiona servidores MCP como Service Provider, analizando documentación para implementar integraciones correctas."
+description: "Configura y gestiona servidores MCP (Model Context Protocol) para Unity: conexión como proveedor de servicio e integraciones correctas."
 category: "development"
-created: "2026-04-01T18:50:18.291377"
+author: "OpenACM"
 ---
 
 # Unity MPC Skill

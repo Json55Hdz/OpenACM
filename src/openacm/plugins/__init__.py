@@ -356,7 +356,7 @@ class PluginManager:
                 # Register tools
                 if tool_registry:
                     for module in plugin.get_tool_modules():
-                        tool_registry.register_module(module)
+                        tool_registry.register_module(module, source=plugin.name)
                     # Register intent keywords
                     kws = plugin.get_intent_keywords()
                     if kws:
@@ -373,6 +373,7 @@ class PluginManager:
                                     description=skill_def.get("description", ""),
                                     content=skill_def.get("content", ""),
                                     category=skill_def.get("category", "general"),
+                                    source=f"plugin:{plugin.name}",
                                 )
                                 log.info(
                                     "Plugin skill registered",

@@ -483,6 +483,7 @@ def register_routes(app: FastAPI) -> None:
                 "risk_level": t.risk_level,
                 "parameters": t.parameters,
                 "category": t.category,
+                "source": t.source,
             }
             for t in _state.tool_registry.tools.values()
         ]

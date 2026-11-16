@@ -266,6 +266,7 @@ class SkillsStatsMixin:
         worker_id: int | None = None,
         agent_id: int | None = None,
         flow_id: int | None = None,
+        source: str | None = None,
     ) -> int:
         """Create a new skill. worker_id=None + agent_id=None + flow_id=None
         makes it a global system skill; setting exactly one of the three
@@ -273,9 +274,10 @@ class SkillsStatsMixin:
         if not self._db:
             return 0
         cursor = await self._db.execute(
-            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id, agent_id, flow_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (name, description, content, category, int(is_builtin), worker_id, agent_id, flow_id),
+            "INSERT INTO skills (name, description, content, category, is_builtin, worker_id, agent_id, flow_id, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (name, description, content, category, int(is_builtin), worker_id, agent_id, flow_id,
+             source or ("system" if is_builtin else "user")),
         )
         await self._db.commit()
         return cursor.lastrowid
@@ -349,6 +351,16 @@ class SkillsStatsMixin:
         )
         await self._db.commit()
         return True
+
+    async def delete_skill_by_name(self, name: str) -> None:
+        """Remove a global skill by name, whatever it is (used to retire skills that left the product)."""
+        if not self._db:
+            return
+        await self._db.execute(
+            "DELETE FROM skills WHERE name = ? AND worker_id IS NULL AND agent_id IS NULL AND flow_id IS NULL",
+            (name,),
+        )
+        await self._db.commit()
 
     async def delete_skill(self, skill_id: int) -> bool:
         """Delete a skill (only non-built-in)."""

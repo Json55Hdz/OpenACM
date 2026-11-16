@@ -16,6 +16,8 @@ class ToolDefinition:
     risk_level: str = "low"  # low, medium, high
     needs_sandbox: bool = False
     category: str = "general"  # general, system, file, web, ai, media, google, meta
+    # Where the tool comes from: "builtin" (ships with OpenACM), "mcp", or the name of the plugin
+    source: str = "builtin"
     # Result size kept for the LLM (None = the default). A tool whose output is already
     # budgeted and must arrive whole (a page outline) can ask for more.
     max_result_chars: int | None = None

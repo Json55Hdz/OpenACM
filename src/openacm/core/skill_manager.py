@@ -38,6 +38,10 @@ class SkillManager:
         for cat in ["security", "development", "ai", "custom", "generated"]:
             (SKILLS_BASE_DIR / cat).mkdir(exist_ok=True)
 
+        # Skills that no longer ship (they live in the marketplace now) must not come back from
+        # a stale file left on disk by an older install.
+        await self._retire_skills()
+
         # Sync any new files from disk to database
         await self._sync_files_to_database()
 
@@ -52,6 +56,24 @@ class SkillManager:
             db_count=len(self._active_skills),
             file_count=len(skill_files),
         )
+
+    # Left the product; installable again from the skill marketplace
+    RETIRED_SKILLS = ("blender-modeling", "flutter-app-creator", "unity-mpc-skill")
+
+    async def _retire_skills(self):
+        for name in self.RETIRED_SKILLS:
+            for path in SKILLS_BASE_DIR.rglob(f"{name}.md"):
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    log.warning("Could not remove retired skill file", path=str(path), error=str(exc))
+        try:
+            for name in self.RETIRED_SKILLS:
+                row = await self.database.get_skill_by_name(name)
+                if row and row.get("source") != "market":
+                    await self.database.delete_skill_by_name(name)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Retired skills not cleaned from the database", error=str(exc))
 
     async def _load_builtin_skills(self):
         """Load default skills if database is empty - saves to files too."""
@@ -165,6 +187,7 @@ created: "{datetime.now().isoformat()}"
                                 content=skill_data["content"],
                                 category=skill_data["category"],
                                 is_builtin=False,
+                                source="user" if skill_data["category"] == "generated" else "system",
                             )
                             log.info("Skill synced from file", name=skill_data["name"])
 
@@ -289,6 +312,7 @@ created: "{datetime.now().isoformat()}"
         description: str,
         content: str,
         category: str = "general",
+        source: str | None = None,
     ) -> dict[str, Any]:
         """Create a new custom skill - saves to file and database."""
         # Save to file first
@@ -302,6 +326,7 @@ created: "{datetime.now().isoformat()}"
             content=content,
             category=category,
             is_builtin=False,
+            source=source,
         )
         await self._refresh_cache()
 

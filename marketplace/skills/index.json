@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "name": "blender-modeling",
+      "description": "Guía para modelar en 3D con Blender mediante IA (patrones bpy seguros, flujos, errores comunes). Requiere un plugin o servidor MCP que ofrezca las herramientas blender_start, blender_exec, blender_export y blender_stop.",
+      "category": "3d",
+      "author": "OpenACM",
+      "url": "https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/marketplace/skills/blender-modeling.md",
+      "sha256": "62b142ea01e1866a407f11e1c957a52da00dc4ec11852bca1a3496fd768d8176",
+      "size": 14157
+    },
+    {
+      "name": "flutter-app-creator",
+      "description": "Crea apps móviles Flutter/Dart con un flujo profesional: preguntas, arquitectura, documentación, proyecto completo y Git, confirmando cada paso contigo.",
+      "category": "development",
+      "author": "OpenACM",
+      "url": "https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/marketplace/skills/flutter-app-creator.md",
+      "sha256": "4d8b024f40e6d7a355d7c829ee22a21bad4b4f4c0df03fdcd2bc613226526b5c",
+      "size": 7037
+    },
+    {
+      "name": "unity-mpc-skill",
+      "description": "Configura y gestiona servidores MCP (Model Context Protocol) para Unity: conexión como proveedor de servicio e integraciones correctas.",
+      "category": "development",
+      "author": "OpenACM",
+      "url": "https://raw.githubusercontent.com/Json55Hdz/OpenACM/main/marketplace/skills/unity-mpc-skill.md",
+      "sha256": "04d1991b184c23752910680842026307bcda1b54506d2290af1e7ec6a459d156",
+      "size": 7618
+    }
+  ]
+}

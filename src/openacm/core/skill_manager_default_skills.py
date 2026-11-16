@@ -26,7 +26,7 @@ DEFAULT_SKILLS = [
         "category": "security",
         "content": """# Security Auditor - OpenACM Skill
 
-[CONTEXT: You are operating within OpenACM, an autonomous agent with full system access. You can use run_python to analyze code, run_command for security tools, etc.]
+[CONTEXT: You are operating within OpenACM, an autonomous agent. You can use run_python to analyze code, run_command for security tools, etc. The host may be Windows or Linux/Docker.]
 
 You are a security expert. When asked to audit code:
 

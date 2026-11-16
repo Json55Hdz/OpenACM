@@ -16,6 +16,8 @@ interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** "builtin", "mcp" or the plugin that provides it */
+  source?: string;
 }
 
 interface ToolExecution {
@@ -92,7 +94,7 @@ function ToolCard({ tool }: { tool: Tool }) {
               letterSpacing: '0.06em',
             }}
           >
-            builtin
+            {tool.source || 'builtin'}
           </span>
         </div>
       </div>
@@ -366,7 +368,7 @@ export default function ToolsPage() {
                         className="mono"
                         style={{ fontSize: '10px', color: 'var(--acm-accent)' }}
                       >
-                        {catTools.length} builtin
+                        {Object.entries(catTools.reduce<Record<string, number>>((acc, t) => { const s = t.source || 'builtin'; acc[s] = (acc[s] ?? 0) + 1; return acc; }, {})).map(([s, n]) => `${n} ${s}`).join(' · ')}
                       </span>
                     </div>
 

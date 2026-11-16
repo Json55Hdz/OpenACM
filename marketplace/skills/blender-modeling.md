@@ -1,12 +1,8 @@
 ---
 name: "blender-modeling"
-description: >
-  Expert guide for AI-driven 3D modeling in Blender via the OpenACM bridge.
-  Use when the user asks to model, create, or sculpt anything in 3D, generate
-  Blender scenes, export GLB/OBJ/STL files, or set up lighting and materials.
-  Covers correct bpy patterns, safe object creation, workflows, and anti-patterns
-  that cause NoneType errors. Also applies to blender_run_script (background mode).
-category: "custom"
+description: "Guía para modelar en 3D con Blender mediante IA (patrones bpy seguros, flujos, errores comunes). Requiere un plugin o servidor MCP que ofrezca las herramientas blender_start, blender_exec, blender_export y blender_stop."
+category: "3d"
+author: "OpenACM"
 ---
 
 # Blender Modeling Skill

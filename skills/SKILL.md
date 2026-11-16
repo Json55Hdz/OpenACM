@@ -70,7 +70,7 @@ For skills with `requirements.txt`, `package.json`, or inline `pip install`:
 
 | Check | What It Does | Severity |
 |-------|-------------|----------|
-| **Known vulnerabilities** | Cross-reference with PyPI/npm advisory databases | 🔴 CRITICAL |
+| **Known vulnerabilities** | Not checked against CVE/advisory databases (unpinned versions are flagged instead) | ⚪ INFO |
 | **Typosquatting** | Flag packages similar to popular ones (e.g., `reqeusts`) | 🟡 HIGH |
 | **Unpinned versions** | Flag `requests>=2.0` vs `requests==2.31.0` | ⚪ INFO |
 | **Install commands in code** | `pip install` or `npm install` inside scripts | 🟡 HIGH |
@@ -160,7 +160,6 @@ done
 
 - Cannot detect logic bombs or time-delayed payloads with certainty
 - Obfuscation detection is pattern-based — a sufficiently creative attacker may bypass it
-- Network destination reputation checks require internet access
 - Does not execute code — static analysis only (safe but less complete than dynamic analysis)
 - Dependency vulnerability checks use local pattern matching, not live CVE databases
 

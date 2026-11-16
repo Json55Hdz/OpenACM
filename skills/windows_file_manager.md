@@ -2,6 +2,8 @@
 
 Skill especializada para gestión de archivos en Windows usando las herramientas nativas disponibles.
 
+**Solo aplica si OpenACM corre en Windows.** Si corre en Linux/Docker/NAS (sin escritorio), las rutas son tipo `/home/...` o `/app/...` y no existen `explorer.exe`, `notepad.exe` ni `%USERPROFILE%`: usar `write_file`, `read_file`, `list_directory` y comandos POSIX (`mkdir -p`, `echo $HOME`). Comprueba el sistema con `system_info` antes de asumir rutas.
+
 ## 🎯 Propósito
 
 Proporcionar comandos y patrones optimizados para:
@@ -50,18 +52,6 @@ echo %LOCALAPPDATA%   → C:\Users\{username}\AppData\Local
 3. **Permisos:** Algunas carpetas requieren permisos de administrador
 4. **Codificación:** `write_file` usa UTF-8 por defecto (soporta emojis y caracteres especiales)
 
-## 🧪 Test de Verificación
-
-Archivo de prueba creado exitosamente en:
-`C:\Users\jeiso\Downloads\test_acm_skill.txt`
-
-Pruebas realizadas:
-- ✅ Escritura de archivos con UTF-8
-- ✅ Lectura de archivos
-- ✅ Apertura de Explorador
-- ✅ Apertura con Notepad
-- ✅ Caracteres especiales (ñ, tildes, emojis)
-
 ## 💡 Patrones Comunes
 
 ### Crear archivo y abrirlo
@@ -81,5 +71,4 @@ mkdir "C:\\ruta\\nueva\\carpeta"
 ```
 
 ---
-*Skill creada y verificada el: {fecha_actual}*
-*Versión: 1.0*
+*Versión: 1.1*

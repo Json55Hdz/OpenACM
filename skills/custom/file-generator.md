@@ -16,6 +16,8 @@ Use `run_python` to create the file. Save it to a known location like:
 - `data/media/your_file.pdf`
 - `./output/report.xlsx`
 
+Use relative or forward-slash paths so it works on Windows and on Linux/Docker. Never call `send_file_to_chat` inside the Python code (it is not available in the kernel); it is a separate tool call.
+
 ### Step 2: ATTACH THE FILE (MANDATORY)
 **IMMEDIATELY after generating the file, you MUST call `send_file_to_chat` tool with the file path.**
 
@@ -43,6 +45,8 @@ Your PDF: `/api/media/upload_abc123.pdf`  ← Backticks prevent download!
 Your PDF: ```/api/media/upload_abc123.pdf``` ← Code blocks prevent download!
 Your PDF: [download](/api/media/upload_abc123.pdf) ← Markdown links don't work!
 ```
+
+Once delivered, the chat shows the file in an integrated viewer: images with zoom, audio and video players, and PDF / text / document preview, plus a download button.
 
 **IMPORTANT:** The system only detects plain text /api/media/ links. Any formatting (backticks, code blocks, markdown) will break the download button!
 

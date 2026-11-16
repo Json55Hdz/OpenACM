@@ -21,7 +21,7 @@ class MigrationsMixin:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 41
+    _SCHEMA_VERSION = 42
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1018,6 +1018,30 @@ class MigrationsMixin:
             except sqlite3.OperationalError:
                 pass
             log.info("Migration 41: added show_in_chat column to agents")
+
+        # ── Migration 42: where a skill comes from ────────────────────────────
+        # system = ships with OpenACM, user = made here, plugin:<name> = provided by a plugin,
+        # market = installed from the skill marketplace. Skills that left the product are dropped.
+        if current < 42:
+            try:
+                await self._db.executescript("""
+                    ALTER TABLE skills ADD COLUMN source TEXT NOT NULL DEFAULT 'user';
+                """)
+            except sqlite3.OperationalError:
+                pass
+            await self._db.execute("UPDATE skills SET source = 'system' WHERE is_builtin = 1")
+            await self._db.execute(
+                "UPDATE skills SET source = 'system' WHERE name IN "
+                "('agent-creator', 'file-generator', 'video-capture', 'windows_file_manager', 'skill-security-auditor')"
+            )
+            await self._db.execute(
+                "UPDATE skills SET source = 'plugin:home_assistant' WHERE name = 'home-assistant-control'"
+            )
+            await self._db.execute(
+                "DELETE FROM skills WHERE name IN ('blender-modeling', 'flutter-app-creator', 'unity-mpc-skill')"
+            )
+            await self._db.commit()
+            log.info("Migration 42: skills now record their source; retired skills removed")
 
         # Save new version
         await self._db.execute(

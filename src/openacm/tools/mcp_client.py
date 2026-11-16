@@ -263,6 +263,7 @@ class MCPManager:
                 handler=_handler,
                 risk_level="medium",
                 category="mcp",
+                source="mcp",
             )
             self.tool_registry.register(tool_def)
 
