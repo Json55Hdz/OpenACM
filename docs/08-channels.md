@@ -184,3 +184,14 @@ This pair is the conversation key — same pair = same conversation history.
 ## Adding Custom Channels
 
 Any messaging platform can be added by implementing `BaseChannel`. See [Extending OpenACM](./17-extending.md#adding-custom-channels) for details.
+
+## Message bursts (debouncing)
+
+When someone sends several short messages in a row, OpenACM waits a moment and answers them **once**, as a single message. This applies to the dashboard chat, Telegram, Discord, WhatsApp and every agent channel. The wait restarts with each new message and is capped, so a constant stream is still answered.
+
+| Environment variable | Default | Meaning |
+|----------------------|---------|---------|
+| `OPENACM_MESSAGE_DEBOUNCE` | `1.5` | Seconds of quiet before answering (`0` turns it off) |
+| `OPENACM_MESSAGE_DEBOUNCE_MAX` | `6` | Longest a burst can be held |
+
+Cancel words ("cancel", "stop") are never delayed, and messages sent while a reply is already being worked on keep being folded into that run.

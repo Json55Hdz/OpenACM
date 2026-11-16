@@ -107,7 +107,10 @@ class DiscordChannel(BaseChannel):
                         user_id=str(message.author.id),
                         channel_id=str(message.channel.id),
                         channel_type="discord",
+                        debounce=True,
                     )
+                    if not response:  # folded into an earlier message of the same burst
+                        return
 
                     # Extract ATTACHMENT: lines and build discord.File list
                     import io

@@ -99,6 +99,8 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         # Per-chat override of max_tool_iterations, set by the /steps command.
         self._step_limits: dict[tuple[str, str], int | None] = {}
         # Messages sent while a run is busy, read by the tool loop between steps.
+        from openacm.core.debounce import MessageDebouncer
+        self._debouncer = MessageDebouncer()
         self._channel_inbox: dict[str, list[tuple[str, str, str]]] = {}
         self._inbox_meta: dict[str, str] = {}
         self._MAX_TRACES = 20
@@ -276,6 +278,7 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         channel_type: str = "console",
         attachments: list[str] | None = None,
         is_transparent: bool = False,
+        debounce: bool = False,
     ) -> str:
         """
         Public entry point — wraps _run() in a dedicated cancellable task.
@@ -289,6 +292,15 @@ class Brain(BrainPromptMixin, BrainMultimodalMixin, BrainWorkflowMixin, BrainLoo
         _prev = self._channel_tasks.get(_task_key)
 
         is_cancel = content.strip().lower() in self._CANCEL_KEYWORDS
+
+        # A burst of messages is answered once. Cancel words act at once, and while a run is
+        # going the steering below already folds new messages into it.
+        if debounce and not is_cancel and not is_transparent and not (_prev and not _prev.done()):
+            merged = await self._debouncer.collect((_task_key, user_id), content, attachments)
+            if merged is None:
+                return ""  # folded into the first message of the burst, which gets the answer
+            content, attachments = merged
+            _prev = self._channel_tasks.get(_task_key)
 
         if _prev and not _prev.done():
             if is_cancel:

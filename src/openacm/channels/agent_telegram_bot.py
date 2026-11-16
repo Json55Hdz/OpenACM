@@ -65,6 +65,7 @@ class AgentBrainAdapter:
             channel_id=channel_id,
             channel_type=self.channel_type,  # ej: "telegram_a5" — único por agente
             attachments=attachments,
+            debounce=True,
         )
 
     def memory_user_id(self, user_id: str) -> str:

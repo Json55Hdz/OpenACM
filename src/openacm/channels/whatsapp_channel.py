@@ -137,7 +137,10 @@ class WhatsAppChannel(BaseChannel):
                 user_id=sender,
                 channel_id=chat_id,
                 channel_type="whatsapp",
+                debounce=True,
             )
+            if not response:  # folded into an earlier message of the same burst
+                return
 
             # Extract ATTACHMENT: lines and send files via bridge
             import base64

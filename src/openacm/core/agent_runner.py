@@ -129,6 +129,8 @@ class AgentRunner:
         # while the first is still being worked on waits for it (otherwise two loops write to
         # the same history at once and the customer gets two interleaved answers).
         self._conversation_locks: dict[tuple, asyncio.Lock] = {}
+        from openacm.core.debounce import MessageDebouncer
+        self._debouncer = MessageDebouncer()
         from openacm.core.inactivity_tracker import AgentInactivityTracker
         self.inactivity_tracker = AgentInactivityTracker(
             event_bus=self.event_bus,
@@ -195,10 +197,21 @@ class AgentRunner:
         channel_type: str = "agent",
         extra_system_context: str | None = None,
         attachments: list | None = None,
+        debounce: bool = False,
     ) -> str:
-        """Process a message through the agent, one message at a time per conversation."""
+        """Process a message through the agent, one message at a time per conversation.
+
+        With ``debounce`` a burst of messages is answered once (the first call returns the reply,
+        the others return "" because their text was folded into it). Only chat channels use it;
+        request/response callers (webhook, test panel) need their own answer and leave it off.
+        """
         if channel_id is None:
             channel_id = f"agent_{agent['id']}"
+        if debounce:
+            merged = await self._debouncer.collect((agent.get("id"), channel_id, user_id), message, attachments)
+            if merged is None:
+                return ""
+            message, attachments = merged
         lock_key = (agent.get("id"), channel_id, user_id)
         lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
         try:

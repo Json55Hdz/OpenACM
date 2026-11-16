@@ -302,5 +302,7 @@ class WhatsAppCloudChannel(BaseChannel):
             user_id=sender,
             channel_id=sender,
             channel_type="whatsapp",
+            debounce=True,
         )
-        await self._deliver(sender, response)
+        if response:  # "" = folded into an earlier message of the same burst
+            await self._deliver(sender, response)

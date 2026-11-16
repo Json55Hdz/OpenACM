@@ -613,6 +613,7 @@ class TelegramChannel(BaseChannel):
                     channel_id=channel_id,
                     channel_type="telegram",
                     attachments=attachments if attachments else None,
+                    debounce=True,
                 )
             except Exception as e:
                 log.error("Telegram brain processing error", error=str(e))

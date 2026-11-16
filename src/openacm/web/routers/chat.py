@@ -62,7 +62,10 @@ async def _handle_chat_turn(
                 channel_id=target_channel,
                 channel_type=target_type,
                 attachments=attachments,
+                debounce=True,
             )
+            if not response:
+                return  # folded into the first message of a burst; that turn sends the answer
 
             # Compute usage delta for this turn
             turn_usage: dict = {}

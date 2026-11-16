@@ -48,6 +48,7 @@ class AgentWhatsAppWebChannel(WhatsAppChannel):
                 user_id=scoped_uid,
                 channel_id=chat_id,
                 channel_type=f"whatsapp_web_a{self.agent['id']}",
+                debounce=True,
             )
             if response:
                 await self.send_message(chat_id, response)

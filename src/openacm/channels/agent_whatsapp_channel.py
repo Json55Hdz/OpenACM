@@ -119,5 +119,7 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             user_id=scoped_uid,
             channel_id=sender,
             channel_type=f"whatsapp_a{self.agent['id']}",
+            debounce=True,
         )
-        await self._deliver(sender, response)
+        if response:  # "" = this message was folded into an earlier one of the same burst
+            await self._deliver(sender, response)
