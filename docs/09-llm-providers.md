@@ -257,3 +257,15 @@ View in the dashboard: **Dashboard** (tokens over time, totals) or `/stats` in c
 | Reasoning | DeepSeek R1 or OpenAI o-series |
 
 See also [LLM Pricing Reference](./LLM_PRICING_REFERENCE.md).
+
+## Models per task
+
+Besides the main model you can use a different one for each kind of work (Configuration -> *Models per task*):
+
+| Role | Used for |
+|------|----------|
+| `orchestrator` | the first reply to each message: understanding, planning, deciding |
+| `tools` | the steps after a tool has run |
+| `background` | internal housekeeping: compaction, learning, summaries |
+
+Priority: **chat** (`/route <role> <provider/model>` inside the chat, `/route clear` to undo) -> **workspace** (conversations pinned with `/workspace`) -> **global**. A role nobody sets uses the main model, so nothing changes until you set one. Agents and swarms keep their own model settings. API: `GET/PUT /api/llm/routes`.

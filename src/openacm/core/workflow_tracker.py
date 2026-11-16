@@ -312,6 +312,7 @@ class WorkflowTracker:
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0,
                     max_tokens=50,
+                    role="background",
                 ),
                 timeout=5.0,
             )

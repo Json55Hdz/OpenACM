@@ -6,6 +6,7 @@ Handles model switching, streaming, retries, and token tracking.
 """
 
 import asyncio
+from contextvars import ContextVar
 import os
 import time
 from dataclasses import dataclass
@@ -41,8 +42,32 @@ log = structlog.get_logger()
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
 
+# Per-call provider/model chosen by a model route (see core/model_routes.py). A ContextVar, so
+# two conversations running at the same time never see each other's choice; everything that
+# reads the "current" provider/model (api base, params, CLI check, pricing) follows it.
+_route_override: ContextVar[tuple[str, str | None] | None] = ContextVar("llm_route_override", default=None)
+
+
 class LLMRouter(CustomProviderMixin):
     """Unified LLM interface using LiteLLM."""
+
+    @property
+    def _current_provider(self) -> str:
+        override = _route_override.get()
+        return override[0] if override else self._base_provider
+
+    @_current_provider.setter
+    def _current_provider(self, value: str) -> None:
+        self._base_provider = value
+
+    @property
+    def _current_model(self) -> str | None:
+        override = _route_override.get()
+        return override[1] if override else self._base_model
+
+    @_current_model.setter
+    def _current_model(self, value: str | None) -> None:
+        self._base_model = value
 
     def __init__(self, config: LLMConfig, event_bus: EventBus):
         self.config = config
@@ -50,7 +75,9 @@ class LLMRouter(CustomProviderMixin):
         self._current_provider = config.default_provider
         from openacm.core.model_capabilities import ModelCapabilities
         self.capabilities = ModelCapabilities(self)
-        self._current_model: str | None = None
+        self._current_model = None
+        from openacm.core.model_routes import ModelRoutes
+        self.routes = ModelRoutes(self)
         self._total_tokens = 0
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
@@ -214,6 +241,7 @@ class LLMRouter(CustomProviderMixin):
         """Load persisted model/provider from the database on startup."""
         self._database = database
         await self.capabilities.load(database)
+        await self.routes.load(database)
         try:
             model = await database.get_setting("llm.current_model")
             provider = await database.get_setting("llm.current_provider")
@@ -359,7 +387,22 @@ class LLMRouter(CustomProviderMixin):
             return 1.0
         return temperature
 
-    async def chat(
+    async def chat(self, *args: Any, role: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        """Chat completion. ``role`` ("orchestrator" | "tools" | "background") applies the
+        owner's model routes for that kind of work; without it the main model is used."""
+        token = None
+        if role and not kwargs.get("model_override"):
+            route = self.routes.resolve(role)
+            if route:
+                token = _route_override.set(route)
+                log.debug("Model route applied", role=role, provider=route[0], model=route[1])
+        try:
+            return await self._chat(*args, **kwargs)
+        finally:
+            if token is not None:
+                _route_override.reset(token)
+
+    async def _chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,

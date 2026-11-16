@@ -12,6 +12,7 @@ import { getProviderById } from '@/lib/providers';
 import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Plus, Pencil, Server, X, Wand2, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { ModelRoutesSection } from '@/components/config/model-routes';
 import { ConfigSection, Divider, ToggleRow, StatTile, InfoRow, NavItem, NavGroupLabel } from '@/components/config/primitives';
 import { ProviderCard, AddProviderCard } from '@/components/config/provider-cards';
 import { RagThresholdControl, AssistantSection, VoiceConfigSection } from '@/components/config/sections';
@@ -1217,6 +1218,9 @@ export default function ConfigPage() {
                 </div>
               )}
             </ConfigSection>
+
+            {/* ── Models per task ── */}
+            <ModelRoutesSection />
 
             {/* ── Memory & RAG ── */}
             <ConfigSection

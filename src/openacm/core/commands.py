@@ -46,6 +46,8 @@ COMMANDS_HELP = (
     "- `/help` — Show this help\n"
     "- `/model` — Show current model\n"
     "- `/model <name>` — Switch to a different model (persisted)\n"
+    "- `/route` - Show which model each kind of work uses in this chat\n"
+    "- `/route <orchestrator|tools|background> <provider/model>` - Use another model for that work in this chat (`clear` to undo)\n"
     "- `/stats` — Show usage statistics\n"
     "- `/export` — Export current conversation as text"
 )
@@ -85,6 +87,8 @@ class CommandProcessor:
                 return await self._cmd_steps(args.strip(), user_id, channel_id)
             case "/workspace":
                 return await self._cmd_workspace(args.strip(), user_id, channel_id)
+            case "/route":
+                return await self._cmd_route(args.strip(), user_id, channel_id)
             case _:
                 return CommandResult(handled=False)
 
@@ -250,6 +254,48 @@ class CommandProcessor:
             text=header + body,
             data={"compact": True},
         )
+
+    async def _cmd_route(self, args: str, user_id: str, channel_id: str) -> CommandResult:
+        """Show or change which model handles each kind of work in THIS conversation."""
+        from openacm.core.model_routes import ROLES, RouteError, chat_key, route_scope
+
+        router = self.brain.llm_router
+        key = chat_key(channel_id, user_id)
+        parts = args.split()
+
+        def describe() -> str:
+            token = route_scope.set((key, self.brain.memory.get_conversation_workspace(user_id, channel_id) or ""))
+            try:
+                lines = []
+                for role, meta in ROLES.items():
+                    hit = router.routes.resolve(role)
+                    use = f"{hit[0]}/{hit[1] or 'default'}" if hit else f"main model ({router._current_provider}/{router.current_model})"
+                    lines.append(f"- **{role}** ({meta['label']}): `{use}`")
+                return "\n".join(lines)
+            finally:
+                route_scope.reset(token)
+
+        try:
+            if not parts:
+                return CommandResult(
+                    handled=True,
+                    text="Models in this chat:\n" + describe()
+                    + "\n\nChange: `/route <orchestrator|tools|background> <provider/model>` - undo: `/route <role> clear` or `/route clear`",
+                )
+            if parts[0].lower() == "clear":
+                await router.routes.clear("chat", key)
+                return CommandResult(handled=True, text="This chat now follows the workspace/global settings.\n" + describe())
+            role = parts[0].lower()
+            if role not in ROLES or len(parts) != 2:
+                return CommandResult(handled=True, text="Usage: `/route <orchestrator|tools|background> <provider/model>` or `/route <role> clear`")
+            if parts[1].lower() == "clear":
+                await router.routes.set_routes("chat", key, {role: None})
+            else:
+                provider, _, model = parts[1].partition("/")
+                await router.routes.set_routes("chat", key, {role: {"provider": provider, "model": model}})
+            return CommandResult(handled=True, text="Updated.\n" + describe())
+        except RouteError as exc:
+            return CommandResult(handled=True, text=f"Warning: {exc}")
 
     async def _cmd_workspace(self, path: str, user_id: str, channel_id: str) -> CommandResult:
         """Pin, clear, or show the workspace for this conversation."""

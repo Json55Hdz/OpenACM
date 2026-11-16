@@ -484,3 +484,25 @@ This keeps the backend fully plug-and-play while the frontend requires a project
 | Enable/disable | `/plugins` toggle → `plugin_state` table | ⚠️ Requires restart |
 | PyPI install | `entry-points."openacm.plugins"` | ✅ Supported |
 | Startup/shutdown | `on_start()` / `on_stop()` | ✅ Plug-and-play |
+
+## Uploading your own plugin (.zip)
+
+On the **Plugins** page, *Subir mi propio plugin* accepts a `.zip` you wrote. Layout:
+
+```
+mi_plugin.zip
+  openacm_plugin.json     {"name": "mi_plugin", "version": "1.0.0", "description": "...",
+                           "author": "...", "entry": "mi_plugin:PLUGIN"}
+  mi_plugin/__init__.py   defines PLUGIN = MiPlugin()   (an instance of a Plugin subclass)
+```
+
+How it stays safe (a plugin runs with all of OpenACM's access, so nothing is trusted):
+
+1. **Upload only quarantines.** The file is validated and analysed; nothing is extracted, imported or executed. pip and `setup.py` are never run, so installing cannot run code.
+2. **Strict archive rules:** max 10 MB / 500 files / 5 MB per file; only text and Python (`.py .json .md .txt .yaml .toml .html .css .js` and common images); no `.exe/.dll/.so/.sh`, no symlinks, no hidden files, no `..` or absolute paths, no zip bombs; the package name must not collide with an existing Python module.
+3. **A report is shown:** manifest, file list and a static scan flagging risky calls (subprocess, eval/exec, ctypes, sockets, environment variables, ...). It is a reading aid, not a sandbox.
+4. **You approve by typing the plugin's name.** The stored file must match the SHA-256 shown.
+5. **Tamper-proof at start:** a SHA-256 of the whole tree is recorded on approval; at every start a plugin whose files changed is **not loaded**.
+6. Restart OpenACM to load it, then enable it in the list. Uploaded plugins live in `data/plugins/uploaded/` (Docker: the data volume).
+
+API (dashboard token required): `POST /api/plugins/upload` (raw zip body), `POST /api/plugins/upload/{id}/install` (`{"name", "sha256"}`), `DELETE /api/plugins/upload/{id}`, `GET /api/plugins/uploaded`, `DELETE /api/plugins/uploaded/{name}`.

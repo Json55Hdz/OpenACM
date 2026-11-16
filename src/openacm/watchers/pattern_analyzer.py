@@ -95,6 +95,7 @@ class PatternAnalyzer:
                 tools=None,
                 temperature=0.4,
                 max_tokens=120,
+                role="background",
             )
             raw = result.get("content", "").strip()
             # Strip possible markdown code fences

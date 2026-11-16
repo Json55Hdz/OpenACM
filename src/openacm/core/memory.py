@@ -517,6 +517,7 @@ class MemoryManager:
                 messages=summary_messages,
                 temperature=0.2,
                 max_tokens=2000,
+                role="background",
             )
 
             summary_text = result.get("content", "").strip()

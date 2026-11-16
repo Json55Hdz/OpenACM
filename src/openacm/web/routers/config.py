@@ -97,6 +97,41 @@ def register_routes(app: FastAPI) -> None:
             "provider": _state.brain.llm_router._current_provider,
         }
 
+    @app.get("/api/llm/routes")
+    async def get_model_routes():
+        """Which model handles each kind of work (global, per workspace, per chat)."""
+        if not _state.brain or not _state.config:
+            return {"roles": [], "global": {}, "workspaces": {}, "chats": {}, "providers": []}
+        router = _state.brain.llm_router
+        status = _get_provider_status()
+        providers = [
+            {"id": pid, "default_model": cfg.get("default_model", ""), "configured": bool(status.get(pid, True))}
+            for pid, cfg in _state.config.llm.providers.items()
+        ]
+        return {
+            **router.routes.snapshot(),
+            "providers": providers,
+            "main": {"provider": router._current_provider, "model": router.current_model},
+        }
+
+    @app.put("/api/llm/routes")
+    async def set_model_routes(request: Request):
+        """Set or clear routes. Body: {scope: global|workspace|chat, id, routes: {role: {provider, model} | null}}."""
+        from openacm.core.model_routes import RouteError
+
+        if not _state.brain:
+            raise HTTPException(status_code=503, detail="Brain not available")
+        data = await request.json()
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid body")
+        try:
+            saved = await _state.brain.llm_router.routes.set_routes(
+                str(data.get("scope", "")), str(data.get("id", "")), data.get("routes") or {}
+            )
+        except RouteError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"ok": True, "routes": saved}
+
     @app.get("/api/config/model-params")
     async def get_model_params(provider: str = "", model: str = ""):
         """Get stored params for a provider+model (or current if omitted)."""
