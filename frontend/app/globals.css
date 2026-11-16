@@ -234,3 +234,51 @@ html, body {
   background: oklch(0.28 0.008 255 / 0.4);
   color: var(--acm-fg);
 }
+
+/* ── Responsive (phones and tablets) ───────────────────────────────────────── */
+
+/* Mobile browsers: 100vh includes the hidden address bar, so use the dynamic viewport */
+.h-screen { height: 100dvh; }
+.min-h-screen { min-height: 100dvh; }
+
+/* Nothing may push the page sideways */
+html, body { max-width: 100%; overflow-x: hidden; }
+main { min-width: 0; }
+img, video, canvas, svg { max-width: 100%; }
+pre, code { overflow-wrap: anywhere; }
+pre { max-width: 100%; overflow-x: auto; }
+
+/* Tablets and below: the fixed menu button sits over the page header, so make room */
+@media (max-width: 1023px) {
+  main { padding-top: 56px; }
+  /* The chat has its own full-height shell: the menu button floats over it instead */
+  main:has(> .h-screen) { padding-top: 0; }
+}
+
+/* Phones */
+@media (max-width: 767px) {
+  /* Two- and three-column forms/cards become one column */
+  [style*="grid-template-columns: 1fr 1fr"],
+  [style*="grid-template-columns: repeat(3, 1fr)"],
+  [style*="grid-template-columns: repeat(2, 1fr)"],
+  [style*="grid-template-columns: repeat(4, 1fr)"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* Card grids with a wide minimum would overflow a 360px screen */
+  [style*="minmax(2"], [style*="minmax(3"] {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)) !important;
+  }
+  /* Wide tables scroll inside themselves instead of widening the page */
+  table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* Page padding is tight on small screens */
+  .p-6 { padding: 16px; }
+  .p-8 { padding: 16px; }
+  /* 16px inputs stop iOS from zooming the page on focus */
+  input, select, textarea { font-size: 16px !important; }
+  /* Comfortable tap targets */
+  .btn-primary, .btn-secondary { min-height: 40px; }
+  /* Dialogs never exceed the screen */
+  [role="dialog"] { max-width: 100vw; }
+  /* Long unbroken text (paths, URLs, ids) wraps */
+  .mono { overflow-wrap: anywhere; }
+}
