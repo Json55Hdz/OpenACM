@@ -421,6 +421,15 @@ export function useWebSocket() {
         if (data.state) {
           window.dispatchEvent(new CustomEvent('openacm:daemon_state', { detail: { state: data.state } }));
         }
+      } else if (data.type === 'media.note') {
+        const forKey = data.channel_id && data.user_id
+          ? `${data.channel_id}:${data.user_id}`
+          : undefined;
+        storeRef.current.addMessage({
+          content: '',
+          role: 'system',
+          mediaNote: String((data as { text?: string }).text ?? ''),
+        }, forKey);
       } else if (data.type === 'memory.compacted') {
         // Debounce: backend sometimes fires this event multiple times for the same compaction
         const now = Date.now();

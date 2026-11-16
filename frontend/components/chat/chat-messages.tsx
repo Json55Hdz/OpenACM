@@ -194,6 +194,17 @@ export function ReasoningBubble({ content, workerName, streaming }: { content: s
   );
 }
 
+export function MediaNoteBubble({ text }: { text: string }) {
+  return (
+    <div className="flex items-center px-2">
+      <div className="flex items-center gap-[8px] px-[12px] py-[6px] border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-[6px] text-[11px]">
+        <Info size={11} className="text-[var(--acm-accent)] flex-shrink-0" />
+        <span className="mono text-[var(--acm-fg-3)]">{text}</span>
+      </div>
+    </div>
+  );
+}
+
 export function CompactionNoteBubble({
   summarizedMessages,
 }: {

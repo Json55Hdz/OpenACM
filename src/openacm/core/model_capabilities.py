@@ -213,29 +213,6 @@ class ModelCapabilities:
                 best = (t, p, m)
         return (best[1], best[2]) if best else None
 
-    def resolve(self, capability: str) -> dict[str, Any]:
-        """Who would handle `capability` right now, without probing or calling anything:
-        {"mode": "native"|"delegated"|"none"|"unknown", "provider", "model"}."""
-        cp, cm = self._current()
-        known = self.supports(capability)
-        if known:
-            return {"mode": "native", "provider": cp, "model": cm}
-        providers = getattr(self.router.config, "providers", {}) or {}
-        keep_local = self.is_local(cp)
-        best: tuple[float, str, str] | None = None
-        for k, caps in self._caps.items():
-            if caps.get(capability) is not True or "::" not in k:
-                continue
-            p, m = k.split("::", 1)
-            if p not in providers or (keep_local and not self.is_local(p)):
-                continue
-            t = float(caps.get("tested_at") or 0)
-            if best is None or t > best[0]:
-                best = (t, p, m)
-        if best:
-            return {"mode": "delegated", "provider": best[1], "model": best[2]}
-        return {"mode": "unknown" if known is None else "none", "provider": None, "model": None}
-
     # ── raw completion against any configured provider ───────────────────────
 
     def _litellm_kwargs(self, provider: str, model: str) -> dict[str, Any]:

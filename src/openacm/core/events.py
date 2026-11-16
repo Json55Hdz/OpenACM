@@ -33,6 +33,7 @@ EVENT_SKILL_ACTIVE = "skill.active"  # One or more skills were activated for thi
 EVENT_WORKFLOW_SUGGESTION = "workflow.suggestion"
 EVENT_MEMORY_RECALL = "memory.recall"  # RAG long-term memory is being queried
 EVENT_MEMORY_COMPACTED = "memory.compacted"  # Conversation was auto-compacted into a summary
+EVENT_MEDIA_NOTE = "media.note"  # An attachment was handled by another model than the chat one
 
 
 class EventBus:

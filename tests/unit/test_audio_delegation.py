@@ -33,3 +33,27 @@ async def test_without_a_capable_model_it_falls_back(monkeypatch):
     caps = _Caps(None)
     await _Host(caps)._transcribe_audio(b"not audio", ".wav")
     assert caps.sent is None  # nothing was sent to a model; Whisper/MarkItDown fallbacks took over
+
+
+async def test_a_note_says_which_model_transcribed_and_why():
+    class Caps(_Caps):
+        def supports(self, capability):
+            return False  # the chat model cannot take audio
+
+    caps = Caps(("gemini", "gemini-4-hydrogen"))
+    host = _Host(caps)
+    host.llm_router.current_model = "claude-haiku-5-5"
+    notes: list[str] = []
+    assert await host._transcribe_audio(b"RIFFxxxx", ".wav", notes) == "hola, esto es una prueba"
+    assert notes == ["Audio transcribed by gemini/gemini-4-hydrogen: the current model (claude-haiku-5-5) can't take audio."]
+
+
+async def test_no_note_when_the_chat_model_takes_audio_itself():
+    class Caps(_Caps):
+        def supports(self, capability):
+            return True
+
+    host = _Host(Caps(("p", "m")))
+    notes: list[str] = []
+    await host._transcribe_audio(b"RIFFxxxx", ".wav", notes)
+    assert notes == []

@@ -160,13 +160,3 @@ async def test_old_audio_yes_is_forgotten_on_load():
     caps = ModelCapabilities(_router())
     await caps.load(DB())
     assert caps._caps["p::m"]["audio"] is None and caps._caps["p::m"]["vision"] is True
-
-
-def test_resolve_says_who_handles_each_capability():
-    caps = ModelCapabilities(_router())
-    assert caps.resolve("audio")["mode"] == "unknown"                        # nothing measured yet
-    caps._caps["opencode_go::m1"] = {"vision": True, "audio": False}
-    assert caps.resolve("vision") == {"mode": "native", "provider": "opencode_go", "model": "m1"}
-    assert caps.resolve("audio")["mode"] == "none"                           # nobody can
-    caps._caps["opencode_go::other"] = {"vision": True, "audio": True, "tested_at": 5}
-    assert caps.resolve("audio") == {"mode": "delegated", "provider": "opencode_go", "model": "other"}

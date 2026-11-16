@@ -10,6 +10,7 @@ import structlog
 
 from openacm.core.acm_context import current_channel_id
 from openacm.core.events import (
+    EVENT_MEDIA_NOTE,
     EVENT_MESSAGE_SENT,
     EVENT_THINKING,
     EVENT_TOOL_CALLED,
@@ -463,7 +464,12 @@ class BrainLoopMixin:
         # Build structured content if there are attachments
         final_content = content
         if attachments:
-            final_content = await self._resolve_attachment_content(content, attachments)
+            _notes: list[str] = []
+            final_content = await self._resolve_attachment_content(content, attachments, _notes)
+            for _n in dict.fromkeys(_notes):
+                await self.event_bus.emit(EVENT_MEDIA_NOTE, {
+                    "user_id": user_id, "channel_id": channel_id, "text": _n,
+                })
 
         # Add user message
         if not is_transparent:

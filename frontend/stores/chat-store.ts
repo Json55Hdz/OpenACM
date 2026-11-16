@@ -42,6 +42,8 @@ interface Message {
     tool: string;
     command: string;
   };
+  // A small note under a message: an attachment was handled by another model
+  mediaNote?: string;
   // Conversation compaction note
   compactionNote?: {
     summary: string;

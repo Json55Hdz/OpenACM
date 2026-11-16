@@ -8,7 +8,10 @@ import structlog
 
 from openacm.constants import TRUNCATE_PDF_CHARS, TRUNCATE_FILE_CONTEXT_CHARS
 from openacm.utils.text import truncate
-from openacm.core.messages import MSG_IMAGE_DESCRIBED, PROMPT_DESCRIBE_IMAGE, PROMPT_TRANSCRIBE_AUDIO
+from openacm.core.messages import (
+    MSG_IMAGE_DESCRIBED, PROMPT_DESCRIBE_IMAGE, PROMPT_TRANSCRIBE_AUDIO,
+    NOTE_AUDIO_DELEGATED, NOTE_AUDIO_WHISPER, NOTE_AUDIO_NONE, NOTE_IMAGE_DELEGATED, NOTE_IMAGE_NONE,
+)
 
 log = structlog.get_logger()
 
@@ -85,7 +88,10 @@ class BrainMultimodalMixin:
             log.warning("structured_extract failed", error=str(e))
             return None
 
-    async def _transcribe_audio(self, raw_bytes: bytes, ext: str) -> str | None:
+    def _current_label(self) -> str:
+        return str(getattr(self.llm_router, "current_model", "?"))
+
+    async def _transcribe_audio(self, raw_bytes: bytes, ext: str, notes: list[str] | None = None) -> str | None:
         """
         Transcribe audio bytes to text.
         Priority: OpenAI Whisper API → faster-whisper local → None.
@@ -111,6 +117,9 @@ class BrainMultimodalMixin:
                         ],
                     }], max_tokens=2000, timeout=90)
                     if text and text.strip().lower() != "[no speech]":
+                        if notes is not None and caps.supports("audio") is not True:
+                            notes.append(NOTE_AUDIO_DELEGATED.format(
+                                target=f"{target[0]}/{target[1]}", current=self._current_label()))
                         return text.strip()
             except Exception as e:  # noqa: BLE001 - fall through to Whisper
                 log.warning("Audio transcription by a capable model failed", error=str(e))
@@ -194,6 +203,7 @@ class BrainMultimodalMixin:
         self,
         content: str,
         attachments: list[str],
+        notes: list[str] | None = None,
     ) -> str | list:
         """Convert raw attachment IDs into structured LLM content (images, audio, PDFs, etc.)."""
         import base64
@@ -248,6 +258,9 @@ class BrainMultimodalMixin:
                         except Exception as _e:
                             log.warning("Vision delegation failed", error=str(_e))
                     if _delegated:
+                        if notes is not None:
+                            notes.append(NOTE_IMAGE_DELEGATED.format(
+                                target=f"{_target[0]}/{_target[1]}", current=self._current_label()))
                         structured_content.append({
                             "type": "text",
                             "text": MSG_IMAGE_DESCRIBED.format(
@@ -262,6 +275,8 @@ class BrainMultimodalMixin:
                             "_file_id": att_id,
                         })
                     else:
+                        if notes is not None:
+                            notes.append(NOTE_IMAGE_NONE.format(current=self._current_label()))
                         try:
                             from markitdown import MarkItDown
                             md_text = (MarkItDown().convert(str(file_path)).text_content or "").strip()
@@ -279,10 +294,18 @@ class BrainMultimodalMixin:
                     text = self._extract_pdf_text(raw_bytes)
                     structured_content.append({"type": "text", "text": f"[PDF — {file_path.name}]:\n{text}"})
                 elif ext in (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac"):
-                    transcript = await self._transcribe_audio(raw_bytes, ext)
+                    _before = len(notes) if notes is not None else 0
+                    transcript = await self._transcribe_audio(raw_bytes, ext, notes)
                     if transcript:
+                        if notes is not None and len(notes) == _before:
+                            # nobody delegated: the chat model took it natively (no note) or Whisper did
+                            _c = getattr(self.llm_router, "capabilities", None)
+                            if not (_c and _c.supports("audio")):
+                                notes.append(NOTE_AUDIO_WHISPER.format(current=self._current_label()))
                         structured_content.append({"type": "text", "text": f"[Audio transcript]:\n{transcript}"})
                     else:
+                        if notes is not None:
+                            notes.append(NOTE_AUDIO_NONE.format(current=self._current_label()))
                         structured_content.append({
                             "type": "text",
                             "text": f"[Audio file attached: {file_path.name} — transcription unavailable. No Whisper API key or faster-whisper installed.]",

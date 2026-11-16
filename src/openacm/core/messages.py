@@ -166,6 +166,17 @@ PROMPT_DESCRIBE_IMAGE = (
     "Describe this image for someone who cannot see it: what it shows, every piece of visible "
     "text exactly as written, and any numbers, labels or layout that matter. Be factual and complete."
 )
+NOTE_AUDIO_DELEGATED = "Audio transcribed by {target}: the current model ({current}) can't take audio."
+NOTE_AUDIO_WHISPER = "Audio transcribed with Whisper: the current model ({current}) can't take audio."
+NOTE_AUDIO_NONE = (
+    "This audio could not be transcribed: the current model ({current}) can't take audio and no other "
+    "configured model can. Connect one that does in Config → Models."
+)
+NOTE_IMAGE_DELEGATED = "Image described by {target}: the current model ({current}) can't see images."
+NOTE_IMAGE_NONE = (
+    "This image was not seen: the current model ({current}) can't see images and no other configured "
+    "model can. Connect one that does in Config → Models."
+)
 PROMPT_TRANSCRIBE_AUDIO = (
     "Transcribe this audio exactly as spoken, in its original language. Output only the transcription, "
     "with no comments. If there is no intelligible speech, output: [no speech]"

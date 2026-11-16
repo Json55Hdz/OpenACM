@@ -153,15 +153,6 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"ok": True, "fallbacks": saved}
 
-    @app.get("/api/llm/capabilities")
-    async def llm_capabilities():
-        """For images and audio: does the chat model do it, is another verified model doing it
-        for it, or does nobody. Reads what was already measured; calls no model."""
-        if not _state.brain:
-            return {}
-        caps = _state.brain.llm_router.capabilities
-        return {c: caps.resolve(c) for c in ("vision", "audio")}
-
     @app.get("/api/llm/monitor")
     async def llm_monitor(days: int = 7):
         """Cost, speed and errors per model, recent errors and which providers are cooling down."""

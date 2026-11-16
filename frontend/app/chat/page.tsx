@@ -1,7 +1,6 @@
 'use client';
 
 import { blobToWav } from '@/lib/audio-wav';
-import { CapabilityChips } from '@/components/chat/capability-chip';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/app-layout';
@@ -15,7 +14,7 @@ import { useTerminalStore } from '@/stores/terminal-store';
 import { useAuthStore } from '@/stores/auth-store';
 import { ChannelIcon, RouterLearningIndicator, MemoryRecallIndicator, SkillActiveIndicator, ContextBadge, TypingIndicator } from '@/components/chat/indicators';
 import { ValidationBubble, ToolConfirmationBubble, ToolConfirmationModal } from '@/components/chat/confirmations';
-import { ReasoningBubble, CompactionNoteBubble, MessageBubble, DateSeparator, sameDay } from '@/components/chat/chat-messages';
+import { ReasoningBubble, CompactionNoteBubble, MediaNoteBubble, MessageBubble, DateSeparator, sameDay } from '@/components/chat/chat-messages';
 import { cn } from '@/components/chat/shared';
 
 const CHAT_FOLDERS_STORAGE_KEY = 'openacm_chat_open_folders';
@@ -875,6 +874,9 @@ export default function ChatPage() {
                       />
                     );
                   }
+                  if (msg.mediaNote) {
+                    return <MediaNoteBubble key={msg.id} text={msg.mediaNote} />;
+                  }
                   if (msg.compactionNote) {
                     return (
                       <CompactionNoteBubble
@@ -997,8 +999,6 @@ export default function ChatPage() {
                 ))}
               </div>
             )}
-
-            <CapabilityChips model={String(modelData?.model ?? '')} />
 
             {/* Input card */}
             <div className="border border-[var(--acm-border)] rounded-[8px] bg-[var(--acm-card)] px-[12px] pt-[8px] pb-[10px]">
