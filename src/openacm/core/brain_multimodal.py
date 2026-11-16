@@ -8,7 +8,7 @@ import structlog
 
 from openacm.constants import TRUNCATE_PDF_CHARS, TRUNCATE_FILE_CONTEXT_CHARS
 from openacm.utils.text import truncate
-from openacm.core.messages import MSG_IMAGE_DESCRIBED, PROMPT_DESCRIBE_IMAGE
+from openacm.core.messages import MSG_IMAGE_DESCRIBED, PROMPT_DESCRIBE_IMAGE, PROMPT_TRANSCRIBE_AUDIO
 
 log = structlog.get_logger()
 
@@ -90,7 +90,30 @@ class BrainMultimodalMixin:
         Transcribe audio bytes to text.
         Priority: OpenAI Whisper API → faster-whisper local → None.
         """
+        import base64
         import os
+
+        # ── 0. A model that really takes audio (measured, see core/model_capabilities.py) ──
+        # The chat model first; otherwise the most recently verified one, exactly like images.
+        # No Whisper key or local install needed.
+        caps = getattr(self.llm_router, "capabilities", None)
+        if caps is not None:
+            fmt = ext.lstrip(".").lower()
+            try:
+                target = await caps.pick("audio")
+                if target:
+                    text = await caps.complete(target[0], target[1], [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": PROMPT_TRANSCRIBE_AUDIO},
+                            {"type": "input_audio", "input_audio": {
+                                "data": base64.b64encode(raw_bytes).decode("utf-8"), "format": fmt}},
+                        ],
+                    }], max_tokens=2000, timeout=90)
+                    if text and text.strip().lower() != "[no speech]":
+                        return text.strip()
+            except Exception as e:  # noqa: BLE001 - fall through to Whisper
+                log.warning("Audio transcription by a capable model failed", error=str(e))
 
         # ── 1. OpenAI Whisper API ──────────────────────────────────────────
         api_key = os.environ.get("OPENAI_API_KEY", "")

@@ -32,6 +32,8 @@ import structlog
 log = structlog.get_logger()
 
 CAPABILITIES = ("vision", "audio")
+PROBE_VERSION = 2  # 2: the audio probe counts beeps instead of asking "is there a sound?"
+PROBE_BEEPS = 4
 SETTINGS_KEY = "llm.capabilities"
 PROBE_TIMEOUT_S = 45
 _NATIVE_PREFIX = {"anthropic": "anthropic", "gemini": "gemini", "openrouter": "openrouter", "xai": "xai"}
@@ -75,6 +77,26 @@ def _tone_wav(seconds: float = 0.6, freq: float = 440.0, rate: int = 16000) -> b
     return buf.getvalue()
 
 
+def _beeps_wav(count: int = 4, rate: int = 16000) -> bytes:
+    """`count` short beeps separated by silence, as 16-bit mono WAV.
+
+    The audio probe asks HOW MANY beeps there are: a model that cannot hear has to guess the
+    number, whereas a plain "is there a sound? yes/no" is passed by any model that says "yes".
+    """
+    buf = io.BytesIO()
+    beep = [int(12000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(int(0.25 * rate))]
+    gap = [0] * int(0.3 * rate)
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        samples: list[int] = list(gap)
+        for _ in range(count):
+            samples += beep + gap
+        w.writeframes(b"".join(struct.pack("<h", s) for s in samples))
+    return buf.getvalue()
+
+
 def _looks_unsupported(error: str) -> bool:
     e = error.lower()
     return any(h in e for h in _UNSUPPORTED_HINTS)
@@ -102,7 +124,14 @@ class ModelCapabilities:
             if raw:
                 data = json.loads(raw)
                 if isinstance(data, dict):
-                    self._caps.update({k: v for k, v in data.items() if isinstance(v, dict)})
+                    for k, v in data.items():
+                        if not isinstance(v, dict):
+                            continue
+                        if v.get("v") != PROBE_VERSION and v.get("audio") is True:
+                            # Measured with the old yes/no question, which a deaf model passes by
+                            # guessing: forget the "yes" and measure again with the beep count.
+                            v = {**v, "audio": None}
+                        self._caps[k] = v
         except Exception as exc:  # noqa: BLE001
             log.warning("Could not load model capabilities", error=str(exc))
 
@@ -251,20 +280,21 @@ class ModelCapabilities:
             result: dict[str, Any] = {"vision": False, "audio": False, "note": "CLI provider: text only"}
         else:
             png = base64.b64encode(_solid_png((220, 20, 20))).decode()
-            wav = base64.b64encode(_tone_wav()).decode()
+            wav = base64.b64encode(_beeps_wav(PROBE_BEEPS)).decode()
             (vision, vnote), (audio, anote) = await asyncio.gather(
                 self._probe_one(provider, model, [
                     {"type": "text", "text": "What is the colour of this image? Answer with one word."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{png}"}},
                 ], lambda a: any(w in a for w in ("red", "rojo", "crimson", "scarlet"))),
                 self._probe_one(provider, model, [
-                    {"type": "text", "text": "Does this audio contain a sound (a tone or beep)? Answer yes or no."},
+                    {"type": "text", "text": "How many separate beeps are in this audio? Answer with a single digit."},
                     {"type": "input_audio", "input_audio": {"data": wav, "format": "wav"}},
                 ], lambda a: (not any(d in a for d in _DENIAL_HINTS))
-                and any(w in a for w in ("yes", "sí", "si,", "tone", "beep", "sound"))),
+                and any(w in a for w in (str(PROBE_BEEPS), "four", "cuatro"))),
             )
             result = {"vision": vision, "audio": audio, "note": f"vision: {vnote} | audio: {anote}"}
         result["tested_at"] = time.time()
+        result["v"] = PROBE_VERSION
         self._caps[k] = result
         await self._save()
         log.info("Model capabilities probed", provider=provider, model=model,

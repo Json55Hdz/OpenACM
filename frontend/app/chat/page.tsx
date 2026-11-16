@@ -1,5 +1,6 @@
 'use client';
 
+import { blobToWav } from '@/lib/audio-wav';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/app-layout';
@@ -329,7 +330,11 @@ export default function ChatPage() {
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+        let file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+        try {
+          // WAV is what audio models accept; keep the webm if the conversion is not possible
+          file = new File([await blobToWav(blob)], `voice-${Date.now()}.wav`, { type: 'audio/wav' });
+        } catch { /* keep webm */ }
         setIsUploading(true);
         const att = await uploadFile(file);
         if (att) {

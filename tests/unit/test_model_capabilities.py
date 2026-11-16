@@ -132,3 +132,31 @@ async def test_removed_provider_is_not_a_fallback():
     caps = _caps(router, {("blind", "vision"): "cannot", ("blind", "audio"): "no"})
     caps._caps["openai::gpt-x"] = {"vision": True, "audio": False, "tested_at": 1}
     assert await caps.pick("vision") is None
+
+
+async def test_audio_probe_cannot_be_passed_by_saying_yes():
+    """A model that cannot hear still answers "yes" to "is there a sound?": the probe counts beeps."""
+    deaf = _caps(_router(), {("m1", "vision"): "Red.", ("m1", "audio"): "Yes, there is a sound."})
+    assert (await deaf.probe("p1", "m1"))["audio"] is False
+    guess = _caps(_router(), {("m1", "vision"): "Red.", ("m1", "audio"): "2"})
+    assert (await guess.probe("p1", "m1"))["audio"] is False
+    hears = _caps(_router(), {("m1", "vision"): "Red.", ("m1", "audio"): "4"})
+    assert (await hears.probe("p1", "m1"))["audio"] is True
+
+
+def test_beeps_wav_is_a_valid_file():
+    from openacm.core.model_capabilities import _beeps_wav
+    assert _beeps_wav(4)[:4] == b"RIFF"
+
+
+async def test_old_audio_yes_is_forgotten_on_load():
+    from openacm.core.model_capabilities import ModelCapabilities
+    import json
+
+    class DB:
+        async def get_setting(self, key):
+            return json.dumps({"p::m": {"vision": True, "audio": True, "tested_at": 1}})
+
+    caps = ModelCapabilities(_router())
+    await caps.load(DB())
+    assert caps._caps["p::m"]["audio"] is None and caps._caps["p::m"]["vision"] is True

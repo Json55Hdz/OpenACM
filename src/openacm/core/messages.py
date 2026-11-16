@@ -166,6 +166,10 @@ PROMPT_DESCRIBE_IMAGE = (
     "Describe this image for someone who cannot see it: what it shows, every piece of visible "
     "text exactly as written, and any numbers, labels or layout that matter. Be factual and complete."
 )
+PROMPT_TRANSCRIBE_AUDIO = (
+    "Transcribe this audio exactly as spoken, in its original language. Output only the transcription, "
+    "with no comments. If there is no intelligible speech, output: [no speech]"
+)
 MSG_IMAGE_ALREADY_SEEN = (
     "[Image {file_id}: you received and looked at this image when the user sent it; what you said about it "
     "right after is your real analysis of it. The image itself is not attached again here.]"
