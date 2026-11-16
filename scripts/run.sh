@@ -40,7 +40,22 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # Homebrew Node path (macOS)
 export PATH="/opt/homebrew/opt/node@20/bin:/usr/local/opt/node@20/bin:$PATH"
 
-if command -v node &>/dev/null && [ -d "frontend" ]; then
+# The dashboard is rebuilt only when the code changed since the last build (stamp = git commit),
+# and a prebuilt copy is downloaded first when this is a tagged release: no Node, no wait.
+STAMP="src/openacm/web/static/.built-for"
+HEAD_ID="$(git rev-parse HEAD 2>/dev/null || echo none)"
+SKIP_BUILD=0
+if [ -f "src/openacm/web/static/index.html" ] && [ "$(cat "$STAMP" 2>/dev/null)" = "$HEAD_ID" ] && [ -z "$OPENACM_REBUILD" ]; then
+    SKIP_BUILD=1
+    echo "[OK] Dashboard al día (sin recompilar)."
+    echo ""
+elif [ "$(git describe --tags --exact-match 2>/dev/null)" != "" ] && python scripts/fetch_dashboard.py; then
+    SKIP_BUILD=1
+    echo "$HEAD_ID" > "$STAMP"
+    echo ""
+fi
+
+if [ "$SKIP_BUILD" != 1 ] && command -v node &>/dev/null && [ -d "frontend" ]; then
     # Check Node version (needs 18.18+ or 20+)
     NODE_VER=$(node -e "process.stdout.write(String(process.versions.node.split('.')[0]))" 2>/dev/null)
     if [ "${NODE_VER:-0}" -lt 18 ] 2>/dev/null; then
@@ -68,8 +83,11 @@ if command -v node &>/dev/null && [ -d "frontend" ]; then
         mkdir -p src/openacm/web/static
     fi
     cp -r frontend/dist/* src/openacm/web/static/
+    echo "$HEAD_ID" > "$STAMP"
     echo "[OK] Frontend construido y copiado."
     echo ""
+elif [ "$SKIP_BUILD" = 1 ]; then
+    :
 else
     echo "[!] Node.js no encontrado, omitiendo build del frontend."
     echo ""

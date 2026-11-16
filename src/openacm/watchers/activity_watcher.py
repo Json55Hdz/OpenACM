@@ -13,7 +13,9 @@ Supported platforms:
 from __future__ import annotations
 
 import asyncio
+import os
 import platform
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
@@ -51,6 +53,21 @@ class WindowInfo:
         if not isinstance(other, WindowInfo):
             return False
         return self.process_name.lower() == other.process_name.lower()
+
+
+def unsupported_reason() -> str:
+    """Why this machine cannot show which window is in use (empty = it can).
+
+    Routines learn from the windows of a desktop. A server, NAS or container has no screen, so
+    there is nothing to learn from there: say so instead of showing an empty page.
+    """
+    if platform.system() == "Linux":
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return ("Este equipo no tiene pantalla (servidor, NAS o contenedor), así que no hay ventanas que observar. "
+                    "Las rutinas aprenden de tu escritorio: ejecuta OpenACM en tu PC para usarlas.")
+        if shutil.which("xdotool") is None:
+            return "Falta xdotool para saber qué ventana está activa. Instálalo (apt install xdotool) y reinicia OpenACM."
+    return ""
 
 
 class ActivityWatcher:

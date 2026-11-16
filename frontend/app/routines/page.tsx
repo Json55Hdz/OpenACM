@@ -77,6 +77,7 @@ interface WatcherStatus {
   sessions_recorded: number;
   encrypted: boolean;
   key_path: string | null;
+  unsupported?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────
@@ -874,6 +875,12 @@ export default function RoutinesPage() {
   return (
     <AppLayout>
       <div className="flex flex-col min-h-0 p-6 space-y-6">
+
+        {watcher.unsupported && (
+          <div role="status" className="rounded-lg px-4 py-3 text-[13px]" style={{ background: 'var(--acm-card)', border: '1px solid var(--acm-border-strong)', color: 'var(--acm-fg-2)', lineHeight: 1.6 }}>
+            <b>Las rutinas no pueden funcionar aquí.</b> {watcher.unsupported}
+          </div>
+        )}
 
         {/* Toast */}
         {toast && (

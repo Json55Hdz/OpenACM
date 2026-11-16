@@ -1,0 +1,29 @@
+name: Release dashboard
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Package
+        run: tar -czf dashboard.tar.gz -C frontend/dist .
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dashboard.tar.gz

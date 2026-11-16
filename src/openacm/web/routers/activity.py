@@ -179,12 +179,16 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/api/watcher/status")
     async def get_watcher_status():
         """Return activity watcher running status and encryption info."""
+        from openacm.watchers.activity_watcher import unsupported_reason
+
         encrypted = _state.database._enc is not None if _state.database else False
         key_path = _state.database._enc.key_path if (encrypted and _state.database) else None
+        unsupported = unsupported_reason()
         if _state.activity_watcher is None:
             return {"running": False, "current_app": None, "sessions_recorded": 0,
-                    "encrypted": encrypted, "key_path": key_path}
+                    "encrypted": encrypted, "key_path": key_path, "unsupported": unsupported}
         return {
+            "unsupported": unsupported,
             "running": _state.activity_watcher.is_running,
             "current_app": _state.activity_watcher.current_app,
             "current_title": _state.activity_watcher.current_title,

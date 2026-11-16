@@ -6,6 +6,24 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+- Skill marketplace: community catalog, install by link/file/paste with full preview, a reading aid for risky content and SHA-256 pinning; skills now show their source (system, plugin, marketplace).
+- Model failover with an errors/costs panel; redesigned models configuration.
+- Per-channel access control (owner / guest / blocked) with per-chat profiles.
+- In-chat media viewer (image zoom, audio/video, PDF and document preview) and WhatsApp-style date separators.
+- Tools show their real source (built-in, plugin, MCP).
+
+### Changed
+- Faster install: the dashboard is rebuilt only when the code changed, a prebuilt copy is downloaded on tagged releases (no Node needed), Chromium downloads in the background and redundant reinstall steps were removed.
+- Blender, Flutter and Unity skills moved to the marketplace.
+- Webhook connectors no longer take a place in the main menu (the page and API remain).
+- Routines explain why they cannot run on a machine without a screen.
+
+### Fixed
+- Compaction no longer leaves orphan tool results.
+
 ### Added
 - Agents can split one reply into several WhatsApp messages by writing `<<MSG>>`
   where it should be cut (e.g. legal notice first, then the greeting). Other

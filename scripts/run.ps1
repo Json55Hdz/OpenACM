@@ -35,7 +35,23 @@ Write-Host "[OK] Environment verified." -ForegroundColor Green
 Write-Host ""
 
 # Build frontend (optional - skipped if Node.js is not available)
-if ((Get-Command "node" -ErrorAction SilentlyContinue) -and (Test-Path "frontend")) {
+# Rebuild the dashboard only when the code changed since the last build (stamp = git commit);
+# on a tagged release a prebuilt copy is downloaded first: no Node, no wait.
+$stamp = "src\openacm\web\static\.built-for"
+$headId = (git rev-parse HEAD 2>$null)
+if (-not $headId) { $headId = "none" }
+$skipBuild = $false
+if ((Test-Path "src\openacm\web\static\index.html") -and (Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $headId) -and -not $env:OPENACM_REBUILD) {
+    $skipBuild = $true
+    Write-Host "[OK] Dashboard up to date (not rebuilt)." -ForegroundColor Green
+} elseif ((git describe --tags --exact-match 2>$null) -and (python scripts/fetch_dashboard.py; $LASTEXITCODE -eq 0)) {
+    $skipBuild = $true
+    Set-Content -Path $stamp -Value $headId
+}
+
+if ($skipBuild) {
+    Write-Host ""
+} elseif ((Get-Command "node" -ErrorAction SilentlyContinue) -and (Test-Path "frontend")) {
     Write-Host "[*] Building frontend..." -ForegroundColor Yellow
     Set-Location frontend
     npm install --silent 2>&1 | Out-Null
@@ -51,6 +67,7 @@ if ((Get-Command "node" -ErrorAction SilentlyContinue) -and (Test-Path "frontend
     }
     Remove-Item -Recurse -Force "src\openacm\web\static\*" -ErrorAction SilentlyContinue
     Copy-Item -Recurse -Force "frontend\dist\*" "src\openacm\web\static\"
+    Set-Content -Path $stamp -Value $headId
     Write-Host "[OK] Frontend built and deployed." -ForegroundColor Green
     Write-Host ""
 } else {
