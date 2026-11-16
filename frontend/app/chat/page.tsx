@@ -139,8 +139,24 @@ export default function ChatPage() {
       // the per-conversation cache), keep them — they have usage/token data.
       if (useChatStore.getState().messages.length > 0) return;
       if (history.length > 0) {
+        // Files the assistant produced live in tool results ("ATTACHMENT:<name>"), which the list
+        // below drops: hand them to the next visible assistant reply of the same turn.
+        const producedFor = new Map<number, string[]>();
+        let pendingProduced: string[] = [];
+        history.forEach((m: { role: string; content: string }, i: number) => {
+          if (m.role === 'tool' && typeof m.content === 'string' && m.content.startsWith('ATTACHMENT:')) {
+            const name = m.content.split('\n')[0].replace('ATTACHMENT:', '').trim();
+            if (name) pendingProduced.push(name);
+          } else if (m.role === 'user') {
+            pendingProduced = [];
+          } else if (m.role === 'assistant' && m.content && m.content.trim() && pendingProduced.length) {
+            producedFor.set(i, pendingProduced);
+            pendingProduced = [];
+          }
+        });
         const visible = history
-          .filter((msg: { role: string; content: string }) => {
+          .map((msg: { role: string; content: string; timestamp?: string }, i: number) => ({ msg, i }))
+          .filter(({ msg }: { msg: { role: string; content: string } }) => {
             // Skip system prompts, tool results, and assistant-only-tool-call messages
             if (msg.role === 'system') return false;
             if (msg.role === 'tool') return false;
@@ -148,19 +164,28 @@ export default function ChatPage() {
             if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
             return true;
           })
-          .map((msg: { role: string; content: string; timestamp?: string }) => {
-            // Parse [IMAGE:filename] markers back into attachment objects
+          .map(({ msg, i }: { msg: { role: string; content: string; timestamp?: string }; i: number }) => {
+            // Parse [IMAGE:id] / [FILE:id] markers back into attachment objects
             const attachments: Array<{ id: string; name: string; type: string }> = [];
-            const content = msg.content.replace(/\[IMAGE:([^\]]+)\]/g, (_, fileId) => {
+            const seen = new Set<string>();
+            const add = (fileId: string) => {
+              if (seen.has(fileId)) return;
+              seen.add(fileId);
               const ext = fileId.split('.').pop()?.toLowerCase() ?? '';
-              const imgExts = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
-              attachments.push({
-                id: fileId,
-                name: fileId,
-                type: imgExts.has(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/octet-stream',
-              });
+              const type = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+                : ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'weba', 'webm'].includes(ext) ? `audio/${ext}`
+                : 'file';
+              attachments.push({ id: fileId, name: fileId, type });
+            };
+            const content = msg.content.replace(/\[(?:IMAGE|FILE):([^\]]+)\]/g, (_, fileId) => {
+              add(fileId);
               return '';
             }).trim();
+            // Messages saved before the [FILE:] marker existed only name the file in their text
+            if (msg.role === 'user') {
+              for (const m of msg.content.matchAll(/\[(?:Audio file attached: |PDF — |Image — |Image attached: |File attached: )?([0-9a-f]{32}\.[A-Za-z0-9]{2,5})\b/g)) add(m[1]);
+            }
+            (producedFor.get(i) ?? []).forEach(add);
             return {
               content,
               role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',

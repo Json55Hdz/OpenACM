@@ -218,6 +218,7 @@ class BrainMultimodalMixin:
             if not file_path.exists():
                 continue
             try:
+                _parts_before = len(structured_content)
                 raw_bytes = decrypt_file(file_path)
                 b64 = base64.b64encode(raw_bytes).decode("utf-8")
                 ext = file_path.suffix.lower()
@@ -342,6 +343,10 @@ class BrainMultimodalMixin:
                             "type": "text",
                             "text": f"[File attached: {file_path.name} ({ext}) — binary format, content not extractable]",
                         })
+                # Images the model received carry their own [IMAGE:id] marker; everything else
+                # (audio, PDFs, documents, images described by another model) gets [FILE:id].
+                if not any(p.get("type") == "image_url" for p in structured_content[_parts_before:]):
+                    structured_content.append({"type": "text", "text": f"[FILE:{att_id}]"})
             except Exception as e:
                 log.error("Failed to load attachment", error=str(e), file_id=att_id)
 
