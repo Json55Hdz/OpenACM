@@ -15,7 +15,9 @@ from openacm.tools.base import tool
         "Use this when the user asks what you can do, what tools are available, "
         "or what skills are active. "
         "Set what='tools' for executable tools, 'skills' for behavior instructions, "
-        "or 'all' to see both."
+        "or 'all' to see both. This reads the live registry: ONE call lists everything, so "
+        "never browse source files to find out which tools exist. "
+        "Use agent_id to see exactly which tools one agent has, and query to search by word."
     ),
     parameters={
         "type": "object",
@@ -30,13 +32,41 @@ from openacm.tools.base import tool
                 "type": "string",
                 "description": "Optional: filter by category (e.g. 'system', 'file', 'web', 'ai').",
             },
+            "query": {
+                "type": "string",
+                "description": "Optional: only tools whose name or description contains this word.",
+            },
+            "agent_id": {
+                "type": "integer",
+                "description": "Optional: list only the tools that this agent (see list_agents) is allowed to use.",
+            },
         },
         "required": [],
     },
     risk_level="low",
     category="meta",
 )
-async def list_tools(what: str = "tools", category: str = "", **kwargs) -> str:
+async def _agent_allowed_names(brain, agent_id: int, all_names: set[str]) -> tuple[set[str] | None, str]:
+    """(names the agent may use, note). None = unknown agent."""
+    import json
+
+    db = getattr(brain, "database", None)
+    agent = await db.get_agent(int(agent_id)) if db is not None else None
+    if not agent:
+        return None, f"No agent with id {agent_id}."
+    policy = str(agent.get("allowed_tools") or "all").strip()
+    if policy == "all":
+        return set(all_names), f"Agent '{agent.get('name')}' can use every tool."
+    if policy == "none":
+        return set(), f"Agent '{agent.get('name')}' has no tools (text only)."
+    try:
+        listed = {str(n) for n in json.loads(policy)}
+    except (ValueError, TypeError):
+        return set(), f"Agent '{agent.get('name')}' has an unreadable tool policy, so it exposes no tools."
+    return listed & all_names, f"Agent '{agent.get('name')}' has an explicit list of {len(listed)} tools."
+
+
+async def list_tools(what: str = "tools", category: str = "", query: str = "", agent_id: int | None = None, **kwargs) -> str:
     brain = kwargs.get("_brain")
     if brain is None:
         return "Error: brain context not available."
@@ -50,8 +80,17 @@ async def list_tools(what: str = "tools", category: str = "", **kwargs) -> str:
             sections.append("## Tools\n(registry not available)")
         else:
             tools_list = list(registry.tools.values())
+            agent_note = ""
+            if agent_id is not None:
+                allowed, agent_note = await _agent_allowed_names(brain, agent_id, {t.name for t in tools_list})
+                if allowed is None:
+                    return agent_note
+                tools_list = [t for t in tools_list if t.name in allowed]
             if category:
                 tools_list = [t for t in tools_list if t.category == category]
+            if query:
+                q = query.lower()
+                tools_list = [t for t in tools_list if q in t.name.lower() or q in (t.description or "").lower()]
 
             if not tools_list:
                 sections.append(f"## Tools\n(none registered{f' in category {category!r}' if category else ''})")
@@ -62,6 +101,8 @@ async def list_tools(what: str = "tools", category: str = "", **kwargs) -> str:
                     by_cat.setdefault(t.category, []).append(t)
 
                 lines = [f"## Tools ({len(tools_list)} registered)\n"]
+                if agent_note:
+                    lines.append(agent_note + chr(10))
                 for cat, cat_tools in sorted(by_cat.items()):
                     lines.append(f"**{cat.upper()}**")
                     for t in cat_tools:

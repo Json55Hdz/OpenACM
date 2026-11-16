@@ -305,8 +305,8 @@ async def delete_tool(
 
 
 @tool(
-    name="list_tools",
-    description="List all available tools, showing which are built-in vs custom.",
+    name="list_custom_tools",
+    description="List the tool FILES in the tools folder, built-in vs custom. To see every tool the assistant can call, use list_tools instead (it reads the live registry, no file browsing needed).",
     parameters={
         "type": "object",
         "properties": {},
@@ -315,7 +315,7 @@ async def delete_tool(
     needs_sandbox=False,
     category="meta",
 )
-async def list_tools(**kwargs) -> str:
+async def list_custom_tools(**kwargs) -> str:
     """List all tools in the tools directory."""
 
     try:
@@ -416,4 +416,4 @@ def indent_code(code: str) -> str:
     return "\n".join("    " + line for line in lines)
 
 
-__all__ = ["create_tool", "edit_tool", "delete_tool", "list_tools"]
+__all__ = ["create_tool", "edit_tool", "delete_tool", "list_custom_tools"]
