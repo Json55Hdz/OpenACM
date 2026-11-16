@@ -37,9 +37,10 @@ MODES = ("public", "whitelist")
 GUEST_LEVELS = ("none", "basic", "custom")
 CHAT_LEVELS = ("blocked", "none", "basic", "custom", "owner")
 
-# What a guest may ever be given. Reading the web and the owner's published knowledge base; nothing
-# that runs code, reads or writes files, sends mail, posts, or changes settings.
-GRANTABLE = frozenset({"web_search", "get_webpage", "search_knowledge", "read_knowledge_file"})
+# What a guest may ever be given. Searching the web and the owner's published knowledge base; nothing
+# that runs code, reads or writes files, sends mail, posts, changes settings, or fetches an arbitrary
+# URL (get_webpage could be pointed at the owner's local network).
+GRANTABLE = frozenset({"web_search", "search_knowledge", "read_knowledge_file"})
 PRESETS: dict[str, frozenset[str]] = {
     "none": frozenset(),
     "basic": frozenset({"web_search"}),

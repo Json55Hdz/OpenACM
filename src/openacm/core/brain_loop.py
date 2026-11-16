@@ -489,8 +489,6 @@ class BrainLoopMixin:
         tools = None
         if self.tool_registry:
             tools = self.tool_registry.get_tools_by_intent(content)
-            if not getattr(self.config, "is_agent", False):
-                tools = self.channel_access.filter_tools(tools, _grant)
             # During onboarding, always include save_user_profile so the LLM can call it
             if not getattr(self.config, "onboarding_completed", False):
                 sp_def = self.tool_registry.tools.get("save_user_profile")
@@ -522,6 +520,11 @@ class BrainLoopMixin:
             except Exception as exc:  # noqa: BLE001 - never break the loop over this
                 log.debug("Chat toolset carry-over failed", error=str(exc))
 
+        # The sender's profile has the last word on what the model is offered: this runs after every
+        # addition above (onboarding, per-chat carry-over), so nothing can slip past it.
+        if not getattr(self.config, "is_agent", False):
+            tools = self.channel_access.filter_tools(tools, _grant)
+
         # Cap tool count for providers with limited context
         profile = self.llm_router.get_provider_profile()
         if tools and profile.max_tools_per_call is not None:
@@ -544,7 +547,10 @@ class BrainLoopMixin:
                 _router_result = await asyncio.wait_for(
                     asyncio.shield(_router_task), timeout=0.15
                 )
-                if _router_result and _router_result.is_fast_path_eligible:
+                # The fast path runs host commands for a phrase: owners only
+                if _router_result and _router_result.is_fast_path_eligible and (
+                    _grant.owner or getattr(self.config, "is_agent", False)
+                ):
                     fast_response = await self._execute_fast_path(
                         _router_result.intent, content, user_id, channel_id, channel_type
                     )

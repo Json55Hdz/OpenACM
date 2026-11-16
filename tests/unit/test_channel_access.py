@@ -118,3 +118,17 @@ async def test_a_blocked_sender_gets_no_answer_at_all(brain):
 
 def test_grantable_tools_are_read_only_things():
     assert not ({"run_command", "run_python", "write_file", "read_file", "gmail_send"} & GRANTABLE)
+
+
+def test_guests_cannot_fetch_arbitrary_urls():
+    assert "get_webpage" not in GRANTABLE and "browser_agent" not in GRANTABLE
+
+
+async def test_the_final_tool_list_is_filtered_after_carry_over(brain):
+    import inspect
+
+    from openacm.core import brain_loop
+
+    src = inspect.getsource(brain_loop)
+    assert src.index("Chat toolset carry-over failed") < src.index("filter_tools(tools, _grant)")
+    assert "_grant.owner or getattr(self.config" in src  # fast path is owner-only
