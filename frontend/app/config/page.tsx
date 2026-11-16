@@ -12,7 +12,8 @@ import { getProviderById } from '@/lib/providers';
 import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Plus, Pencil, Server, X, Wand2, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ModelRoutesSection } from '@/components/config/model-routes';
+import { ModelRoutesSection, FallbackSection } from '@/components/config/model-routes';
+import { ModelsOverview } from '@/components/config/models-overview';
 import { ConfigSection, Divider, ToggleRow, StatTile, InfoRow, NavItem, NavGroupLabel } from '@/components/config/primitives';
 import { ProviderCard, AddProviderCard } from '@/components/config/provider-cards';
 import { RagThresholdControl, AssistantSection, VoiceConfigSection } from '@/components/config/sections';
@@ -540,11 +541,14 @@ export default function ConfigPage() {
             {/* ── Assistant Identity ── */}
             <AssistantSection />
 
+            {/* ── Models: overview first, then the steps in the order you do them ── */}
+            <ModelsOverview onGo={scrollTo} />
+
             {/* ── LLM Providers ── */}
             <ConfigSection
               id="section-providers"
-              title={tc.providers.title}
-              subtitle={tc.providers.subtitle}
+              title={`A · ${tc.providers.title}`}
+              subtitle="paso 1: conecta los proveedores de IA que vas a usar (clave de API)"
               icon={Settings}
             >
               <ProviderSetupForm mode="config" />
@@ -579,8 +583,8 @@ export default function ConfigPage() {
             {/* ── Custom Providers ── */}
             <ConfigSection
               id="section-custom-providers"
-              title="Custom Providers"
-              subtitle="OpenAI-compatible endpoints — LM Studio, Together AI, Groq, Ollama, etc."
+              title="B · Proveedores propios"
+              subtitle="opcional: cualquier servidor compatible con OpenAI (LM Studio, Together, Groq, Ollama…)"
               icon={Server}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -863,8 +867,8 @@ export default function ConfigPage() {
             {/* ── Default Model ── */}
             <ConfigSection
               id="section-model"
-              title={tc.model.title}
-              subtitle="Active model used for all AI inference"
+              title={`C · ${tc.model.title}`}
+              subtitle="paso 2: el modelo que responde por defecto; las tareas sin otro asignado lo usan"
               icon={Bot}
             >
               {isLoading ? (
@@ -1221,6 +1225,9 @@ export default function ConfigPage() {
 
             {/* ── Models per task ── */}
             <ModelRoutesSection />
+
+            {/* ── Failover ── */}
+            <FallbackSection />
 
             {/* ── Memory & RAG ── */}
             <ConfigSection

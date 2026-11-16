@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Route, Trash2 } from 'lucide-react';
+import { LifeBuoy, Loader2, Route, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAPI, useIsAuthenticated } from '@/hooks/use-api';
 import { ConfigSection } from './primitives';
@@ -69,6 +69,7 @@ function RoleRow({
 }
 
 function FallbackEditor({ data }: { data: Data }) {
+  const hasFallbacks = (data.fallbacks ?? []).length > 0;
   const { fetchAPI } = useAPI();
   const qc = useQueryClient();
   const [list, setList] = useState<Route[]>(data.fallbacks ?? []);
@@ -86,12 +87,12 @@ function FallbackEditor({ data }: { data: Data }) {
     apply(next);
   };
   return (
-    <div style={{ marginTop: 18, borderTop: '1px solid var(--acm-border)', paddingTop: 14 }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Modelos de respaldo</div>
-      <div style={{ fontSize: 12, color: 'var(--acm-fg-4)', marginBottom: 8 }}>
-        Si el modelo de una tarea falla (caída, límite de uso, clave inválida), se prueba el siguiente de esta lista, en orden.
+    <div>
+      <p style={{ fontSize: 12, color: 'var(--acm-fg-3)', lineHeight: 1.6, marginBottom: 10 }}>
+        Si el modelo elegido falla (caída, límite de uso, clave inválida), se prueba el siguiente de esta lista, en orden.
         Un proveedor que acaba de fallar se omite unos segundos para no esperar de más.
-      </div>
+        {hasFallbacks ? '' : ' Recomendado: añade al menos uno de otro proveedor distinto al principal.'}
+      </p>
       {list.length === 0 && <div style={{ fontSize: 12, color: 'var(--acm-fg-4)' }}>Sin respaldos: si un modelo falla, el error llega al chat.</div>}
       {list.map((r, i) => (
         <div key={`${r.provider}/${r.model}`} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, padding: '3px 0', flexWrap: 'wrap' }}>
@@ -130,6 +131,27 @@ function FallbackEditor({ data }: { data: Data }) {
   );
 }
 
+export function FallbackSection() {
+  const { fetchAPI } = useAPI();
+  const isAuthenticated = useIsAuthenticated();
+  const { data } = useQuery<Data>({
+    queryKey: ['model-routes'],
+    queryFn: () => fetchAPI('/api/llm/routes'),
+    enabled: isAuthenticated,
+  });
+  if (!data) return null;
+  return (
+    <ConfigSection
+      id="section-fallbacks"
+      title="E · Respaldo si falla"
+      subtitle="paso 4: qué modelos toman el relevo cuando el elegido no responde"
+      icon={LifeBuoy}
+    >
+      <FallbackEditor key={JSON.stringify(data.fallbacks)} data={data} />
+    </ConfigSection>
+  );
+}
+
 export function ModelRoutesSection() {
   const { fetchAPI } = useAPI();
   const isAuthenticated = useIsAuthenticated();
@@ -158,8 +180,8 @@ export function ModelRoutesSection() {
   return (
     <ConfigSection
       id="section-routes"
-      title="Modelos por tarea"
-      subtitle="usa un modelo distinto para orquestar, para herramientas y para tareas internas"
+      title="D · Modelos por tarea"
+      subtitle="paso 3 (opcional): un modelo distinto para orquestar, para herramientas y para tareas internas"
       icon={Route}
     >
       <p style={{ fontSize: 12, color: 'var(--acm-fg-3)', lineHeight: 1.6, marginBottom: 12 }}>
@@ -205,8 +227,6 @@ export function ModelRoutesSection() {
           />
         ))
       )}
-
-      <FallbackEditor key={JSON.stringify(data.fallbacks)} data={data} />
 
       {Object.keys(data.chats).length > 0 && (
         <div style={{ marginTop: 14 }}>
