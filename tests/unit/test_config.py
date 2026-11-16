@@ -100,9 +100,6 @@ class TestAppConfigDefaults:
         assert cfg.security is not None
         assert cfg.channels is not None
 
-    def test_resurrection_paths_empty_by_default(self):
-        cfg = AppConfig()
-        assert cfg.resurrection_paths == []
 
     def test_features_present_by_default(self):
         cfg = AppConfig()

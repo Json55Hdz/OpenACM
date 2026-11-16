@@ -161,7 +161,6 @@ The loop debugger: for each recent request, every agentic iteration with message
 - **WhatsApp** — Cloud API credentials or bridge URL
 - **Google Services** — upload OAuth credentials and authorize Gmail/Calendar/Drive/YouTube
 - **Security** — execution mode (`confirmation`, `auto`, `yolo`), debug logging
-- **Code Resurrection** — folders to index
 - **Advanced** — raw config view
 
 ---

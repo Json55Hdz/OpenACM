@@ -30,7 +30,6 @@
 | [Token Optimization](./20-token-optimization.md) | Multi-layer token reduction system — local router, semantic tools, output compressor, compaction |
 | [CLI Providers](./21-cli-providers.md) | Connect via CLI binaries (claude, gemini, opencode) — no API key required |
 | [Swarms](./22-swarms.md) | Multi-agent swarms, parallel workers, peer messaging |
-| [Code Resurrection](./23-code-resurrection.md) | Background code indexer — RAG over your own projects |
 | [Plugins](./24-plugins.md) | Plugin system — tools, routes, nav items, settings, lifecycle |
 | [Third-Party Integrations](./25-third-party-integrations.md) | MarkItDown, Chonkie, Docling, Instructor — curated MIT libraries |
 | [Dev Mode Plugin Plan](./26-dev-mode-plugin-plan.md) | Design plan (not implemented) for a developer-tools plugin |

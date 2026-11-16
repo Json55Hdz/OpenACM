@@ -64,7 +64,6 @@ class OpenACM:
         self._web_server = None
         self._activity_watcher = None
         self._cron_scheduler = None
-        self._resurrection_watcher = None
         self._swarm_manager = None
         self._content_watcher = None  # kept for server.py compat; plugins manage their own
         self._voice_daemon = None
@@ -284,7 +283,6 @@ class OpenACM:
             browser_agent,
             python_kernel,
             skill_creator,
-            add_resurrection_path,
             onboarding_tools,
             customer_profile_tool,
         )
@@ -304,7 +302,6 @@ class OpenACM:
             console.print("  [dim]~[/dim] browser_agent tool disabled (features.browser_agent: false)")
         self.tool_registry.register_module(python_kernel)
         self.tool_registry.register_module(skill_creator)
-        self.tool_registry.register_module(add_resurrection_path)
         self.tool_registry.register_module(onboarding_tools)
         self.tool_registry.register_module(customer_profile_tool)
 
@@ -449,17 +446,6 @@ class OpenACM:
             console.print("  [green]✓[/green] Activity watcher running")
         except Exception as e:
             console.print(f"  [yellow]~[/yellow] Activity watcher skipped: {e}")
-
-        try:
-            from openacm.watchers.resurrection_watcher import ResurrectionWatcher
-            from openacm.core import rag
-            self._resurrection_watcher = ResurrectionWatcher(
-                self.config, self.event_bus, rag._rag_engine, self.database
-            )
-            await self._resurrection_watcher.start()
-            console.print("  [green]✓[/green] Resurrection watcher running")
-        except Exception as e:
-            console.print(f"  [yellow]~[/yellow] Resurrection watcher skipped: {e}")
 
         try:
             from openacm.watchers.cron_scheduler import CronScheduler
@@ -705,12 +691,6 @@ class OpenACM:
                 await self._activity_watcher.stop()
             except Exception as e:
                 log.warning("Shutdown: the activity watcher did not stop cleanly", error=str(e))
-
-        if getattr(self, "_resurrection_watcher", None):
-            try:
-                await self._resurrection_watcher.stop()
-            except Exception as e:
-                log.warning("Shutdown: the resurrection watcher did not stop cleanly", error=str(e))
 
         # Stop all plugins (they manage their own watchers/connections)
         if self._plugin_manager:

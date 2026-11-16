@@ -228,7 +228,6 @@ def get_status() -> dict:
             "rag_relevance_threshold",
             local.get("assistant", {}).get("rag_relevance_threshold", 0.5),
         ),
-        "resurrection_paths": len(local.get("resurrection_paths", [])),
         "debug_mode": debug_on,
     }
 
@@ -262,8 +261,6 @@ def print_main_menu(s: dict) -> None:
               "OAuth OK" if s["google_token"] else ("creds OK" if s["google_credentials"] else "-"))
     t.add_row(ok(s["local_router_enabled"]), "Local Router",
               "enabled" if s["local_router_enabled"] else "disabled")
-    t.add_row(ok(s["resurrection_paths"] > 0), "Code Resurrection",
-              f"{s['resurrection_paths']} path(s)")
     t.add_row(ok(True), "RAG & Compaction",
               f"threshold: {s['rag_threshold']}")
     t.add_row(ok(s["dashboard_token"]), "Dashboard token",
@@ -279,10 +276,9 @@ def print_main_menu(s: dict) -> None:
     console.print("  [cyan][ 5][/cyan]  Google Services")
     console.print("  [cyan][ 6][/cyan]  Custom providers")
     console.print("  [cyan][ 7][/cyan]  Local Router")
-    console.print("  [cyan][ 8][/cyan]  Code Resurrection")
-    console.print("  [cyan][ 9][/cyan]  RAG & Compaction")
-    console.print("  [cyan][10][/cyan]  Debug & Logging")
-    console.print("  [cyan][11][/cyan]  Dashboard token")
+    console.print("  [cyan][ 8][/cyan]  RAG & Compaction")
+    console.print("  [cyan][ 9][/cyan]  Debug & Logging")
+    console.print("  [cyan][10][/cyan]  Dashboard token")
     console.print()
     console.print("  [dim][0]  Exit[/dim]")
     console.print()
@@ -769,70 +765,7 @@ def setup_local_router(sequential: bool = False) -> str:
     return nav_prompt(sequential)
 
 
-# ─── Section 8: Code Resurrection ────────────────────────────────────────────
-
-
-def setup_resurrection(sequential: bool = False) -> str:
-    header("Code Resurrection", "Paths OpenACM indexes to recover context from past sessions")
-    local = read_local()
-    paths: list[str] = local.get("resurrection_paths", [])
-
-    while True:
-        console.clear()
-        console.print(Panel(
-            "[bold]Code Resurrection[/bold]\n"
-            "[dim]Indexed paths for past-session context recovery[/dim]",
-            border_style="cyan", padding=(0, 2),
-        ))
-
-        if paths:
-            t = Table(box=box.SIMPLE, show_header=False)
-            t.add_column("#", style="dim", width=4)
-            t.add_column("Path")
-            for i, p in enumerate(paths, 1):
-                t.add_row(str(i), p)
-            console.print(t)
-        else:
-            console.print("  [dim]No paths configured.[/dim]\n")
-
-        console.print("  [cyan][A][/cyan]  Add path")
-        if paths:
-            console.print("  [cyan][D][/cyan]  Delete path")
-        console.print("  [cyan][0][/cyan]  Back / Continue\n")
-
-        choice = Prompt.ask("  Option", default="0", show_default=False).strip().lower()
-
-        if choice == "0":
-            break
-
-        elif choice == "a":
-            new_path = Prompt.ask("  Path  [dim](absolute or relative to project)[/dim]")
-            if new_path and new_path not in paths:
-                paths.append(new_path.strip())
-                data = read_local()
-                data["resurrection_paths"] = paths
-                write_local(data)
-                console.print(f"  [green]'{new_path}' added.[/green]")
-            elif new_path in paths:
-                console.print("  [yellow]Already exists.[/yellow]")
-
-        elif choice == "d" and paths:
-            idx_s = Prompt.ask("  Number to delete")
-            try:
-                idx = int(idx_s) - 1
-            except ValueError:
-                continue
-            if 0 <= idx < len(paths):
-                removed = paths.pop(idx)
-                data = read_local()
-                data["resurrection_paths"] = paths
-                write_local(data)
-                console.print(f"  [yellow]'{removed}' removed.[/yellow]")
-
-    return nav_prompt(sequential)
-
-
-# ─── Section 9: RAG & Compaction ──────────────────────────────────────────────
+# ─── Section 8: RAG & Compaction ──────────────────────────────────────────────
 
 
 def setup_rag(sequential: bool = False) -> str:
@@ -1005,7 +938,6 @@ SECTIONS: list[Section] = [
     Section("google",    "Google Services",            setup_google),
     Section("custom",    "Custom providers",           setup_custom_providers),
     Section("router",    "Local Router",               setup_local_router),
-    Section("resurrect", "Code Resurrection",          setup_resurrection),
     Section("rag",       "RAG & Compaction",           setup_rag),
     Section("logging",   "Debug & Logging",            setup_logging),
 ]
@@ -1075,10 +1007,9 @@ _MENU_DISPATCH: dict[str, Callable] = {
     "5":  setup_google,
     "6":  setup_custom_providers,
     "7":  setup_local_router,
-    "8":  setup_resurrection,
-    "9":  setup_rag,
-    "10": setup_logging,
-    "11": setup_dashboard_token,
+    "8":  setup_rag,
+    "9":  setup_logging,
+    "10": setup_dashboard_token,
 }
 
 

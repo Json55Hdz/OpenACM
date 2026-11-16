@@ -208,7 +208,6 @@ Resolve a pending `run_command` confirmation (the dashboard's approval dialog us
 | `GET /api/config/local_router` / `POST /api/config/local_router` | Local router status/stats; set `enabled`, `confidence_threshold` (0.5–1.0) at runtime |
 | `GET /api/config/rag_threshold` / `POST /api/config/rag_threshold` | RAG relevance threshold (persisted to `config/local.yaml`) |
 | `GET /api/config/compaction` / `POST /api/config/compaction` | `compact_ratio`, `compact_keep_recent` (persisted to `config/local.yaml`) |
-| `GET/POST/DELETE /api/config/resurrection_paths` | Code Resurrection folders (`{"path": "..."}`) |
 | `POST /api/config/verbose_channels` | `{"enabled": false}` stops sending tool logs to external channels |
 | `GET /api/config/debug_mode` / `POST /api/config/debug_mode` | Toggle DEBUG-level logging |
 | `GET /api/config/client-profile` | Client profile (`active`, `name`, `allowed_pages`) |

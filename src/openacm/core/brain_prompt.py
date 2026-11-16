@@ -4,7 +4,7 @@ import structlog
 
 from openacm.core.acm_context import get_openacm_context, get_short_context
 from openacm.core.events import EVENT_SKILL_ACTIVE
-from openacm.core.messages import PROMPT_SETUP_MODE, PROMPT_RESURRECTION_HINT
+from openacm.core.messages import PROMPT_SETUP_MODE
 
 log = structlog.get_logger()
 
@@ -26,10 +26,6 @@ class BrainPromptMixin:
 
         if not getattr(self.config, "onboarding_completed", False):
             system_prompt = PROMPT_SETUP_MODE
-        elif not getattr(self.config, "is_agent", False):
-            rc_paths = getattr(self.config, "resurrection_paths", []) if hasattr(self.config, "resurrection_paths") else []
-            if len(rc_paths) == 0:
-                system_prompt += PROMPT_RESURRECTION_HINT
 
         existing_messages = await self.memory.get_messages(user_id, channel_id)
         is_new_conversation = len(existing_messages) == 0

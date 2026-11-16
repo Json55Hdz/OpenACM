@@ -62,7 +62,6 @@ The naive split cut text at fixed character counts, often splitting mid-sentence
 
 If chonkie is not installed or fails, `_split_text()` falls back to the original paragraph/sentence splitting logic transparently.
 
-> **Note:** The Code Resurrection watcher (`resurrection_watcher.py`) uses line-based chunking (150 lines, 20-line overlap) and bypasses `_split_text()` entirely via `ingest_raw_chunks()` — chonkie does not affect it.
 
 ---
 

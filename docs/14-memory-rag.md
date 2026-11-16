@@ -140,7 +140,7 @@ It's not designed for:
 - Frequently-changing data (the indexed version becomes stale)
 - Everything — be selective; retrieval is only as useful as the signal-to-noise ratio
 
-Chunk ids are derived from a hash of the content, so saving the same note twice doesn't create duplicates. [Code Resurrection](./23-code-resurrection.md) also writes into the same store.
+Chunk ids are derived from a hash of the content, so saving the same note twice doesn't create duplicates.
 
 ### Via API
 

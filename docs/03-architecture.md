@@ -330,7 +330,7 @@ Pub/sub system for decoupling components.
 8. Start Channels (Discord, Telegram, WhatsApp) and wait until each is ready
 9. Start Agent Channels (per-agent Telegram bots / WhatsApp numbers)
 10. Generate or load the dashboard token
-11. Start watchers: Activity Watcher, Code Resurrection, Cron Scheduler, Swarm Manager, Voice daemon (unless features.voice=false)
+11. Start watchers: Activity Watcher, Cron Scheduler, Swarm Manager, Voice daemon (unless features.voice=false)
 12. Load and start plugins (their tools, keywords, skills and routers)
 13. Start Web Server (FastAPI + Next.js frontend)
 14. Print status panel + token

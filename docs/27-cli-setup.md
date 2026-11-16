@@ -170,16 +170,7 @@ El Local Router clasifica mensajes cortos sin consumir tokens del LLM (~5ms usan
 
 ---
 
-### 8 · Code Resurrection
-
-Configura rutas que OpenACM indexa para recuperar contexto de sesiones de trabajo pasadas.
-
-- Agrega rutas de proyectos, workspaces, o cualquier directorio relevante
-- OpenACM las usa para reconstruir contexto cuando detecta que estás trabajando en algo familiar
-
----
-
-### 9 · RAG & Compaction
+### 8 · RAG & Compaction
 
 | Parámetro | Rango | Descripción |
 |-----------|-------|-------------|
@@ -193,7 +184,7 @@ Configura rutas que OpenACM indexa para recuperar contexto de sesiones de trabaj
 
 ---
 
-### 10 · Debug & Logging
+### 9 · Debug & Logging
 
 | Parámetro | Descripción |
 |-----------|-------------|
@@ -208,7 +199,7 @@ Configura rutas que OpenACM indexa para recuperar contexto de sesiones de trabaj
 
 ---
 
-### 11 · Dashboard Token
+### 10 · Dashboard Token
 
 Genera o regenera el token de autenticación para el web UI y el REPL.
 
@@ -262,9 +253,6 @@ security:
 local_router:
   enabled: true
   confidence_threshold: 0.88
-
-resurrection_paths:
-  - /ruta/a/tu/proyecto
 ```
 
 ---

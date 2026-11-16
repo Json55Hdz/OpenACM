@@ -37,7 +37,7 @@ No subscriptions. No cloud dependency. Your data stays local.
 - **Swarms** — multi-agent teams that plan and execute complex projects in parallel
 - **Cron scheduler** — recurring jobs (skills, routines, shell commands, swarm templates)
 - **Skills system** — Markdown-based behavior instructions injected when relevant
-- **RAG memory** — ChromaDB long-term memory that persists across conversations, plus Code Resurrection (index your old projects)
+- **RAG memory** — ChromaDB long-term memory that persists across conversations
 - **Plugins** — built-in Gmail Classifier, Home Assistant and Content Automation plugins; write your own with a small Python API
 - **Voice** — optional always-on voice daemon (faster-whisper STT + TTS) and in-browser TTS
 - **Local intent router** — hybrid local/cloud architecture that skips the LLM for simple commands (~5ms, no tokens spent)
@@ -220,7 +220,7 @@ OpenACM/
 │   ├── tools/                  # Built-in tools + MCP client + registry
 │   ├── channels/               # Telegram, Discord, WhatsApp (+ per-agent channels)
 │   ├── plugins/                # Built-in plugins (gmail_classifier, home_assistant, content)
-│   ├── watchers/               # Activity watcher, cron scheduler, code resurrection
+│   ├── watchers/               # Activity watcher, cron scheduler
 │   ├── voice/                  # Voice daemon + TTS providers
 │   ├── cli/                    # openacm-setup / openacm-manage
 │   └── web/                    # FastAPI server, routers, WebSockets

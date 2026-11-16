@@ -118,7 +118,6 @@ local_router:
   observation_mode: false            # true = observe only; false = fast-path active
   confidence_threshold: 0.88         # Minimum confidence to use fast-path
 
-resurrection_paths: []               # Folders indexed by Code Resurrection
 
 features:                            # Heavy/optional subsystems (both default to true)
   browser_agent: true                # false = don't register the Playwright browser_agent tool

@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Archive, Bot, Brain, Globe2, Mic, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
+import { Bot, Brain, Globe2, Mic, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
 
 export type NavSection =
   | 'assistant'
@@ -12,7 +12,6 @@ export type NavSection =
   | 'google'
   | 'router'
   | 'security'
-  | 'resurrection'
   | 'voice'
   | 'raw';
 
@@ -41,7 +40,6 @@ export const NAV_GROUPS: { group: string; items: { id: NavSection; label: string
     items: [
       { id: 'security', label: 'Security', icon: Shield },
       { id: 'voice', label: 'Voice Interface', icon: Mic },
-      { id: 'resurrection', label: 'Code Resurrection', icon: Archive },
       { id: 'raw', label: 'Raw Config', icon: Terminal },
     ],
   },

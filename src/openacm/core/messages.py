@@ -114,15 +114,6 @@ PROMPT_SETUP_MODE = (
     "Once you have all 3, call the `save_user_profile` tool to finish setup."
 )
 
-PROMPT_RESURRECTION_HINT = (
-    "\n\n[SYSTEM]: You have the 'Code Resurrection' capability active, which indexes the user's old code. "
-    "However, NO path is configured in the system yet. When you sense the current conversation is "
-    "naturally wrapping up, offer very friendly to use Code Resurrection. "
-    "Tell them they can paste the directory path in the chat so you can add it automatically "
-    "(using the add_resurrection_path tool), or give them this exact markdown button link to do it "
-    "manually: `[Go to Settings](/config)`."
-)
-
 PROMPT_COMPACT_SYSTEM = """\
 You are compacting a conversation between a user and an AI assistant.
 

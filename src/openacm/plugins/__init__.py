@@ -306,6 +306,43 @@ class PluginManager:
         except Exception as exc:
             log.debug("Entry point discovery skipped", error=str(exc))
 
+        # 3. Plugins the owner uploaded as a .zip and approved (see plugins/uploads.py)
+        self._load_uploaded_plugins()
+
+    def _load_uploaded_plugins(self) -> None:
+        """Import uploaded plugins, but only those untouched since the owner approved them.
+
+        Their folder goes at the END of sys.path (a plugin can never shadow an installed
+        module) and their package name was checked at upload not to collide with one.
+        """
+        try:
+            from openacm.plugins import uploads
+
+            root = uploads.uploaded_dir()
+            if not root.is_dir():
+                return
+            for folder in sorted(root.iterdir()):
+                if not folder.is_dir() or folder.name.startswith("."):
+                    continue
+                manifest = uploads.verified_manifest(folder)
+                if manifest is None:
+                    log.warning("Uploaded plugin skipped: modified since approval or invalid", plugin=folder.name)
+                    continue
+                try:
+                    if str(folder) not in sys.path:
+                        sys.path.append(str(folder))
+                        importlib.invalidate_caches()
+                    module_name, attr = manifest["entry"].split(":", 1)
+                    plugin = getattr(importlib.import_module(module_name), attr)
+                    if isinstance(plugin, Plugin):
+                        self.register(plugin)
+                    else:
+                        log.warning("Uploaded plugin entry is not a Plugin instance", plugin=folder.name)
+                except Exception as exc:
+                    log.warning("Failed to load uploaded plugin", plugin=folder.name, error=str(exc))
+        except Exception as exc:
+            log.warning("Uploaded plugins skipped", error=str(exc))
+
     async def start_all(self, **app_context: Any) -> None:
         """Start all plugins, registering their tools, skills, and keywords."""
         tool_registry: ToolRegistry | None = app_context.get("tool_registry")

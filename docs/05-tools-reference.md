@@ -13,7 +13,7 @@ Which tools are available depends on what is enabled: the `browser_agent` tool c
 | Category | Tools | Description |
 |----------|-------|-------------|
 | `general` | `run_command`, `run_python`, `send_file_to_chat`, `create_agent`, `list_agents`, `delete_agent`, `create_or_update_agent_flow` | Core execution and agent management |
-| `system` | `system_info`, `add_resurrection_path`, `save_user_profile`, cron tools, platform tools | OS info and platform self-management |
+| `system` | `system_info`, `save_user_profile`, cron tools, platform tools | OS info and platform self-management |
 | `file` | `read_file`, `write_file`, `list_directory`, `search_files`, `edit_file`, `read_file_range`, `grep_in_files`, `get_file_outline`, `run_linter` | File system and code editing |
 | `web` | `web_search`, `get_webpage`, `browser_agent` | Web search and browsing |
 | `media` | `take_screenshot` | Screen capture |
@@ -346,14 +346,6 @@ Used once during onboarding: saves the user's name, the assistant's name, behavi
 save_user_profile(user_name: str, assistant_name: str, behaviors: str, gender: str, language: str)
 ```
 
-### `add_resurrection_path`
-Add a folder to [Code Resurrection](./23-code-resurrection.md) indexing.
-
-**Risk:** Low
-
-```python
-add_resurrection_path(path: str)   # absolute path
-```
 
 ---
 

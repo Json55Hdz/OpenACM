@@ -336,6 +336,69 @@ def register_routes(app: FastAPI) -> None:
             )
         return {"status": "ok", "message": M.MSG_PLUGIN_INSTALL_OK, **result}
 
+    # -- plugins the owner uploads as a .zip (two steps: analyse, then approve) ----------------
+
+    @app.post("/api/plugins/upload")
+    async def upload_plugin(request: Request):
+        """Step 1: store the .zip in quarantine and return its analysis. Nothing is installed
+        or executed. The body is the raw file (not multipart) so its size can be capped while
+        streaming."""
+        from openacm.plugins import uploads
+
+        chunks, size = [], 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > uploads.MAX_ARCHIVE_BYTES:
+                raise HTTPException(status_code=413, detail="The file is too big.")
+            chunks.append(chunk)
+        try:
+            analysis = uploads.analyse_upload(b"".join(chunks))
+        except uploads.UploadError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc))
+        return analysis.as_dict()
+
+    @app.post("/api/plugins/upload/{upload_id}/install")
+    async def install_uploaded_plugin(upload_id: str, request: Request):
+        """Step 2: the owner approves the report by typing the plugin's name."""
+        from openacm.plugins import uploads
+
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        try:
+            manifest = uploads.install_approved(upload_id, str(data.get("name", "")), str(data.get("sha256", "")))
+        except uploads.UploadError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc))
+        return {"status": "ok", "message": "Plugin installed. Restart OpenACM to load it.", "manifest": manifest}
+
+    @app.delete("/api/plugins/upload/{upload_id}")
+    async def discard_uploaded_plugin(upload_id: str):
+        from openacm.plugins import uploads
+
+        uploads.discard_upload(upload_id)
+        return {"status": "ok"}
+
+    @app.get("/api/plugins/uploaded")
+    async def list_uploaded_plugins():
+        from openacm.plugins import uploads
+
+        return {"plugins": uploads.list_installed()}
+
+    @app.delete("/api/plugins/uploaded/{name}")
+    async def remove_uploaded_plugin(name: str):
+        from openacm.plugins import uploads
+
+        try:
+            removed = uploads.remove_uploaded(name)
+        except uploads.UploadError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc))
+        if not removed:
+            raise HTTPException(status_code=404, detail="No uploaded plugin with that name")
+        return {"status": "ok", "message": "Removed. Restart OpenACM to unload it."}
+
     @app.post("/api/plugins/{name}/toggle")
     async def toggle_plugin(name: str, request: Request):
         """Enable or disable a plugin. Takes effect on next restart."""

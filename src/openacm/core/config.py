@@ -171,7 +171,6 @@ class AppConfig(BaseModel):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     local_router: LocalRouterConfig = Field(default_factory=LocalRouterConfig)
-    resurrection_paths: list[str] = Field(default_factory=list)
     client_profile: ClientProfileConfig = Field(default_factory=ClientProfileConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
 
@@ -281,8 +280,6 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         config_data["storage"] = data["storage"]
     if "local_router" in data:
         config_data["local_router"] = data["local_router"]
-    if "resurrection_paths" in data:
-        config_data["resurrection_paths"] = data["resurrection_paths"]
     if "client_profile" in data:
         config_data["client_profile"] = data["client_profile"]
     if "features" in data:

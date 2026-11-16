@@ -9,7 +9,7 @@ import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { WhatsAppSetup, WhatsAppMode } from '@/components/setup/whatsapp-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
 import { getProviderById } from '@/lib/providers';
-import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Plus, Pencil, Server, X, Wand2, Archive, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
+import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Plus, Pencil, Server, X, Wand2, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ConfigSection, Divider, ToggleRow, StatTile, InfoRow, NavItem, NavGroupLabel } from '@/components/config/primitives';
@@ -110,59 +110,6 @@ export default function ConfigPage() {
         body: JSON.stringify({ confidence_threshold: val }),
       });
     } catch { /* silent */ }
-  };
-
-  // ─── Code Resurrection ──────────────────────────────────────────────────────
-  const [resurrectionPaths, setResurrectionPaths] = useState<string[]>([]);
-  const [resurrectionIndexed, setResurrectionIndexed] = useState(0);
-  const [newResurrectionPath, setNewResurrectionPath] = useState('');
-  const [resurrectionLoading, setResurrectionLoading] = useState(false);
-
-  useEffect(() => {
-    fetchAPI('/api/config/resurrection_paths')
-      .then((d: any) => {
-        setResurrectionPaths(d.paths ?? []);
-        setResurrectionIndexed(d.indexed_files ?? 0);
-      })
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleAddResurrectionPath = async () => {
-    const path = newResurrectionPath.trim();
-    if (!path) return;
-    setResurrectionLoading(true);
-    try {
-      const data: any = await fetchAPI('/api/config/resurrection_paths', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      setResurrectionPaths(data.paths ?? []);
-      setNewResurrectionPath('');
-      toast.success('Path added — watcher will index it during idle time');
-    } catch {
-      toast.error('Failed to add path — check that it exists on disk');
-    } finally {
-      setResurrectionLoading(false);
-    }
-  };
-
-  const handleRemoveResurrectionPath = async (path: string) => {
-    setResurrectionLoading(true);
-    try {
-      const data: any = await fetchAPI('/api/config/resurrection_paths', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      setResurrectionPaths(data.paths ?? []);
-      toast.success('Path removed');
-    } catch {
-      toast.error('Failed to remove path');
-    } finally {
-      setResurrectionLoading(false);
-    }
   };
 
   // ─── JSON config ────────────────────────────────────────────────────────────
@@ -2051,150 +1998,6 @@ export default function ConfigPage() {
 
             {/* ── Voice Interface ── */}
             <VoiceConfigSection />
-
-            {/* ── Code Resurrection ── */}
-            <ConfigSection
-              id="section-resurrection"
-              title="Code Resurrection"
-              subtitle="Second Code Brain — index old projects for past-solution recall"
-              icon={Archive}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {/* Stats */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 16,
-                    padding: '10px 14px',
-                    background: 'var(--acm-elev)',
-                    border: '1px solid var(--acm-border)',
-                    borderRadius: 'var(--acm-radius)',
-                  }}
-                >
-                  <span className="dot dot-accent acm-pulse" />
-                  <div style={{ fontSize: 13, color: 'var(--acm-fg-3)' }}>Files indexed:</div>
-                  <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--acm-accent)' }}>
-                    {resurrectionIndexed.toLocaleString()}
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginLeft: 4 }}>
-                    · Indexing runs silently when OpenACM is idle
-                  </span>
-                </div>
-
-                {/* Privacy warning */}
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 10,
-                    padding: '12px 14px',
-                    background: 'oklch(0.84 0.16 82 / 0.05)',
-                    border: '1px solid oklch(0.84 0.16 82 / 0.2)',
-                    borderRadius: 'var(--acm-radius)',
-                  }}
-                >
-                  <AlertTriangle
-                    size={13}
-                    style={{ flexShrink: 0, marginTop: 2, color: 'var(--acm-warn)' }}
-                  />
-                  <div style={{ fontSize: 11, color: 'var(--acm-fg-3)', lineHeight: 1.6 }}>
-                    <p style={{ margin: '0 0 4px' }}>
-                      <strong>.env</strong>, <strong>.pem</strong> and <strong>.key</strong> files are
-                      skipped automatically. All other indexed code stays local — but if a snippet gets
-                      retrieved during a cloud LLM conversation, it will be included in that prompt.
-                    </p>
-                    <p style={{ margin: 0, color: 'var(--acm-fg-4)' }}>
-                      If old code has hardcoded tokens inside regular source files, those lines could reach
-                      the cloud. Use a local model (Ollama) for sensitive repos.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Path list */}
-                {resurrectionPaths.length > 0 ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {resurrectionPaths.map((p) => (
-                      <div
-                        key={p}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '8px 12px',
-                          background: 'var(--acm-elev)',
-                          border: '1px solid var(--acm-border)',
-                          borderRadius: 6,
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                          <FolderOpen size={13} style={{ color: 'var(--acm-accent)', flexShrink: 0 }} />
-                          <span
-                            className="mono"
-                            style={{
-                              fontSize: 12,
-                              color: 'var(--acm-fg-2)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {p}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => handleRemoveResurrectionPath(p)}
-                          disabled={resurrectionLoading}
-                          title="Remove"
-                          style={{
-                            marginLeft: 10,
-                            padding: 4,
-                            color: 'var(--acm-fg-4)',
-                            background: 'none',
-                            border: 'none',
-                            cursor: 'pointer',
-                            flexShrink: 0,
-                          }}
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      padding: '24px 0',
-                      color: 'var(--acm-fg-4)',
-                      fontSize: 13,
-                    }}
-                  >
-                    No paths configured yet. Add a root folder to start indexing.
-                  </div>
-                )}
-
-                {/* Add path */}
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    type="text"
-                    className="acm-input mono"
-                    style={{ flex: 1 }}
-                    value={newResurrectionPath}
-                    onChange={(e) => setNewResurrectionPath(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddResurrectionPath()}
-                    placeholder="e.g. D:\UnityProjects or /home/user/repos"
-                  />
-                  <button
-                    className="btn-primary"
-                    onClick={handleAddResurrectionPath}
-                    disabled={!newResurrectionPath.trim() || resurrectionLoading}
-                  >
-                    {resurrectionLoading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                    Add
-                  </button>
-                </div>
-              </div>
-            </ConfigSection>
 
             {/* ── Raw JSON Config ── */}
             <ConfigSection

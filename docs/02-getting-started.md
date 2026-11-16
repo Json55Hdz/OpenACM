@@ -279,7 +279,7 @@ OpenACM/
 │   ├── voice/                 # Voice daemon + TTS providers
 │   ├── cli/                   # openacm-setup / openacm-manage
 │   ├── web/                   # FastAPI server + static frontend
-│   └── watchers/              # Activity monitor, cron scheduler, code resurrection
+│   └── watchers/              # Activity monitor, cron scheduler
 └── workspace/                 # Default directory for generated files
 ```
 

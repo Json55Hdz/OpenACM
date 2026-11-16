@@ -73,10 +73,6 @@ def test_config_local_router(client):
     assert r.status_code != 500, f"Local router config 500: {r.text}"
 
 
-def test_config_resurrection_paths(client):
-    r = client.get("/api/config/resurrection_paths")
-    assert r.status_code != 500, f"Resurrection paths 500: {r.text}"
-
 
 def test_system_info(client):
     r = client.get("/api/system/info")
