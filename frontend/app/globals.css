@@ -242,7 +242,8 @@ html, body {
 .min-h-screen { min-height: 100dvh; }
 
 /* Nothing may push the page sideways */
-html, body { max-width: 100%; overflow-x: hidden; }
+/* clip, not hidden: hidden turns body into a scroll container and breaks position: sticky */
+html, body { max-width: 100%; overflow-x: hidden; overflow-x: clip; }
 main { min-width: 0; }
 img, video, canvas, svg { max-width: 100%; }
 pre, code { overflow-wrap: anywhere; }
@@ -281,4 +282,25 @@ pre { max-width: 100%; overflow-x: auto; }
   [role="dialog"] { max-width: 100vw; }
   /* Long unbroken text (paths, URLs, ids) wraps */
   .mono { overflow-wrap: anywhere; }
+}
+
+/* Config page: on tablets and phones the section menu becomes a strip that stays pinned at the top
+   and scrolls sideways, and the content takes the full width. */
+@media (max-width: 900px) {
+  .config-body { flex-direction: column !important; padding: 12px 16px 32px !important; }
+  .config-nav {
+    width: 100% !important; max-height: none !important; overflow-y: visible !important;
+    overflow-x: auto; position: sticky !important; top: 0 !important; z-index: 20;
+    padding: 8px 0 !important; margin-bottom: 12px;
+    background: var(--acm-base); border-bottom: 1px solid var(--acm-border);
+    display: flex; flex-direction: row; gap: 6px; white-space: nowrap; -webkit-overflow-scrolling: touch;
+  }
+  .config-nav > div { display: flex; flex-direction: row; align-items: center; gap: 6px; flex-shrink: 0; }
+  .config-nav > div > div { display: flex !important; flex-direction: row !important; gap: 6px !important; }
+  .config-nav button { flex-shrink: 0; white-space: nowrap; }
+}
+@media (max-width: 900px) {
+  .config-nav > div:last-child { display: none !important; }          /* system info card */
+  .config-nav > div:nth-last-child(2) { margin: 0 !important; }        /* Save all stays in the strip */
+  .config-nav > div:nth-last-child(2) button { width: auto !important; }
 }

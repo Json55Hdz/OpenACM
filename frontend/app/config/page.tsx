@@ -448,6 +448,7 @@ export default function ConfigPage() {
 
         {/* Body: left nav + right content */}
         <div
+          className="config-body"
           style={{
             flex: 1,
             display: 'flex',
@@ -458,11 +459,14 @@ export default function ConfigPage() {
         >
           {/* ── Left sidebar nav ── */}
           <nav
+            className="config-nav"
             style={{
               width: 210,
               flexShrink: 0,
               position: 'sticky',
               top: 20,
+              maxHeight: 'calc(100vh - 40px)',
+              overflowY: 'auto',
               paddingRight: 16,
             }}
           >
