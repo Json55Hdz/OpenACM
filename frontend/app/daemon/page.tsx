@@ -744,6 +744,21 @@ function DaemonContent() {
       )}
       <div className="p-6 lg:p-8 max-w-4xl mx-auto">
 
+        {typeof window !== 'undefined' && !window.isSecureContext && (
+          <div role="alert" className="flex items-start gap-2 p-3 rounded-lg mb-6" style={{ background: 'oklch(0.65 0.18 35 / 0.1)', border: '1px solid oklch(0.65 0.18 35 / 0.3)' }}>
+            <AlertTriangle size={14} style={{ color: 'var(--acm-err)', marginTop: 1, flexShrink: 0 }} />
+            <div className="text-xs" style={{ color: 'var(--acm-fg-3)', lineHeight: 1.7 }}>
+              <strong style={{ color: 'var(--acm-fg-2)' }}>El navegador bloquea el micrófono en esta dirección.</strong>{' '}
+              Por seguridad solo lo permite en <span className="mono">https://</span> o <span className="mono">localhost</span>, y estás entrando por{' '}
+              <span className="mono">{window.location.origin}</span>. Soluciones:
+              <ol style={{ margin: '6px 0 0 18px', listStyle: 'decimal' }}>
+                <li>Rápida (Chrome/Edge): abre <span className="mono">chrome://flags/#unsafely-treat-insecure-origin-as-secure</span>, escribe <span className="mono">{window.location.origin}</span>, actívalo y reinicia el navegador.</li>
+                <li>Definitiva: sirve OpenACM por HTTPS (por ejemplo con un proxy inverso con certificado, o Tailscale Serve).</li>
+              </ol>
+            </div>
+          </div>
+        )}
+
         {/* ── Header ── */}
         <header className="mb-8">
           <span className="acm-breadcrumb">ACM / Daemon</span>
