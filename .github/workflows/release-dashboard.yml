@@ -24,6 +24,8 @@ jobs:
       - name: Package
         run: tar -czf dashboard.tar.gz -C frontend/dist .
       - name: Attach to the release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dashboard.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dashboard.tar.gz --clobber
