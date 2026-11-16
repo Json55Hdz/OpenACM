@@ -53,6 +53,7 @@ class AgentBrainAdapter:
         channel_id: str,
         channel_type: str,
         attachments: list | None = None,
+        debounce: bool = False,
     ) -> str:
         # Scope user_id to agent to isolate each agent's conversation history —
         # without this, two agents serving the same Telegram user share the same
@@ -65,7 +66,7 @@ class AgentBrainAdapter:
             channel_id=channel_id,
             channel_type=self.channel_type,  # ej: "telegram_a5" — único por agente
             attachments=attachments,
-            debounce=True,
+            debounce=debounce,
         )
 
     def memory_user_id(self, user_id: str) -> str:

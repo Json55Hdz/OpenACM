@@ -67,3 +67,22 @@ async def test_the_main_bot_keeps_model_and_stats_for_allowed_users():
     update = _Update(user_id=7)
     await channel._cmd_model(update, SimpleNamespace(args=[]))
     assert channel._cmd.calls and channel._cmd.calls[0][0] == "/model"
+
+
+async def test_adapter_accepts_what_the_telegram_channel_sends():
+    """TelegramChannel calls brain.process_message(..., debounce=True); an agent's adapter must take it
+    (it crashed every agent message with 'unexpected keyword argument debounce')."""
+    from openacm.channels.agent_telegram_bot import AgentBrainAdapter
+
+    seen = {}
+
+    class Runner:
+        async def run(self, **kwargs):
+            seen.update(kwargs)
+            return "ok"
+
+    adapter = AgentBrainAdapter({"id": 5}, Runner())
+    out = await adapter.process_message(
+        content="hola", user_id="42", channel_id="c", channel_type="telegram", attachments=None, debounce=True,
+    )
+    assert out == "ok" and seen["debounce"] is True and seen["user_id"] == "a5_tg_42"
