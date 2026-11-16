@@ -144,3 +144,20 @@ async def test_fallback_validation(router):
     with pytest.raises(RouteError):
         await router.routes.set_fallbacks([{"provider": "openai", "model": ""}] * 0 + [{"provider": "openai", "model": str(i)} for i in range(6)])
     assert await router.routes.set_fallbacks([]) == []
+
+
+@pytest.mark.parametrize("raw,leak", [
+    ("Incorrect API key provided: gsk_abcdefgh12345678", "gsk_abcdefgh12345678"),
+    ("bad key AIzaSyA1234567890abcdefghijkl", "AIzaSyA1234567890"),
+    ("GET https://api.x.com/v1?key=SUPERSECRETVALUE&alt=json failed", "SUPERSECRETVALUE"),
+    ("POST https://user:hunter2pass@host/v1 failed", "hunter2pass"),
+    ("x-api-key: abcd1234efgh5678", "abcd1234efgh5678"),
+    ("token=abcdefghijklmnopqrstuvwxyz0123456789ABCD", "abcdefghijklmnop"),
+])
+def test_scrub_covers_common_key_formats(raw, leak):
+    assert leak not in scrub_error(raw)
+
+
+def test_scrub_removes_the_real_configured_keys(monkeypatch):
+    monkeypatch.setenv("MYPROVIDER_API_KEY", "plainlooking-value-9")
+    assert "plainlooking-value-9" not in scrub_error("auth failed for plainlooking-value-9 on host")

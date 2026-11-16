@@ -26,15 +26,34 @@ COOLDOWN_MAX_S = 300
 # Fewer retries on a model that has a fallback behind it: the next model is a better use of the wait
 RETRIES_WITH_FALLBACK = 2
 
-_SECRETS = re.compile(
-    r"(sk-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+|(?:api[_-]?key|token|authorization)[\"'=:\s]+[A-Za-z0-9_\-\.]{8,})",
-    re.IGNORECASE,
+_SECRET_PATTERNS = re.compile(
+    "|".join([
+        r"(?:sk|gsk|xai|pk|rk)[-_][A-Za-z0-9_\-]{8,}",          # provider key prefixes
+        r"AIza[0-9A-Za-z_\-]{20,}",                              # Google API keys
+        r"Bearer\s+\S+",
+        r"(?i:(?:x-)?api[-_]?key|token|authorization|secret|password|passwd)[\"'\s]*[=:][\"'\s]*[^\s,;\"'&]{4,}",
+        r"://[^/\s:@]+:[^/\s@]+@",                             # user:password@ in a URL
+        r"[?&][^=\s&]{1,40}=[^\s&\"']{1,200}",                  # URL query strings (keys travel there)
+        r"[A-Za-z0-9_\-]{32,}",                           # any long token-looking string
+    ])
 )
 
 
+def _known_secret_values() -> list[str]:
+    """The real key/token values configured in this process: they must never be stored."""
+    import os
+
+    markers = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+    return [v for k, v in os.environ.items() if v and len(v) >= 8 and any(m in k.upper() for m in markers)]
+
+
 def scrub_error(text: str, limit: int = 300) -> str:
-    """An error message that is safe to store and show: no keys or tokens, short."""
-    return _SECRETS.sub("[hidden]", str(text))[:limit]
+    """An error message that is safe to store and show: no keys, tokens, URL credentials or query
+    strings, and none of the secret values configured in the environment; short."""
+    out = str(text)
+    for value in _known_secret_values():
+        out = out.replace(value, "[hidden]")
+    return _SECRET_PATTERNS.sub("[hidden]", out)[:limit]
 
 
 class FailoverMixin:
