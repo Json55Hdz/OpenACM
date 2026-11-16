@@ -9,7 +9,7 @@ still answered.
 
 Only the first message of a burst (the "leader") gets a reply; the others return None.
 
-Tune with OPENACM_MESSAGE_DEBOUNCE (quiet seconds; 0 turns it off, default 1.5) and
+Tune with OPENACM_MESSAGE_DEBOUNCE (quiet seconds; 0 turns it off, default 1) and
 OPENACM_MESSAGE_DEBOUNCE_MAX (default 6).
 """
 
@@ -20,7 +20,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Hashable
 
-DEFAULT_QUIET_S = 1.5
+DEFAULT_QUIET_S = 1.0
 DEFAULT_MAX_WAIT_S = 6.0
 
 

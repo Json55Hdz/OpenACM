@@ -191,7 +191,7 @@ When someone sends several short messages in a row, OpenACM waits a moment and a
 
 | Environment variable | Default | Meaning |
 |----------------------|---------|---------|
-| `OPENACM_MESSAGE_DEBOUNCE` | `1.5` | Seconds of quiet before answering (`0` turns it off) |
+| `OPENACM_MESSAGE_DEBOUNCE` | `1` | Seconds of quiet before answering (`0` turns it off) |
 | `OPENACM_MESSAGE_DEBOUNCE_MAX` | `6` | Longest a burst can be held |
 
 Cancel words ("cancel", "stop") are never delayed, and messages sent while a reply is already being worked on keep being folded into that run.
