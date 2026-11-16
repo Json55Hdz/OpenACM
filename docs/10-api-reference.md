@@ -192,7 +192,7 @@ Resolve a pending `run_command` confirmation (the dashboard's approval dialog us
 |----------|-------------|
 | `GET /api/config` | Full configuration (API keys masked) |
 | `GET /api/config/status` | Whether setup is still needed (no provider configured) |
-| `GET /api/config/providers` | Which providers have credentials, plus Telegram/WhatsApp/Stitch flags |
+| `GET /api/config/providers` | Which providers have credentials, plus Telegram/WhatsApp flags |
 | `POST /api/config/setup` | Write keys to `config/.env` (e.g. `{"OPENAI_API_KEY": "sk-..."}`) and hot-restart Telegram/WhatsApp when their keys change |
 | `GET /api/config/model` | Current model: `{"model": "...", "provider": "..."}` |
 | `POST /api/config/model` | Switch model: `{"provider": "ollama", "model": "llama3.2"}` (persisted) |

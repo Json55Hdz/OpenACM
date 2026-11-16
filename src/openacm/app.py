@@ -332,12 +332,6 @@ class OpenACM:
         # Content tools are now registered by the ContentAutomationPlugin via plugin_manager
         # (see _init_plugins). Keep nothing here for content.
 
-        # Stitch tool (optional — requiere STITCH_API_KEY en config/.env)
-        try:
-            from openacm.tools import stitch_tool
-            self.tool_registry.register_module(stitch_tool)
-        except Exception as _stitch_err:
-            console.print(f"  [yellow]~[/yellow] Stitch tool skipped: {_stitch_err}")
 
         # Give brain access to tools
         self.brain.tool_registry = self.tool_registry

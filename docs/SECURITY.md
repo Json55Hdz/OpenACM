@@ -177,7 +177,7 @@ If you discover a security vulnerability:
 | `TELEGRAM_TOKEN` | Telegram Bot | Optional |
 | `XAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_GO_API_KEY` | Other built-in LLM providers | Optional |
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | WhatsApp Cloud API | Optional |
-| `STITCH_API_KEY`, `ELEVENLABS_API_KEY` | Google Stitch, ElevenLabs TTS | Optional |
+| `ELEVENLABS_API_KEY` | ElevenLabs TTS | Optional |
 | `DASHBOARD_TOKEN` | Web authentication | Auto-generated on first start |
 
 Google OAuth2 credentials are files, not variables: `config/google_credentials.json` and `config/google_token.json`.

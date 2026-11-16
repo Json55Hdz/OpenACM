@@ -12,7 +12,7 @@ Which tools are available depends on what is enabled: the `browser_agent` tool c
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `general` | `run_command`, `run_python`, `send_file_to_chat`, `create_agent`, `list_agents`, `delete_agent`, `create_or_update_agent_flow`, `stitch_generate_ui` | Core execution and agent management |
+| `general` | `run_command`, `run_python`, `send_file_to_chat`, `create_agent`, `list_agents`, `delete_agent`, `create_or_update_agent_flow` | Core execution and agent management |
 | `system` | `system_info`, `add_resurrection_path`, `save_user_profile`, cron tools, platform tools | OS info and platform self-management |
 | `file` | `read_file`, `write_file`, `list_directory`, `search_files`, `edit_file`, `read_file_range`, `grep_in_files`, `get_file_outline`, `run_linter` | File system and code editing |
 | `web` | `web_search`, `get_webpage`, `browser_agent` | Web search and browsing |
@@ -300,19 +300,6 @@ take_screenshot(
 ```
 
 **Returns:** Path to the saved screenshot. Use `send_file_to_chat` to deliver it.
-
-### `stitch_generate_ui`
-Generate an HTML UI screen from a description with Google Stitch. Requires `STITCH_API_KEY` in `config/.env`.
-
-**Risk:** Low
-
-```python
-stitch_generate_ui(
-    prompt: str,                    # Detailed description of the UI
-    device: str = "DESKTOP",        # "DESKTOP", "MOBILE", "TABLET"
-    model: str = "GEMINI_3_1_PRO",  # or "GEMINI_3_FLASH"
-)
-```
 
 ---
 

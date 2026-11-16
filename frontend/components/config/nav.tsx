@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Archive, Bot, Brain, Globe2, Mic, Paintbrush, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
+import { Archive, Bot, Brain, Globe2, Mic, Send, Server, Settings, Shield, Smartphone, Terminal, Zap } from 'lucide-react';
 
 export type NavSection =
   | 'assistant'
@@ -10,7 +10,6 @@ export type NavSection =
   | 'telegram'
   | 'whatsapp'
   | 'google'
-  | 'stitch'
   | 'router'
   | 'security'
   | 'resurrection'
@@ -35,7 +34,6 @@ export const NAV_GROUPS: { group: string; items: { id: NavSection; label: string
       { id: 'telegram', label: 'Telegram', icon: Send },
       { id: 'whatsapp', label: 'WhatsApp', icon: Smartphone },
       { id: 'google', label: 'Google Services', icon: Globe2 },
-      { id: 'stitch', label: 'Google Stitch', icon: Paintbrush },
     ],
   },
   {

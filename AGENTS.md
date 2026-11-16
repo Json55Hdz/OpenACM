@@ -30,7 +30,7 @@ Self-hosted autonomous AI agent. Python 3.12+ backend (FastAPI) + Next.js 16 fro
 - **Python `src` layout**: Package root is `src/openacm/`. `pyproject.toml` uses `tool.setuptools.packages.find.where = ["src"]`.
 - **Virtual env**: Setup scripts create `.venv/` and **force** its Python/PATH in `run.bat`/`run.sh`. Do not rely on system Python.
 - **Windows setup auto-elevates** to Administrator (required for `uv` and Playwright installs).
-- **Optional deps are truly optional**: voice, IoT, MCP, Stitch, ChromaDB, etc. are imported inside `try/except` blocks and skipped gracefully at runtime. Do not add hard dependencies for them.
+- **Optional deps are truly optional**: voice, IoT, MCP, ChromaDB, etc. are imported inside `try/except` blocks and skipped gracefully at runtime. Do not add hard dependencies for them.
 - **Config load order**: `config/default.yaml` → `config/.env` (dotenv) → Pydantic models in `src/openacm/core/config.py`.
 - **Debug mode**: Create `data/debug_mode` with contents `true` to enable DEBUG logging on startup.
 - **Dashboard token**: Auto-generated on first run and printed to console. Stored via `openacm/security/crypto.py`.

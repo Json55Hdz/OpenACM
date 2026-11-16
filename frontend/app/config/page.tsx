@@ -9,7 +9,7 @@ import { TelegramSetup } from '@/components/setup/telegram-setup';
 import { WhatsAppSetup, WhatsAppMode } from '@/components/setup/whatsapp-setup';
 import { useSaveSetup } from '@/hooks/use-setup';
 import { getProviderById } from '@/lib/providers';
-import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Paintbrush, Plus, Pencil, Server, X, Wand2, Archive, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
+import { Settings, Bot, Shield, Terminal, Save, Loader2, CheckCircle, RefreshCw, Send, Globe2, Trash2, Zap, Plus, Pencil, Server, X, Wand2, Archive, FolderOpen, AlertTriangle, Brain, MessageSquare, Code2, Lightbulb, Database, ScrollText, Smartphone } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ConfigSection, Divider, ToggleRow, StatTile, InfoRow, NavItem, NavGroupLabel } from '@/components/config/primitives';
@@ -237,23 +237,6 @@ export default function ConfigPage() {
     ? !!(waAccessToken.trim() && waPhoneNumberId.trim())
     : !!waBridgeUrl.trim();
 
-  // ─── Stitch ─────────────────────────────────────────────────────────────────
-  const [stitchKey, setStitchKey] = useState('');
-  const [stitchSaving, setStitchSaving] = useState(false);
-
-  const handleStitchSave = async () => {
-    if (!stitchKey.trim()) return;
-    setStitchSaving(true);
-    try {
-      await saveSetup.mutateAsync({ STITCH_API_KEY: stitchKey.trim() });
-      setStitchKey('');
-      toast.success('Stitch API key saved');
-    } catch {
-      toast.error('Failed to save Stitch API key');
-    } finally {
-      setStitchSaving(false);
-    }
-  };
 
   // ─── Model selection ────────────────────────────────────────────────────────
   const [customModel, setCustomModel] = useState('');
@@ -1957,70 +1940,6 @@ export default function ConfigPage() {
                   </details>
                 </div>
               )}
-            </ConfigSection>
-
-            {/* ── Google Stitch ── */}
-            <ConfigSection
-              id="section-stitch"
-              title="Google Stitch"
-              subtitle="AI-powered UI generation — creates HTML screens from text descriptions"
-              icon={Paintbrush}
-            >
-              {/* Integration row */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '10px 0',
-                  borderBottom: '1px solid var(--acm-border)',
-                  marginBottom: 16,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span
-                    className={`dot ${providerStatus?.stitch_configured ? 'dot-ok' : 'dot-idle'}`}
-                  />
-                  <div>
-                    <div style={{ fontSize: 13, color: 'var(--acm-fg-2)' }}>Stitch API</div>
-                    <div className="mono" style={{ fontSize: 11, color: 'var(--acm-fg-4)' }}>
-                      stitch.withgoogle.com
-                    </div>
-                  </div>
-                </div>
-                <button className="btn-secondary" style={{ fontSize: 12 }}>
-                  {providerStatus?.stitch_configured ? 'Manage' : 'Connect'}
-                </button>
-              </div>
-
-              {!providerStatus?.stitch_configured && (
-                <p style={{ fontSize: 11, color: 'var(--acm-fg-4)', marginBottom: 12, lineHeight: 1.6 }}>
-                  Get a key at <span className="mono">stitch.withgoogle.com</span> → Profile → Settings → API key → Create key
-                </p>
-              )}
-
-              <label className="label" style={{ display: 'block', marginBottom: 8 }}>
-                {providerStatus?.stitch_configured ? 'Update API key' : 'API key'}
-              </label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="password"
-                  className="acm-input mono"
-                  style={{ flex: 1 }}
-                  value={stitchKey}
-                  onChange={(e) => setStitchKey(e.target.value)}
-                  placeholder="Paste your Stitch API key..."
-                  onKeyDown={(e) => e.key === 'Enter' && handleStitchSave()}
-                />
-                <button
-                  className="btn-primary"
-                  onClick={handleStitchSave}
-                  disabled={!stitchKey.trim() || stitchSaving}
-                >
-                  {stitchSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                  Save
-                </button>
-              </div>
             </ConfigSection>
 
             {/* ── Security ── */}

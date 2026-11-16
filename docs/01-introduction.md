@@ -46,7 +46,6 @@ The key difference is agency — OpenACM completes tasks end-to-end without requ
 - Google Workspace (Gmail, Calendar, Drive, YouTube)
 - Smart Home control through the Home Assistant plugin
 - Screenshot capture
-- UI generation (Google Stitch)
 - Platform self-management: agents, flows, cron jobs, swarms, MCP servers, model and security mode
 
 See the [Tools Reference](./05-tools-reference.md) for the full list.

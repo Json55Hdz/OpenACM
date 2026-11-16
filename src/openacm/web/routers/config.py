@@ -306,8 +306,7 @@ def register_routes(app: FastAPI) -> None:
         providers = _get_provider_status()
         telegram_configured = _is_real_key("TELEGRAM_TOKEN")
         whatsapp_configured = _is_real_key("WHATSAPP_ACCESS_TOKEN") or _is_real_key("WHATSAPP_BRIDGE_URL")
-        stitch_configured = _is_real_key("STITCH_API_KEY")
-        return {"providers": providers, "telegram_configured": telegram_configured, "whatsapp_configured": whatsapp_configured, "stitch_configured": stitch_configured}
+        return {"providers": providers, "telegram_configured": telegram_configured, "whatsapp_configured": whatsapp_configured}
 
     @app.post("/api/config/setup")
     async def post_config_setup(request: Request):

@@ -81,7 +81,7 @@ INTENT_KEYWORDS: dict[str, list[str]] = {
         "ui", "interfaz", "interface", "pantalla", "screen", "dashboard",
         "formulario", "form", "landing", "página", "component", "componente",
         "diseño", "design", "frontend", "html", "react", "vue",
-        "stitch", "google stitch", "mockup", "prototipo", "prototype",
+        "mockup", "prototipo", "prototype",
         "layout", "card", "tabla", "table", "botón", "button",
     ],
 }

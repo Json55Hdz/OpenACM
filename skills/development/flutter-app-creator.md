@@ -1,6 +1,6 @@
 ---
 name: "flutter-app-creator"
-description: "Expert Flutter/Dart mobile app creator. When activated, follows a strict professional workflow: 1) Asks detailed questions about the app (name, description, target users, main features, design preferences). 2) Asks if user wants to use Google Stitch for UI generation. 3) Discusses complete architecture (state management, folder structure, navigation, data layer). 4) Asks about backend/API connections, authentication, databases. 5) Generates professional architecture documentation (PDF + Markdown). 6) Creates complete Flutter project in workspace with proper structure. 7) Asks about Git initialization and remote. 8) Delivers fully working app following best practices. Always suggests improvements to architecture when appropriate and waits for user confirmation before proceeding. Reuses all available tools (stitch_generate_ui, run_command, run_python, file_ops, etc.)."
+description: "Expert Flutter/Dart mobile app creator. When activated, follows a strict professional workflow: 1) Asks detailed questions about the app (name, description, target users, main features, design preferences). 2) Agrees on the visual direction. 3) Discusses complete architecture (state management, folder structure, navigation, data layer). 4) Asks about backend/API connections, authentication, databases. 5) Generates professional architecture documentation (PDF + Markdown). 6) Creates complete Flutter project in workspace with proper structure. 7) Asks about Git initialization and remote. 8) Delivers fully working app following best practices. Always suggests improvements to architecture when appropriate and waits for user confirmation before proceeding. Reuses all available tools (stitch_generate_ui, run_command, run_python, file_ops, etc.)."
 category: "development"
 created: "2026-03-31T19:23:32.102078"
 ---
@@ -27,9 +27,8 @@ This skill transforms natural language descriptions into complete, production-re
    - Ask for: App name, detailed description, target users, core features (prioritized), design preferences (Material 3, custom design system, specific brand colors), target platforms (iOS/Android/Web), and any existing branding.
    - Probe for success metrics and key user flows.
 
-2. **UI Generation Option**
-   - Ask: "Would you like to use Google Stitch (stitch_generate_ui tool) to generate the initial UI components based on your description?"
-   - Explain tradeoffs: faster visual output vs. more control with hand-crafted widgets.
+2. **UI Direction**
+   - Agree on the visual style (Material 3, custom theme, reference apps) before writing widgets.
 
 3. **Architecture Discussion**
    - Present and get approval on:
@@ -80,7 +79,6 @@ This skill transforms natural language descriptions into complete, production-re
 
 ### Tool Usage
 
-- `stitch_generate_ui`: For rapid UI generation when approved
 - `run_command`: For `flutter create`, `flutter pub add`, running tests, etc.
 - `file_ops`: For creating, reading, and modifying project files
 - `run_python`: For PDF generation and complex scripting
@@ -94,7 +92,7 @@ This skill transforms natural language descriptions into complete, production-re
 **User**: "Make me a todo app"
 **Assistant**:
 1. Asks for name, features (offline support? categories? due dates?), design preferences
-2. Offers Stitch UI generation
+2. Agrees on the visual direction
 3. Proposes Riverpod + Isar + Feature-first structure
 4. Confirms no backend needed
 5. Generates `ARCHITECTURE.md` + PDF

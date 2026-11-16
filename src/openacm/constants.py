@@ -53,8 +53,6 @@ TRUNCATE_DB_ERROR_CHARS = 2_000
 # Behaviors string collected during onboarding interview
 TRUNCATE_ONBOARDING_BEHAVIORS_CHARS = 1_000
 
-# Stitch tool HTML preview
-TRUNCATE_STITCH_PREVIEW_CHARS = 2_000
 
 # RAG document context passed to LLM in /chat/rag endpoint
 TRUNCATE_RAG_CONTEXT_CHARS = 12_000

@@ -160,7 +160,6 @@ The loop debugger: for each recent request, every agentic iteration with message
 - **Local Intent Router** — enable/disable and confidence threshold
 - **WhatsApp** — Cloud API credentials or bridge URL
 - **Google Services** — upload OAuth credentials and authorize Gmail/Calendar/Drive/YouTube
-- **Google Stitch** — API key for UI generation
 - **Security** — execution mode (`confirmation`, `auto`, `yolo`), debug logging
 - **Code Resurrection** — folders to index
 - **Advanced** — raw config view

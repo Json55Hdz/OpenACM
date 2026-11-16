@@ -166,7 +166,6 @@ WHATSAPP_APP_SECRET=...
 DASHBOARD_TOKEN=                     # auto-generated and written here on first start
 
 # ── Optional ──────────────────────────────────────────────────────────────────
-STITCH_API_KEY=...                   # Google Stitch UI generation tool
 ELEVENLABS_API_KEY=...               # ElevenLabs TTS provider
 STABILITY_API_KEY=...                # image-generation mode of generate_meme
 OPENACM_VERBOSE_CHANNELS=true        # send tool logs to external channels
