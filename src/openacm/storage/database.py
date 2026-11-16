@@ -213,16 +213,20 @@ class Database(MigrationsMixin, SwarmsMixin, AgentsMixin, WatchersMixin, SkillsS
         await self._db.commit()
 
     async def get_conversation(
-        self, user_id: str, channel_id: str, limit: int = 50
+        self, user_id: str, channel_id: str, limit: int = 50, before_id: int | None = None
     ) -> list[dict[str, Any]]:
-        """Get conversation history (content decrypted on read)."""
+        """Get conversation history (content decrypted on read), oldest first.
+
+        `before_id` pages backwards: only messages older than that id, so the dashboard can
+        keep loading earlier pages ("load earlier messages").
+        """
         if not self._db:
             return []
         cursor = await self._db.execute(
-            "SELECT role, content, timestamp, extra_data FROM messages "
-            "WHERE user_id = ? AND channel_id = ? "
+            "SELECT id, role, content, timestamp, extra_data FROM messages "
+            "WHERE user_id = ? AND channel_id = ? AND (? IS NULL OR id < ?) "
             "ORDER BY id DESC LIMIT ?",
-            (user_id, channel_id, limit),
+            (user_id, channel_id, before_id, before_id, limit),
         )
         rows = await cursor.fetchall()
         result = []

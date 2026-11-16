@@ -35,6 +35,69 @@ interface Conversation {
   show_in_chat?: boolean;
 }
 
+const HISTORY_PAGE = 60;
+
+type HistoryRow = { id?: number; role: string; content: string; timestamp?: string };
+
+/** Saved rows -> chat messages (attachments rebuilt from markers and tool results). */
+function historyToMessages(history: HistoryRow[]) {
+    // Files the assistant produced live in tool results ("ATTACHMENT:<name>"), which the list
+    // below drops: hand them to the next visible assistant reply of the same turn.
+    const producedFor = new Map<number, string[]>();
+    let pendingProduced: string[] = [];
+    history.forEach((m: { role: string; content: string }, i: number) => {
+      if (m.role === 'tool' && typeof m.content === 'string' && m.content.startsWith('ATTACHMENT:')) {
+        const name = m.content.split('\n')[0].replace('ATTACHMENT:', '').trim();
+        if (name) pendingProduced.push(name);
+      } else if (m.role === 'user') {
+        pendingProduced = [];
+      } else if (m.role === 'assistant' && m.content && m.content.trim() && pendingProduced.length) {
+        producedFor.set(i, pendingProduced);
+        pendingProduced = [];
+      }
+    });
+    const visible = history
+      .map((msg: { role: string; content: string; timestamp?: string }, i: number) => ({ msg, i }))
+      .filter(({ msg }: { msg: { role: string; content: string } }) => {
+        // Skip system prompts, tool results, and assistant-only-tool-call messages
+        if (msg.role === 'system') return false;
+        if (msg.role === 'tool') return false;
+        // Skip assistant messages that have no visible text (were just tool-call planners)
+        if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
+        return true;
+      })
+      .map(({ msg, i }: { msg: { role: string; content: string; timestamp?: string }; i: number }) => {
+        // Parse [IMAGE:id] / [FILE:id] markers back into attachment objects
+        const attachments: Array<{ id: string; name: string; type: string }> = [];
+        const seen = new Set<string>();
+        const add = (fileId: string) => {
+          if (seen.has(fileId)) return;
+          seen.add(fileId);
+          const ext = fileId.split('.').pop()?.toLowerCase() ?? '';
+          const type = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
+            : ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'weba', 'webm'].includes(ext) ? `audio/${ext}`
+            : 'file';
+          attachments.push({ id: fileId, name: fileId, type });
+        };
+        const content = msg.content.replace(/\[(?:IMAGE|FILE):([^\]]+)\]/g, (_, fileId) => {
+          add(fileId);
+          return '';
+        }).trim();
+        // Messages saved before the [FILE:] marker existed only name the file in their text
+        if (msg.role === 'user') {
+          for (const m of msg.content.matchAll(/\[(?:Audio file attached: |PDF — |Image — |Image attached: |File attached: )?([0-9a-f]{32}\.[A-Za-z0-9]{2,5})\b/g)) add(m[1]);
+        }
+        (producedFor.get(i) ?? []).forEach(add);
+        return {
+          content,
+          role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+          timestamp: msg.timestamp,
+          ...(attachments.length > 0 ? { attachments } : {}),
+        };
+      });
+  return visible;
+}
+
 export default function ChatPage() {
   const {
     messages,
@@ -72,6 +135,33 @@ export default function ChatPage() {
   const { data: systemInfo } = useSystemInfo();
   const { data: registeredAgents } = useAgents();
   const { fetchAPI } = useAPI();
+  const [oldestId, setOldestId] = useState<number | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const keepScrollRef = useRef(false);
+
+  const loadEarlier = async () => {
+    if (loadingMore || oldestId == null) return;
+    const { channel, user } = useChatStore.getState().currentTarget;
+    const el = feedRef.current;
+    const before = el ? el.scrollHeight - el.scrollTop : 0;
+    setLoadingMore(true);
+    try {
+      const rows: HistoryRow[] = await fetchAPI(`/api/conversations/${channel}/${user}?limit=${HISTORY_PAGE}&before=${oldestId}`);
+      if (Array.isArray(rows) && rows.length > 0) {
+        keepScrollRef.current = true;
+        useChatStore.getState().setMessages([...historyToMessages(rows), ...useChatStore.getState().messages]);
+        const ids = rows.map((r) => r.id).filter((x): x is number => typeof x === 'number');
+        if (ids.length) setOldestId(Math.min(...ids));
+        // keep what the user was reading in place instead of jumping to the bottom
+        requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - before; });
+      }
+      setHasMore(Array.isArray(rows) && rows.length >= HISTORY_PAGE);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
   const queryClient = useQueryClient();
 
   const { isOpen: isTerminalOpen, toggleOpen: toggleTerminal } = useTerminalStore();
@@ -139,60 +229,10 @@ export default function ChatPage() {
       // the per-conversation cache), keep them — they have usage/token data.
       if (useChatStore.getState().messages.length > 0) return;
       if (history.length > 0) {
-        // Files the assistant produced live in tool results ("ATTACHMENT:<name>"), which the list
-        // below drops: hand them to the next visible assistant reply of the same turn.
-        const producedFor = new Map<number, string[]>();
-        let pendingProduced: string[] = [];
-        history.forEach((m: { role: string; content: string }, i: number) => {
-          if (m.role === 'tool' && typeof m.content === 'string' && m.content.startsWith('ATTACHMENT:')) {
-            const name = m.content.split('\n')[0].replace('ATTACHMENT:', '').trim();
-            if (name) pendingProduced.push(name);
-          } else if (m.role === 'user') {
-            pendingProduced = [];
-          } else if (m.role === 'assistant' && m.content && m.content.trim() && pendingProduced.length) {
-            producedFor.set(i, pendingProduced);
-            pendingProduced = [];
-          }
-        });
-        const visible = history
-          .map((msg: { role: string; content: string; timestamp?: string }, i: number) => ({ msg, i }))
-          .filter(({ msg }: { msg: { role: string; content: string } }) => {
-            // Skip system prompts, tool results, and assistant-only-tool-call messages
-            if (msg.role === 'system') return false;
-            if (msg.role === 'tool') return false;
-            // Skip assistant messages that have no visible text (were just tool-call planners)
-            if (msg.role === 'assistant' && (!msg.content || !msg.content.trim())) return false;
-            return true;
-          })
-          .map(({ msg, i }: { msg: { role: string; content: string; timestamp?: string }; i: number }) => {
-            // Parse [IMAGE:id] / [FILE:id] markers back into attachment objects
-            const attachments: Array<{ id: string; name: string; type: string }> = [];
-            const seen = new Set<string>();
-            const add = (fileId: string) => {
-              if (seen.has(fileId)) return;
-              seen.add(fileId);
-              const ext = fileId.split('.').pop()?.toLowerCase() ?? '';
-              const type = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext) ? `image/${ext === 'jpg' ? 'jpeg' : ext}`
-                : ['mp3', 'wav', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'weba', 'webm'].includes(ext) ? `audio/${ext}`
-                : 'file';
-              attachments.push({ id: fileId, name: fileId, type });
-            };
-            const content = msg.content.replace(/\[(?:IMAGE|FILE):([^\]]+)\]/g, (_, fileId) => {
-              add(fileId);
-              return '';
-            }).trim();
-            // Messages saved before the [FILE:] marker existed only name the file in their text
-            if (msg.role === 'user') {
-              for (const m of msg.content.matchAll(/\[(?:Audio file attached: |PDF — |Image — |Image attached: |File attached: )?([0-9a-f]{32}\.[A-Za-z0-9]{2,5})\b/g)) add(m[1]);
-            }
-            (producedFor.get(i) ?? []).forEach(add);
-            return {
-              content,
-              role: (msg.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
-              timestamp: msg.timestamp,
-              ...(attachments.length > 0 ? { attachments } : {}),
-            };
-          });
+        const visible = historyToMessages(history);
+        const ids = history.map((r: HistoryRow) => r.id).filter((x: number | undefined): x is number => typeof x === 'number');
+        setOldestId(ids.length ? Math.min(...ids) : null);
+        setHasMore(history.length >= HISTORY_PAGE);
         setMessages(visible);
       }
     }
@@ -209,6 +249,7 @@ export default function ChatPage() {
 
   // Auto-scroll to bottom
   useEffect(() => {
+    if (keepScrollRef.current) { keepScrollRef.current = false; return; } // older messages were added on top
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaitingResponse]);
 
@@ -831,13 +872,25 @@ export default function ChatPage() {
           </div>
 
           {/* Messages feed */}
-          <div className="flex-1 overflow-y-auto acm-scroll px-[20px] py-[16px] space-y-[16px] relative">
+          <div ref={feedRef} onScroll={(e) => { if (hasMore && !loadingMore && e.currentTarget.scrollTop < 80) void loadEarlier(); }} className="flex-1 overflow-y-auto acm-scroll px-[20px] py-[16px] space-y-[16px] relative">
             {/* Floating status badges */}
             {(isRouterLearning || activeSkillNames.length > 0 || memoryRecall) && (
               <div className="sticky top-2 z-10 flex justify-end gap-2 pointer-events-none">
                 {memoryRecall && <MemoryRecallIndicator status={memoryRecall.status} count={memoryRecall.count} />}
                 {isRouterLearning && <RouterLearningIndicator />}
                 {activeSkillNames.length > 0 && <SkillActiveIndicator names={activeSkillNames} />}
+              </div>
+            )}
+
+            {hasMore && messages.length > 0 && (
+              <div className="flex justify-center">
+                <button
+                  onClick={() => void loadEarlier()}
+                  disabled={loadingMore}
+                  className="mono text-[11px] px-[12px] py-[5px] border border-[var(--acm-border)] bg-[var(--acm-card)] rounded-full text-[var(--acm-fg-3)] hover:text-[var(--acm-fg)] transition-colors"
+                >
+                  {loadingMore ? 'Loading…' : 'Load earlier messages'}
+                </button>
               </div>
             )}
 

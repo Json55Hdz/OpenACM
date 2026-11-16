@@ -470,11 +470,11 @@ def register_routes(app: FastAPI) -> None:
         return result
 
     @app.get("/api/conversations/{channel_id}/{user_id}")
-    async def get_conversation(channel_id: str, user_id: str, limit: int = 50):
-        """Get conversation history."""
+    async def get_conversation(channel_id: str, user_id: str, limit: int = 50, before: int | None = None):
+        """Get conversation history; `before=<message id>` returns the page of older messages."""
         if not _state.database:
             return []
-        return await _state.database.get_conversation(user_id, channel_id, limit)
+        return await _state.database.get_conversation(user_id, channel_id, min(max(limit, 1), 200), before)
 
     @app.delete("/api/conversations/{channel_id}/{user_id}")
     async def delete_conversation(channel_id: str, user_id: str):
