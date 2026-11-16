@@ -123,7 +123,8 @@ echo -e "\033[1;32m[OK] Dependencias instaladas.\033[0m"
 echo -e "\033[1;33m[*] Descargando navegadores para el Agente Web (Playwright)...\033[0m"
 # Chromium (~150 MB) is only needed by the web-browsing agent: download it in the background so the
 # first start is not delayed by it.
-(uv run playwright install --with-deps chromium >/tmp/openacm-chromium.log 2>&1 &)
+mkdir -p data/logs
+(uv run playwright install --with-deps chromium >data/logs/chromium-install.log 2>&1 &)
 echo -e "\033[1;32m[OK] Chromium se descarga en segundo plano.\033[0m"
 
 # Final verification
