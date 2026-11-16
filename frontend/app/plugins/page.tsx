@@ -12,6 +12,7 @@ import {
   PLUGIN_MARKETPLACE_URL,
 } from '@/hooks/use-plugins';
 import { PluginConfigForm } from '@/components/plugins/plugin-config-form';
+import { PluginUpload } from '@/components/plugins/plugin-upload';
 import { AppLayout } from '@/components/layout/app-layout';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -175,6 +176,8 @@ export default function PluginsPage() {
             </button>
           </form>
         )}
+
+        {!showDocs && <PluginUpload />}
 
         {needsRestart && (
           <div
