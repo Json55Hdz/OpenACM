@@ -460,6 +460,11 @@ class MemoryManager:
             to_summarize = rest[:-keep_count] if keep_count < len(rest) else []
             to_keep = rest[-keep_count:] if keep_count < len(rest) else rest
 
+            # Never cut between a tool call and its results: a kept window that starts with a
+            # tool result whose call was summarized away is rejected by the provider (400).
+            while to_summarize and to_keep and to_keep[0].get("role") == "tool":
+                to_keep = [to_summarize.pop()] + to_keep
+
             if len(to_summarize) < 2:
                 return None
 

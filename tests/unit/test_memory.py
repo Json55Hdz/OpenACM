@@ -278,3 +278,29 @@ class TestNoteOutgoing:
         await mem.note_outgoing("u1", "web", "Job 5 has a question")
         msgs = await mem.get_or_create("u1", "web", "system prompt")
         assert [m["content"] for m in msgs] == ["system prompt", "earlier question", "Job 5 has a question"]
+
+
+async def test_compact_never_leaves_an_orphan_tool_result(db, event_bus, app_config):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from openacm.core.memory import MemoryManager
+
+    llm = MagicMock()
+    llm.chat = AsyncMock(return_value={"content": "SUMMARY"})
+    app_config.assistant.compact_keep_recent = 3
+    m = MemoryManager(database=db, config=app_config.assistant, llm_router=llm, event_bus=event_bus)
+    k = m._key("u", "c")
+    call = {"role": "assistant", "content": "", "tool_calls": [{"id": "t1", "function": {"name": "x", "arguments": "{}"}}]}
+    m._cache[k] = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "a"}, {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "c"}, call,
+        {"role": "tool", "content": "r", "tool_call_id": "t1"},
+        {"role": "tool", "content": "r2", "tool_call_id": "t1"},
+        {"role": "assistant", "content": "done"},
+    ]
+    assert await m._compact("u", "c") == "SUMMARY"
+    kept = m._cache[k]
+    first_after_summary = kept[2]
+    assert first_after_summary["role"] != "tool"
+    assert call in kept  # the call travels with its results
