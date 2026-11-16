@@ -138,6 +138,7 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
   const micStreamRef = useRef<MediaStream | null>(null);
   const micAnalyserRef = useRef<AnalyserNode | null>(null);
   const micAnimRef = useRef<number>(0);
+  const lastSentRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
 
   const browserSpeechSupported = typeof window !== 'undefined' &&
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
@@ -368,10 +369,17 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
       src.connect(analyser);
       micAnalyserRef.current = analyser;
       const buf = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
+      // The level lives in a provider that wraps the whole app: publishing it 60 times a second
+      // re-rendered everything and froze the page. ~12 updates/s, and only when it visibly changed.
+      let lastPublish = 0;
+      let lastLevel = -1;
+      const tick = (now = 0) => {
         analyser.getByteFrequencyData(buf);
-        const avg = buf.reduce((a, b) => a + b, 0) / buf.length / 255;
-        setMicAmplitude(avg);
+        if (now - lastPublish >= 80) {
+          const avg = Math.round((buf.reduce((a, b) => a + b, 0) / buf.length / 255) * 50) / 50;
+          if (avg !== lastLevel) { lastLevel = avg; setMicAmplitude(avg); }
+          lastPublish = now;
+        }
         micAnimRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -457,6 +465,15 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
     r.lang = config?.voice_language ?? 'en-US';
     r.maxAlternatives = 1;
 
+    // Same text twice within 3 s is the recognizer repeating itself, not the user.
+    const sendOnce = (text: string) => {
+      const now = Date.now();
+      const last = lastSentRef.current;
+      if (last.text === text && now - last.at < 3000) return;
+      lastSentRef.current = { text, at: now };
+      sendToChat(text);
+    };
+
     r.onresult = (event: SpeechRecognitionEvent) => {
       const state = voiceStateRef.current;
       if (state === 'disabled' || state === 'processing') return;
@@ -480,22 +497,23 @@ export function useVoiceEngine(): UseVoiceEngineReturn {
         const transcript = result[0].transcript;
         const isFinal = result.isFinal;
 
-        if (state === 'passive') {
-          // Only check for wake word on interim/final results
+        if (state === 'passive' || state === 'activating') {
+          // Interim results repeat while the user speaks: act only on the FINAL one, once, so one
+          // sentence is one message (before, every partial result queued its own send).
           if (containsWakeWord(transcript, config?.assistant_name ?? '')) {
-            const command = extractCommand(transcript, config?.assistant_name ?? '');
-            setState('activating');
-            setTimeout(() => {
-              if (command.length > 2) {
-                sendToChat(command);
-              } else {
-                setState('listening');
-              }
-            }, 350);
+            if (isFinal) {
+              const command = extractCommand(transcript, config?.assistant_name ?? '');
+              if (command.length > 2) sendOnce(command);
+              else setState('listening');
+            } else if (state === 'passive') {
+              setState('activating');
+            }
+          } else if (isFinal && state === 'activating') {
+            sendOnce(transcript.trim());
           }
         } else if (state === 'listening' && isFinal) {
           const text = transcript.trim();
-          if (text.length > 1) sendToChat(text);
+          if (text.length > 1) sendOnce(text);
         }
       }
     };
