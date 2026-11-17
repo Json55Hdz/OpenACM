@@ -48,6 +48,17 @@ def _collection_dir(collection: str) -> Path | None:
     return path if path.is_dir() else None
 
 
+def available_collections() -> list[str]:
+    root = _knowledge_root()
+    return sorted(p.name for p in root.glob("*") if p.is_dir()) if root.is_dir() else []
+
+
+def _not_found(collection: str) -> str:
+    names = available_collections()
+    listing = ", ".join(f"'{n}'" for n in names) if names else "none yet"
+    return f"Error: knowledge collection '{collection}' not found. Available collections: {listing}. Pass one of them as 'collection'."
+
+
 def _split_blocks(file: Path) -> list[dict]:
     """Split one Markdown file into searchable blocks (one per '### ' record / '## ' section)."""
     text = file.read_text(encoding="utf-8", errors="replace")
@@ -140,7 +151,7 @@ def _search(blocks: list[dict], query: str, filtro: str, max_results: int) -> li
                 "description": "Optional words that must appear in the record's context, e.g. 'Bogota EPS' or 'Ibague MP'.",
                 "default": "",
             },
-            "collection": {"type": "string", "description": "Knowledge collection folder name.", "default": "colsanitas"},
+            "collection": {"type": "string", "description": "Knowledge collection folder name. Use the one your instructions name; if unsure, the error lists the available ones.", "default": "colsanitas"},
             "max_results": {"type": "integer", "description": "Max records to return (default 6, max 12).", "default": 6},
         },
         "required": ["query"],
@@ -151,7 +162,7 @@ def _search(blocks: list[dict], query: str, filtro: str, max_results: int) -> li
 async def search_knowledge(query: str, filtro: str = "", collection: str = "colsanitas", max_results: int = 6, **kwargs) -> str:
     blocks = _load(collection)
     if blocks is None:
-        return f"Error: knowledge collection '{collection}' not found."
+        return _not_found(collection)
     max_results = max(1, min(int(max_results or 6), 12))
     results = _search(blocks, query, filtro, max_results)
     if not results:
@@ -208,7 +219,7 @@ async def search_knowledge(query: str, filtro: str = "", collection: str = "cols
 async def read_knowledge_file(file: str, offset: int = 0, collection: str = "colsanitas", **kwargs) -> str:
     base = _collection_dir(collection)
     if base is None:
-        return f"Error: knowledge collection '{collection}' not found."
+        return _not_found(collection)
     if not re.fullmatch(r"[A-Za-z0-9_\-\.]+\.md", file or ""):
         return "Error: invalid file name."
     path = (base / file).resolve()

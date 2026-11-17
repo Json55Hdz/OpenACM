@@ -601,6 +601,21 @@ def register_routes(app: FastAPI) -> None:
 
     _KNOWLEDGE_UPLOAD_MAX = 20 * 1024 * 1024  # bytes per file
 
+    @app.post("/api/knowledge-collections")
+    async def create_knowledge_collection(request: Request):
+        """Make a new, empty collection (a folder of Markdown files an agent can search)."""
+        from openacm.tools import knowledge_tools as kt
+
+        data = await request.json()
+        name = str(data.get("name", "")).strip().lower().replace(" ", "-")
+        if not re.fullmatch(r"[a-z0-9_\-]{2,40}", name):
+            raise HTTPException(status_code=400, detail="El nombre debe tener 2-40 letras minúsculas, números, - o _")
+        path = kt._knowledge_root() / name
+        if path.exists():
+            raise HTTPException(status_code=409, detail="Ya existe una colección con ese nombre")
+        path.mkdir(parents=True)
+        return {"ok": True, "collection": name}
+
     @app.post("/api/knowledge-files/{collection}")
     async def upload_knowledge_file(collection: str, file: UploadFile = File(...), title: str = Form("")):
         """Add a document to a collection: any text/PDF/Word/Excel file, stored as Markdown.

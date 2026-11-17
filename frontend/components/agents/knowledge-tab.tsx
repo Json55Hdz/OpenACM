@@ -20,11 +20,33 @@ function KnowledgeFilesSection() {
   const [uploading, setUploading] = useState(false);
   const [target, setTarget] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [newCollection, setNewCollection] = useState('');
+  const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
 
   const total = collections.reduce((n, c) => n + c.files.length, 0);
-  if (collections.length === 0) return null;
-  const targetCollection = target || collections[0].collection;
+  const targetCollection = target || collections[0]?.collection || '';
+
+  const createCollection = async () => {
+    const name = newCollection.trim();
+    if (!name) return;
+    setCreating(true);
+    try {
+      const res = await fetchAPI('/api/knowledge-collections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      toast.success(`Colección «${res.collection}» creada`);
+      setNewCollection('');
+      setTarget(res.collection);
+      qc.invalidateQueries({ queryKey: ['knowledge-files'] });
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo crear la colección');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const upload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -100,7 +122,7 @@ function KnowledgeFilesSection() {
       >
         <span className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-blue-400" />
-          Archivos de la base de búsqueda ({total})
+          Archivos de la base de búsqueda ({total} en {collections.length} {collections.length === 1 ? 'colección' : 'colecciones'})
         </span>
         <span className="text-xs text-zinc-500">{open ? 'Ocultar' : 'Ver'}</span>
       </button>
@@ -108,7 +130,9 @@ function KnowledgeFilesSection() {
         <div className="px-3 pb-3 space-y-2">
           <p className="text-xs text-zinc-500">
             Documentos que el agente consulta con sus herramientas de búsqueda (no van completos en el prompt).
-            Los cambios se aplican al instante.
+            Los cambios se aplican al instante. Cada colección es una carpeta: para que un agente use la suya,
+            actívale la herramienta <span className="font-mono">search_knowledge</span> y escribe su nombre en sus instrucciones
+            (por ejemplo: «consulta con search_knowledge usando collection=&quot;mi-coleccion&quot;»).
           </p>
           {editing ? (
             <div className="space-y-2">
@@ -139,6 +163,22 @@ function KnowledgeFilesSection() {
           ) : (
             <>
               <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  value={newCollection}
+                  onChange={(e) => setNewCollection(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') createCollection(); }}
+                  placeholder="Nueva colección (ej. ventas)"
+                  className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 w-48"
+                />
+                <button
+                  onClick={createCollection}
+                  disabled={creating || !newCollection.trim()}
+                  className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 rounded text-zinc-100 transition-colors"
+                >
+                  Crear colección
+                </button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
                 {collections.length > 1 && (
                   <select
                     value={targetCollection}
@@ -148,6 +188,7 @@ function KnowledgeFilesSection() {
                     {collections.map((c) => <option key={c.collection} value={c.collection}>{c.collection}</option>)}
                   </select>
                 )}
+                {targetCollection && (
                 <label className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded text-white cursor-pointer transition-colors flex items-center gap-1">
                   {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                   {uploading ? 'Subiendo…' : `Agregar archivos a ${targetCollection}`}
@@ -160,6 +201,7 @@ function KnowledgeFilesSection() {
                     onChange={(e) => { upload(e.target.files); e.target.value = ''; }}
                   />
                 </label>
+                )}
                 <span className="text-xs text-zinc-500">PDF, Word, Excel, texto… hasta 20 MB; se convierten a Markdown.</span>
               </div>
               <input
@@ -169,6 +211,11 @@ function KnowledgeFilesSection() {
                 className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
               />
               <div className="max-h-80 overflow-y-auto space-y-1">
+                {collections.filter((c) => c.files.length === 0).map((c) => (
+                  <p key={`empty-${c.collection}`} className="text-xs text-zinc-500 py-1 border-b border-zinc-800">
+                    <span className="font-mono text-zinc-300">{c.collection}</span> · vacía: agrégale archivos con el botón azul
+                  </p>
+                ))}
                 {collections.map((c) =>
                   c.files
                     .filter((f) => !q || f.name.toLowerCase().includes(q) || f.title.toLowerCase().includes(q))

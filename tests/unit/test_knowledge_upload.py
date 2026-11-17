@@ -69,3 +69,24 @@ async def test_delete_cannot_leave_the_collection(dashboard_token, client, kb):
     (kb.parent / "secret.md").write_text("TOP SECRET", encoding="utf-8")
     await client.delete("/api/knowledge-files/demo/..%2Fsecret.md", headers=H)
     assert (kb.parent / "secret.md").exists()
+
+
+async def test_create_collection_then_use_it(dashboard_token, client, kb):
+    res = await client.post("/api/knowledge-collections", json={"name": "Ventas Q1"}, headers=H)
+    assert res.status_code == 200 and res.json()["collection"] == "ventas-q1"
+    assert (kb.parent / "ventas-q1").is_dir()
+
+    listing = (await client.get("/api/knowledge-files", headers=H)).json()
+    assert {"collection": "ventas-q1", "files": []} in listing
+
+    await client.post("/api/knowledge-files/ventas-q1", files={"file": ("lista.md", b"# Lista\n\n## Precio\nel plan gold cuesta cien", "text/markdown")}, headers=H)
+    assert "plan gold" in await kt.search_knowledge("plan gold", collection="ventas-q1")
+
+    assert (await client.post("/api/knowledge-collections", json={"name": "ventas-q1"}, headers=H)).status_code == 409
+    for bad in ("../x", "a", "con/barra", ""):
+        assert (await client.post("/api/knowledge-collections", json={"name": bad}, headers=H)).status_code == 400
+
+
+async def test_unknown_collection_error_lists_the_available_ones(dashboard_token, kb):
+    out = await kt.search_knowledge("algo", collection="no-existe")
+    assert "not found" in out and "'demo'" in out
