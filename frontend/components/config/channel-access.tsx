@@ -11,6 +11,7 @@ type Level = 'none' | 'basic' | 'custom';
 interface ChannelConf { mode: 'public' | 'whitelist'; owners: string[]; guest: { level: Level; tools: string[] } }
 interface ChatConf { level: 'blocked' | Level | 'owner'; tools: string[] }
 interface Unknown { channel: string; user_id: string; chat_id: string; last: number; count: number; talked: boolean }
+type Draft = { channels: Record<string, ChannelConf>; chats: Record<string, ChatConf> };
 interface Data {
   channels: Record<string, ChannelConf>;
   chats: Record<string, ChatConf>;
@@ -65,8 +66,8 @@ export function ChannelAccessSection() {
     if (data && !draft) setDraft({ channels: data.channels, chats: data.chats });
   }, [data, draft]);
 
-  const save = useMutation<unknown, Error, void>({
-    mutationFn: () => fetchAPI('/api/channel-access', { method: 'PUT', body: JSON.stringify(draft) }),
+  const save = useMutation<unknown, Error, Draft | void>({
+    mutationFn: (next) => fetchAPI('/api/channel-access', { method: 'PUT', body: JSON.stringify(next ?? draft) }),
     onSuccess: () => { toast.success('Permisos guardados'); qc.invalidateQueries({ queryKey: ['channel-access'] }); },
     onError: (e) => toast.error(e.message),
   });
@@ -76,10 +77,17 @@ export function ChannelAccessSection() {
 
   const setChannel = (id: string, patch: Partial<ChannelConf>) =>
     setDraft({ ...draft, channels: { ...draft.channels, [id]: { ...draft.channels[id], ...patch } } });
+  // Adding or removing an owner is saved at once: it used to wait for the "Guardar permisos" button
+  // at the bottom, so people added their ID, never pressed it, and the bot kept treating them as a guest.
+  const saveOwners = (id: string, owners: string[]) => {
+    const next = { ...draft, channels: { ...draft.channels, [id]: { ...draft.channels[id], owners } } };
+    setDraft(next);
+    save.mutate(next);
+  };
   const addOwner = (id: string, value: string) => {
     const v = value.trim();
     if (!v || draft.channels[id].owners.includes(v)) return;
-    setChannel(id, { owners: [...draft.channels[id].owners, v] });
+    saveOwners(id, [...draft.channels[id].owners, v]);
     setNewOwner({ ...newOwner, [id]: '' });
   };
 
@@ -121,7 +129,7 @@ export function ChannelAccessSection() {
                 {c.owners.map((o) => (
                   <span key={o} className="mono" style={{ fontSize: 12, padding: '3px 8px', border: '1px solid var(--acm-border)', borderRadius: 999, display: 'inline-flex', gap: 6, alignItems: 'center' }}>
                     {o}
-                    <button aria-label={`Quitar ${o}`} onClick={() => setChannel(id, { owners: c.owners.filter((x) => x !== o) })} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--acm-fg-4)' }}>×</button>
+                    <button aria-label={`Quitar ${o}`} onClick={() => saveOwners(id, c.owners.filter((x) => x !== o))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--acm-fg-4)' }}>×</button>
                   </span>
                 ))}
                 <input
@@ -205,7 +213,7 @@ export function ChannelAccessSection() {
 
       <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button className="btn-primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>Guardar permisos</button>
-        {dirty && <span style={{ fontSize: 12, color: 'var(--acm-fg-4)' }}>Hay cambios sin guardar.</span>}
+        {dirty && <span style={{ fontSize: 12, color: 'var(--acm-accent)', fontWeight: 600 }}>Hay cambios sin guardar: pulsa «Guardar permisos».</span>}
       </div>
     </ConfigSection>
   );
