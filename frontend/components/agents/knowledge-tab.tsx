@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAgentKnowledge, useAgentKnowledgeMutations, useKnowledgeFiles, type KnowledgeItem } from '@/hooks/use-agents';
 import { useAPI } from '@/hooks/use-api';
 import { Plus, Trash2, Loader2, X, FileText, Upload, BookOpen, Pencil, AlertTriangle } from 'lucide-react';
@@ -16,9 +17,45 @@ function KnowledgeFilesSection() {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [target, setTarget] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   const total = collections.reduce((n, c) => n + c.files.length, 0);
-  if (total === 0) return null;
+  if (collections.length === 0) return null;
+  const targetCollection = target || collections[0].collection;
+
+  const upload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    let ok = 0;
+    for (const f of Array.from(files)) {
+      try {
+        const body = new FormData();
+        body.append('file', f);
+        await fetchAPI(`/api/knowledge-files/${targetCollection}`, { method: 'POST', body });
+        ok += 1;
+      } catch (err: any) {
+        toast.error(`${f.name}: ${err.message || 'no se pudo subir'}`);
+      }
+    }
+    setUploading(false);
+    if (ok) toast.success(ok === 1 ? 'Archivo agregado' : `${ok} archivos agregados`);
+    qc.invalidateQueries({ queryKey: ['knowledge-files'] });
+  };
+
+  const remove = async (collection: string, name: string) => {
+    try {
+      await fetchAPI(`/api/knowledge-files/${collection}/${name}`, { method: 'DELETE' });
+      toast.success('Archivo borrado');
+      qc.invalidateQueries({ queryKey: ['knowledge-files'] });
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo borrar');
+    } finally {
+      setConfirmDelete(null);
+    }
+  };
 
   const openFile = async (collection: string, name: string) => {
     setEditing({ collection, name });
@@ -101,6 +138,30 @@ function KnowledgeFilesSection() {
             </div>
           ) : (
             <>
+              <div className="flex items-center gap-2 flex-wrap">
+                {collections.length > 1 && (
+                  <select
+                    value={targetCollection}
+                    onChange={(e) => setTarget(e.target.value)}
+                    className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100"
+                  >
+                    {collections.map((c) => <option key={c.collection} value={c.collection}>{c.collection}</option>)}
+                  </select>
+                )}
+                <label className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded text-white cursor-pointer transition-colors flex items-center gap-1">
+                  {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  {uploading ? 'Subiendo…' : `Agregar archivos a ${targetCollection}`}
+                  <input
+                    type="file"
+                    multiple
+                    disabled={uploading}
+                    className="hidden"
+                    accept=".pdf,.docx,.xlsx,.pptx,.md,.txt,.csv,.json,.html,.htm,.xml,.yaml,.yml"
+                    onChange={(e) => { upload(e.target.files); e.target.value = ''; }}
+                  />
+                </label>
+                <span className="text-xs text-zinc-500">PDF, Word, Excel, texto… hasta 20 MB; se convierten a Markdown.</span>
+              </div>
               <input
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
@@ -124,6 +185,22 @@ function KnowledgeFilesSection() {
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
+                        {confirmDelete === `${c.collection}/${f.name}` ? (
+                          <button
+                            onClick={() => remove(c.collection, f.name)}
+                            className="px-2 py-0.5 text-xs bg-red-600 hover:bg-red-700 rounded text-white flex-shrink-0"
+                          >
+                            ¿Borrar?
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDelete(`${c.collection}/${f.name}`)}
+                            className="p-1 text-zinc-500 hover:text-red-400 transition-colors flex-shrink-0"
+                            title="Borrar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))
                 )}

@@ -30,6 +30,41 @@ def _convert_with_markitdown(data: bytes, suffix: str) -> str:
             pass
 
 
+def slug_filename(filename: str) -> str:
+    """A safe Markdown file name for a knowledge collection: 'Tarifas 2026 (v2).PDF' -> 'tarifas-2026-v2.md'."""
+    import re
+    import unicodedata
+
+    stem = Path(filename or "").stem
+    stem = "".join(c for c in unicodedata.normalize("NFD", stem.lower()) if unicodedata.category(c) != "Mn")
+    stem = re.sub(r"[^a-z0-9_]+", "-", stem).strip("-_")[:80] or "documento"
+    return f"{stem}.md"
+
+
+def as_searchable_markdown(title: str, text: str, chunk_chars: int = 1500) -> str:
+    """Give converted text a title and '## ' sections, which is what the search splits blocks on.
+
+    A PDF or Word file usually comes out without headings; left as is it would be ONE huge block.
+    Text that already has '## ' headings is kept as it is.
+    """
+    text = text.strip()
+    head = text if text.startswith("#") else f"# {title}\n\n{text}"
+    if "\n## " in head or head.startswith("## "):
+        return head + "\n"
+    first, _, body = head.partition("\n")
+    parts: list[str] = []
+    cur = ""
+    for para in body.split("\n\n"):
+        if cur and len(cur) + len(para) > chunk_chars:
+            parts.append(cur.strip())
+            cur = ""
+        cur += para + "\n\n"
+    if cur.strip():
+        parts.append(cur.strip())
+    sections = [f"## Parte {i}\n\n{p}" for i, p in enumerate(parts, 1)]
+    return first + "\n\n" + "\n\n".join(sections) + "\n"
+
+
 async def extract_text(filename: str, data: bytes) -> str:
     """Return Markdown/plain text extracted from file bytes.
 

@@ -599,6 +599,48 @@ def register_routes(app: FastAPI) -> None:
         path.write_bytes(content.encode("utf-8"))
         return {"ok": True, "size": path.stat().st_size}
 
+    _KNOWLEDGE_UPLOAD_MAX = 20 * 1024 * 1024  # bytes per file
+
+    @app.post("/api/knowledge-files/{collection}")
+    async def upload_knowledge_file(collection: str, file: UploadFile = File(...), title: str = Form("")):
+        """Add a document to a collection: any text/PDF/Word/Excel file, stored as Markdown.
+
+        An existing file is never replaced (the name gets -2, -3 ...). The search cache refreshes by
+        file list and mtime, so it is searchable at once.
+        """
+        from openacm.tools import knowledge_tools as kt
+        from openacm.utils.knowledge_file import as_searchable_markdown, extract_text, slug_filename
+
+        base = kt._collection_dir(collection)
+        if base is None:
+            raise HTTPException(status_code=404, detail="Collection not found")
+        data = await file.read(_KNOWLEDGE_UPLOAD_MAX + 1)
+        if len(data) > _KNOWLEDGE_UPLOAD_MAX:
+            raise HTTPException(status_code=413, detail="El archivo supera los 20 MB")
+        try:
+            text = await extract_text(file.filename or "documento", data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        if not text:
+            raise HTTPException(status_code=422, detail="El archivo no contiene texto extraíble")
+        name = slug_filename(file.filename or "documento")
+        stem, n = name[:-3], 2
+        while (base / name).exists():
+            name = f"{stem}-{n}.md"
+            n += 1
+        doc_title = title.strip() or Path(file.filename or "Documento").stem
+        content = as_searchable_markdown(doc_title, text)
+        (base / name).write_bytes(content.encode("utf-8"))
+        return {"ok": True, "collection": collection, "name": name, "title": doc_title, "size": len(content.encode("utf-8"))}
+
+    @app.delete("/api/knowledge-files/{collection}/{name}")
+    async def delete_knowledge_file(collection: str, name: str):
+        path = _knowledge_file_path(collection, name)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        path.unlink()
+        return {"ok": True}
+
     # ─── Agent Channels ───────────────────────────────────────
 
     _MASKED_KEYS = {"token", "access_token", "app_secret"}
