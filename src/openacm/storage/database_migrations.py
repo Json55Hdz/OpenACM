@@ -21,7 +21,7 @@ class MigrationsMixin:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 42
+    _SCHEMA_VERSION = 43
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1043,6 +1043,15 @@ class MigrationsMixin:
             await self._db.commit()
             log.info("Migration 42: skills now record their source; retired skills removed")
 
+        # ── Migration 43: messages that were encrypted twice ───────────────────
+        # Between 2026-10-31 and 2026-11-11 an agent's messages were stored encrypted two times, so
+        # the dashboard showed the inner token (gibberish). Only rows that PROVABLY decrypt twice
+        # are rewritten (to a single layer); a copy of the database is kept first.
+        if current < 43:
+            fixed = await self._repair_double_encrypted_messages()
+            if fixed:
+                log.info("Migration 43: repaired messages stored with double encryption", count=fixed)
+
         # Save new version
         await self._db.execute(
             "INSERT INTO settings (key, value) VALUES ('schema_version', ?) "
@@ -1051,6 +1060,33 @@ class MigrationsMixin:
         )
         await self._db.commit()
         log.info("Migrations complete", version=self._SCHEMA_VERSION)
+
+    async def _repair_double_encrypted_messages(self) -> int:
+        """Rewrite messages whose content was encrypted twice as a single layer. Returns how many."""
+        if self._enc is None:
+            return 0
+        cursor = await self._db.execute("SELECT id, content FROM messages")
+        fixes: list[tuple[str, int]] = []
+        for row in await cursor.fetchall():
+            try:
+                once = self._enc.decrypt(row["content"])
+                if not once.startswith("gAAAAA"):
+                    continue
+                self._enc.decrypt(once)  # raises unless it really is a second layer
+            except Exception:  # noqa: BLE001 - not a double layer: leave the row alone
+                continue
+            fixes.append((once, row["id"]))
+        if not fixes:
+            return 0
+        try:
+            backup = f"{self.db_path}.before-repair-43"
+            if not os.path.exists(backup):
+                await self._db.execute("VACUUM INTO ?", (backup,))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not keep a copy before repairing messages; repairing anyway", error=str(exc))
+        await self._db.executemany("UPDATE messages SET content = ? WHERE id = ?", fixes)
+        await self._db.commit()
+        return len(fixes)
 
     async def close(self):
         """Close the database connection."""
