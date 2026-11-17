@@ -155,7 +155,8 @@ echo ""
 echo -e "\033[1;36m==========================================\033[0m"
 echo ""
 
-read -p "¿Lanzar OpenACM ahora? (S/n): " choice
+# No terminal to answer (CI, a container, a piped install): do not launch, and do not fail
+read -p "¿Lanzar OpenACM ahora? (S/n): " choice || choice="n"
 if [[ "$choice" == "" || "$choice" =~ ^[sSyY] ]]; then
     echo ""
     echo -e "\033[1;32mIniciando OpenACM...\033[0m"
