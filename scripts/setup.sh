@@ -35,11 +35,15 @@ else
     echo -e "\033[1;32m[OK] 'uv' ya está instalado.\033[0m"
 fi
 
+# Root (a container, a fresh VPS) needs no sudo, and often does not have it installed
+SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo &>/dev/null; then SUDO="sudo"; fi
+
 # Install system dependencies (Linux only)
 if command -v apt-get &>/dev/null; then
     echo -e "\033[1;33m[*] Instalando utilidades base del sistema...\033[0m"
-    sudo apt-get update -qq
-    sudo apt-get install -y build-essential python3-dev libssl-dev libffi-dev xdotool python3.12-venv
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y build-essential python3-dev libssl-dev libffi-dev xdotool python3.12-venv
 fi
 
 # ── Node.js 20+ ────────────────────────────────────────────────────────────
@@ -73,8 +77,8 @@ if [ "$NODE_OK" = false ]; then
     # Try apt (Linux)
     elif command -v apt-get &>/dev/null; then
         echo -e "\033[1;33m[*] Instalando Node.js 20 via apt...\033[0m"
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-        sudo apt-get install -y nodejs
+        curl -fsSL https://deb.nodesource.com/setup_20.x | ${SUDO:+$SUDO -E} bash -
+        $SUDO apt-get install -y nodejs
         NODE_OK=true
     else
         echo -e "\033[1;31m[!] No se pudo instalar Node.js automáticamente.\033[0m"

@@ -294,6 +294,7 @@ class OpenACM:
             skill_creator,
             onboarding_tools,
             customer_profile_tool,
+            list_tools,
         )
 
         self.tool_registry.register_module(system_cmd)
@@ -313,6 +314,7 @@ class OpenACM:
         self.tool_registry.register_module(skill_creator)
         self.tool_registry.register_module(onboarding_tools)
         self.tool_registry.register_module(customer_profile_tool)
+        self.tool_registry.register_module(list_tools)  # always offered: answers "what can you do?"
 
         from openacm.tools import knowledge_tools
         self.tool_registry.register_module(knowledge_tools)
