@@ -8,6 +8,26 @@ source of truth instead of inferring from the system prompt.
 from openacm.tools.base import tool
 
 
+async def _agent_allowed_names(brain, agent_id: int, all_names: set[str]) -> tuple[set[str] | None, str]:
+    """(names the agent may use, note). None = unknown agent."""
+    import json
+
+    db = getattr(brain, "database", None)
+    agent = await db.get_agent(int(agent_id)) if db is not None else None
+    if not agent:
+        return None, f"No agent with id {agent_id}."
+    policy = str(agent.get("allowed_tools") or "all").strip()
+    if policy == "all":
+        return set(all_names), f"Agent '{agent.get('name')}' can use every tool."
+    if policy == "none":
+        return set(), f"Agent '{agent.get('name')}' has no tools (text only)."
+    try:
+        listed = {str(n) for n in json.loads(policy)}
+    except (ValueError, TypeError):
+        return set(), f"Agent '{agent.get('name')}' has an unreadable tool policy, so it exposes no tools."
+    return listed & all_names, f"Agent '{agent.get('name')}' has an explicit list of {len(listed)} tools."
+
+
 @tool(
     name="list_tools",
     description=(
@@ -46,26 +66,6 @@ from openacm.tools.base import tool
     risk_level="low",
     category="meta",
 )
-async def _agent_allowed_names(brain, agent_id: int, all_names: set[str]) -> tuple[set[str] | None, str]:
-    """(names the agent may use, note). None = unknown agent."""
-    import json
-
-    db = getattr(brain, "database", None)
-    agent = await db.get_agent(int(agent_id)) if db is not None else None
-    if not agent:
-        return None, f"No agent with id {agent_id}."
-    policy = str(agent.get("allowed_tools") or "all").strip()
-    if policy == "all":
-        return set(all_names), f"Agent '{agent.get('name')}' can use every tool."
-    if policy == "none":
-        return set(), f"Agent '{agent.get('name')}' has no tools (text only)."
-    try:
-        listed = {str(n) for n in json.loads(policy)}
-    except (ValueError, TypeError):
-        return set(), f"Agent '{agent.get('name')}' has an unreadable tool policy, so it exposes no tools."
-    return listed & all_names, f"Agent '{agent.get('name')}' has an explicit list of {len(listed)} tools."
-
-
 async def list_tools(what: str = "tools", category: str = "", query: str = "", agent_id: int | None = None, **kwargs) -> str:
     brain = kwargs.get("_brain")
     if brain is None:
@@ -81,7 +81,7 @@ async def list_tools(what: str = "tools", category: str = "", query: str = "", a
         else:
             tools_list = list(registry.tools.values())
             agent_note = ""
-            if agent_id is not None:
+            if agent_id:  # 0 or missing = no agent filter (ids start at 1)
                 allowed, agent_note = await _agent_allowed_names(brain, agent_id, {t.name for t in tools_list})
                 if allowed is None:
                     return agent_note
