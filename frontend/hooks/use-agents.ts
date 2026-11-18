@@ -19,6 +19,8 @@ export interface Agent {
   inactivity_message: string;
   created_at: string;
   updated_at: string;
+  // Knowledge collections only this agent can search
+  knowledge_collections?: string[];
   // only returned on create
   webhook_secret?: string;
 }

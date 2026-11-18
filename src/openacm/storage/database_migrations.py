@@ -21,7 +21,7 @@ class MigrationsMixin:
     # ─── Migrations ───────────────────────────────────────────
 
     # Bump this number every time you add a new migration below.
-    _SCHEMA_VERSION = 43
+    _SCHEMA_VERSION = 44
 
     async def _run_migrations(self):
         """Apply incremental schema/data migrations on startup.
@@ -1051,6 +1051,31 @@ class MigrationsMixin:
             fixed = await self._repair_double_encrypted_messages()
             if fixed:
                 log.info("Migration 43: repaired messages stored with double encryption", count=fixed)
+
+        # ── Migration 44: each agent owns its knowledge collections ─────────────
+        # Collections used to be shared: any agent could read any of them. Now an agent only sees
+        # the ones assigned to it. A collection that an agent already used by name is assigned to it.
+        if current < 44:
+            try:
+                await self._db.execute(
+                    "ALTER TABLE agents ADD COLUMN knowledge_collections TEXT NOT NULL DEFAULT '[]'"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already there
+            from openacm.tools import knowledge_tools as _kt
+
+            existing = _kt.available_collections()
+            cursor = await self._db.execute("SELECT id, name, system_prompt FROM agents")
+            for row in await cursor.fetchall():
+                haystack = f"{row['name']} {row['system_prompt']}".lower()
+                owned = [c for c in existing if c.lower() in haystack]
+                if owned:
+                    await self._db.execute(
+                        "UPDATE agents SET knowledge_collections = ? WHERE id = ?",
+                        (json.dumps(owned), row["id"]),
+                    )
+                    log.info("Migration 44: agent keeps its knowledge collection", agent=row["name"], collections=owned)
+            await self._db.commit()
 
         # Save new version
         await self._db.execute(

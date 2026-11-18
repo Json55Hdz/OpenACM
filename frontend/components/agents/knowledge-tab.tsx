@@ -2,15 +2,22 @@
 
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useAgentKnowledge, useAgentKnowledgeMutations, useKnowledgeFiles, type KnowledgeItem } from '@/hooks/use-agents';
+import { useAgentKnowledge, useAgentKnowledgeMutations, useAgents, useKnowledgeFiles, type KnowledgeItem } from '@/hooks/use-agents';
 import { useAPI } from '@/hooks/use-api';
 import { Plus, Trash2, Loader2, X, FileText, Upload, BookOpen, Pencil, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from './shared';
 
-function KnowledgeFilesSection() {
-  const { data: collections = [] } = useKnowledgeFiles();
+function KnowledgeFilesSection({ agentId }: { agentId: number }) {
+  const { data: allCollections = [] } = useKnowledgeFiles();
+  const { data: agents = [] } = useAgents();
   const { fetchAPI } = useAPI();
+  // Each agent only has (and can search) the collections assigned to it
+  const mine = agents.find((a) => a.id === agentId)?.knowledge_collections ?? [];
+  const taken = new Set(agents.flatMap((a) => a.knowledge_collections ?? []));
+  const collections = allCollections.filter((c) => mine.includes(c.collection));
+  const unassigned = allCollections.filter((c) => !taken.has(c.collection));
+  const [adopt, setAdopt] = useState('');
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const [editing, setEditing] = useState<{ collection: string; name: string } | null>(null);
@@ -27,6 +34,36 @@ function KnowledgeFilesSection() {
   const total = collections.reduce((n, c) => n + c.files.length, 0);
   const targetCollection = target || collections[0]?.collection || '';
 
+  const setMine = async (next: string[]) => {
+    await fetchAPI(`/api/agents/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ knowledge_collections: next }),
+    });
+    qc.invalidateQueries({ queryKey: ['agents'] });
+  };
+
+  const attach = async () => {
+    if (!adopt) return;
+    try {
+      await setMine([...mine, adopt]);
+      toast.success(`«${adopt}» ahora es de este agente`);
+      setTarget(adopt);
+      setAdopt('');
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo asignar');
+    }
+  };
+
+  const detach = async (name: string) => {
+    try {
+      await setMine(mine.filter((m) => m !== name));
+      toast.success(`El agente ya no consulta «${name}» (sus archivos siguen guardados)`);
+    } catch (err: any) {
+      toast.error(err.message || 'No se pudo quitar');
+    }
+  };
+
   const createCollection = async () => {
     const name = newCollection.trim();
     if (!name) return;
@@ -37,7 +74,8 @@ function KnowledgeFilesSection() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       });
-      toast.success(`Colección «${res.collection}» creada`);
+      await setMine([...mine, res.collection]);
+      toast.success(`Colección «${res.collection}» creada para este agente`);
       setNewCollection('');
       setTarget(res.collection);
       qc.invalidateQueries({ queryKey: ['knowledge-files'] });
@@ -122,18 +160,27 @@ function KnowledgeFilesSection() {
       >
         <span className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-blue-400" />
-          Archivos de la base de búsqueda ({total} en {collections.length} {collections.length === 1 ? 'colección' : 'colecciones'})
+          Archivos de búsqueda de este agente ({total} en {collections.length} {collections.length === 1 ? 'colección' : 'colecciones'})
         </span>
         <span className="text-xs text-zinc-500">{open ? 'Ocultar' : 'Ver'}</span>
       </button>
       {open && (
         <div className="px-3 pb-3 space-y-2">
           <p className="text-xs text-zinc-500">
-            Documentos que el agente consulta con sus herramientas de búsqueda (no van completos en el prompt).
-            Los cambios se aplican al instante. Cada colección es una carpeta: para que un agente use la suya,
-            actívale la herramienta <span className="font-mono">search_knowledge</span> y escribe su nombre en sus instrucciones
-            (por ejemplo: «consulta con search_knowledge usando collection=&quot;mi-coleccion&quot;»).
+            Documentos que ESTE agente consulta con su herramienta <span className="font-mono">search_knowledge</span> (no van
+            completos en el prompt). Cada colección pertenece a un solo agente y ningún otro puede leerla. Los cambios se aplican al instante.
           </p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {mine.length === 0 && <span className="text-xs text-zinc-500">Este agente aún no tiene colecciones: crea una o asígnale una libre.</span>}
+            {mine.map((m) => (
+              <span key={m} className="inline-flex items-center gap-1 text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-zinc-200">
+                <span className="font-mono">{m}</span>
+                <button onClick={() => detach(m)} className="text-zinc-500 hover:text-red-400" title="Quitar del agente (no borra los archivos)">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
           {editing ? (
             <div className="space-y-2">
               <p className="text-sm text-zinc-100 font-mono">{editing.collection}/{editing.name}</p>
@@ -177,6 +224,25 @@ function KnowledgeFilesSection() {
                 >
                   Crear colección
                 </button>
+                {unassigned.length > 0 && (
+                  <>
+                    <select
+                      value={adopt}
+                      onChange={(e) => setAdopt(e.target.value)}
+                      className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100"
+                    >
+                      <option value="">Asignar una colección libre…</option>
+                      {unassigned.map((c) => <option key={c.collection} value={c.collection}>{c.collection} ({c.files.length})</option>)}
+                    </select>
+                    <button
+                      onClick={attach}
+                      disabled={!adopt}
+                      className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 rounded text-zinc-100 transition-colors"
+                    >
+                      Asignar
+                    </button>
+                  </>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 {collections.length > 1 && (
@@ -490,7 +556,7 @@ export function KnowledgeTab({ agentId }: { agentId: number }) {
         </div>
       ))}
 
-      <KnowledgeFilesSection />
+      <KnowledgeFilesSection agentId={agentId} />
 
       {/* Char counter footer */}
       {items.length > 0 && (

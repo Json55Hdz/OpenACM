@@ -62,7 +62,31 @@ def register_routes(app: FastAPI) -> None:
         a = dict(agent)
         a.pop("webhook_secret", None)
         a["show_in_chat"] = bool(a.get("show_in_chat", True))
+        from openacm.tools.knowledge_tools import parse_collections
+
+        a["knowledge_collections"] = parse_collections(a.get("knowledge_collections"))
         return a
+
+    async def _validated_collections(agent_id: int, value) -> str:
+        """Collections an agent may search: they must exist, and belong to no other agent."""
+        from openacm.tools import knowledge_tools as kt
+
+        if not isinstance(value, list):
+            raise HTTPException(status_code=400, detail="knowledge_collections debe ser una lista")
+        names = list(dict.fromkeys(str(v).strip() for v in value if str(v).strip()))
+        for name in names:
+            if kt._collection_dir(name) is None:
+                raise HTTPException(status_code=404, detail=f"La colección '{name}' no existe")
+        for other in await _state.database.get_all_agents():
+            if other["id"] == agent_id:
+                continue
+            clash = set(names) & set(kt.parse_collections(other.get("knowledge_collections")))
+            if clash:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"La colección '{sorted(clash)[0]}' ya pertenece al agente «{other['name']}»",
+                )
+        return json.dumps(names)
 
     @app.get("/api/agents")
     async def get_agents():
@@ -119,6 +143,8 @@ def register_routes(app: FastAPI) -> None:
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
         if "show_in_chat" in kwargs:
             kwargs["show_in_chat"] = bool(kwargs["show_in_chat"])
+        if "knowledge_collections" in data:
+            kwargs["knowledge_collections"] = await _validated_collections(agent_id, data["knowledge_collections"])
         ok = await _state.database.update_agent(agent_id, **kwargs)
         if not ok:
             raise HTTPException(status_code=404, detail="Agent not found")

@@ -352,6 +352,7 @@ class AgentsMixin:
             "name", "description", "system_prompt", "allowed_tools", "is_active",
             "telegram_token", "memory_mode", "memory_ttl_hours",
             "inactivity_timeout_minutes", "inactivity_message", "show_in_chat",
+            "knowledge_collections",
         }
         updates, params = [], []
         for key, val in kwargs.items():

@@ -13,6 +13,7 @@ from typing import Any
 import structlog
 
 from openacm.tools.base import ToolDefinition
+from openacm.tools.knowledge_tools import parse_collections
 from openacm.utils.text import join_message_parts, sanitize_customer_name
 from openacm.core.messages import (
     MSG_AGENT_PROCESSING_ERROR,
@@ -342,6 +343,7 @@ class AgentRunner:
             max_tool_iterations=AGENT_MAX_TOOL_ITERATIONS,
             onboarding_completed=True,
             is_agent=True,
+            knowledge_collections=parse_collections(agent.get("knowledge_collections")),
             memory_ttl_hours=memory_ttl_hours,
         )
 

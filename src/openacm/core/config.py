@@ -31,6 +31,8 @@ class AssistantConfig(BaseModel):
     system_prompt: str = "You are ACM, a helpful AI assistant."
     onboarding_completed: bool = False
     is_agent: bool = False
+    # Knowledge collections an agent may search (None = not an agent, no restriction)
+    knowledge_collections: list[str] | None = None
     max_context_messages: int = 50
     max_tool_iterations: int = 20  # Aumentado para tareas complejas con múltiples tools
     response_timeout: int = 120

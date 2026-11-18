@@ -53,6 +53,39 @@ def available_collections() -> list[str]:
     return sorted(p.name for p in root.glob("*") if p.is_dir()) if root.is_dir() else []
 
 
+def parse_collections(raw) -> list[str]:
+    """The agent's collections as stored (a JSON list) -> list of names."""
+    import json
+
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    try:
+        data = json.loads(raw or "[]")
+    except (ValueError, TypeError):
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
+
+
+def resolve_collection(collection: str, brain) -> tuple[str | None, str | None]:
+    """(collection to use, error). An agent only reaches the collections assigned to it."""
+    cfg = getattr(brain, "config", None)
+    wanted = (collection or "").strip()
+    if getattr(cfg, "is_agent", False):
+        mine = list(getattr(cfg, "knowledge_collections", None) or [])
+        if not mine:
+            return None, "Error: this agent has no knowledge collections. The owner can add files for it in the agent's Knowledge tab."
+        wanted = wanted or mine[0]
+        if wanted not in mine:
+            return None, f"Error: '{wanted}' is not one of this agent's knowledge collections. Yours: {', '.join(repr(m) for m in mine)}."
+        return wanted, None
+    if wanted:
+        return wanted, None
+    names = available_collections()
+    if len(names) == 1:
+        return names[0], None
+    return ("colsanitas", None) if "colsanitas" in names else (None, _not_found(""))
+
+
 def _not_found(collection: str) -> str:
     names = available_collections()
     listing = ", ".join(f"'{n}'" for n in names) if names else "none yet"
@@ -151,7 +184,7 @@ def _search(blocks: list[dict], query: str, filtro: str, max_results: int) -> li
                 "description": "Optional words that must appear in the record's context, e.g. 'Bogota EPS' or 'Ibague MP'.",
                 "default": "",
             },
-            "collection": {"type": "string", "description": "Knowledge collection folder name. Use the one your instructions name; if unsure, the error lists the available ones.", "default": "colsanitas"},
+            "collection": {"type": "string", "description": "Knowledge collection to search. Leave empty to use your own (agents only reach the collections assigned to them).", "default": ""},
             "max_results": {"type": "integer", "description": "Max records to return (default 6, max 12).", "default": 6},
         },
         "required": ["query"],
@@ -159,7 +192,10 @@ def _search(blocks: list[dict], query: str, filtro: str, max_results: int) -> li
     risk_level="low",
     category="ai",
 )
-async def search_knowledge(query: str, filtro: str = "", collection: str = "colsanitas", max_results: int = 6, **kwargs) -> str:
+async def search_knowledge(query: str, filtro: str = "", collection: str = "", max_results: int = 6, **kwargs) -> str:
+    collection, err = resolve_collection(collection, kwargs.get("_brain"))
+    if err:
+        return err
     blocks = _load(collection)
     if blocks is None:
         return _not_found(collection)
@@ -209,14 +245,17 @@ async def search_knowledge(query: str, filtro: str = "", collection: str = "cols
         "properties": {
             "file": {"type": "string", "description": "File name, e.g. '39-preguntas-frecuentes.md'."},
             "offset": {"type": "integer", "description": "Character offset to start from (default 0).", "default": 0},
-            "collection": {"type": "string", "description": "Knowledge collection folder name.", "default": "colsanitas"},
+            "collection": {"type": "string", "description": "Knowledge collection of the file. Leave empty to use your own.", "default": ""},
         },
         "required": ["file"],
     },
     risk_level="low",
     category="ai",
 )
-async def read_knowledge_file(file: str, offset: int = 0, collection: str = "colsanitas", **kwargs) -> str:
+async def read_knowledge_file(file: str, offset: int = 0, collection: str = "", **kwargs) -> str:
+    collection, err = resolve_collection(collection, kwargs.get("_brain"))
+    if err:
+        return err
     base = _collection_dir(collection)
     if base is None:
         return _not_found(collection)
