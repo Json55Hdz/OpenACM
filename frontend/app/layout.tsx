@@ -23,8 +23,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // The dashboard is in Spanish: say so, and refuse browser auto-translation. A translated page has its
+    // text nodes replaced behind React's back, and React then crashes with "removeChild ... not a child".
+    <html lang="es" translate="no" className="notranslate">
       <head>
+        <meta name="google" content="notranslate" />
         <link rel="icon" type="image/png" href="/logo-transparent.png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />

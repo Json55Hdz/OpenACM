@@ -65,6 +65,15 @@ def as_searchable_markdown(title: str, text: str, chunk_chars: int = 1500) -> st
     return first + "\n\n" + "\n\n".join(sections) + "\n"
 
 
+def _pdf_text(data: bytes) -> str:
+    import io
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data))
+    return (chr(10) * 2).join((page.extract_text() or "").strip() for page in reader.pages).strip()
+
+
 async def extract_text(filename: str, data: bytes) -> str:
     """Return Markdown/plain text extracted from file bytes.
 
@@ -79,5 +88,13 @@ async def extract_text(filename: str, data: bytes) -> str:
     try:
         return await loop.run_in_executor(None, _convert_with_markitdown, data, ext)
     except Exception as exc:
+        if ext == ".pdf":
+            # MarkItDown without its PDF extra cannot read PDFs: pypdf is always installed
+            try:
+                text = await loop.run_in_executor(None, _pdf_text, data)
+                if text:
+                    return text
+            except Exception as pdf_exc:  # noqa: BLE001
+                log.warning("knowledge_file: pypdf extraction failed", filename=filename, error=str(pdf_exc))
         log.warning("knowledge_file: MarkItDown extraction failed", filename=filename, error=str(exc))
         raise ValueError(f"No se pudo extraer texto del archivo '{filename}': {exc}") from exc

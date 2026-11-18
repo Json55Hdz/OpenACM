@@ -90,3 +90,21 @@ async def test_create_collection_then_use_it(dashboard_token, client, kb):
 async def test_unknown_collection_error_lists_the_available_ones(dashboard_token, kb):
     out = await kt.search_knowledge("algo", collection="no-existe")
     assert "not found" in out and "'demo'" in out
+
+
+async def test_pdf_is_read_even_when_markitdown_has_no_pdf_support(monkeypatch):
+    import io
+
+    from pypdf import PdfWriter
+
+    from openacm.utils import knowledge_file as kf
+
+    def broken(data, suffix):
+        raise RuntimeError("PdfConverter ... dependencies needed to read .pdf files have not been installed")
+
+    monkeypatch.setattr(kf, "_convert_with_markitdown", broken)
+    monkeypatch.setattr(kf, "_pdf_text", lambda data: "Radiografias con Bario no se realizan")
+    assert "Bario" in await kf.extract_text("Documento 7.pdf", b"%PDF-1.4 fake")
+    # a non-PDF failure is still reported, not swallowed
+    with pytest.raises(ValueError):
+        await kf.extract_text("x.docx", b"not a docx")
