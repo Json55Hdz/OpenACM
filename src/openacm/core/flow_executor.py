@@ -104,8 +104,9 @@ def detect_cycle(graph: dict) -> list[str] | None:
 # has the user's actual request in its conversation context, so it (not
 # this node) is what narrows this down to the few that actually fit.
 _WOOCOMMERCE_CANDIDATE_LIMIT = 10
-# Only the best-matching variable products get their variations fetched (one extra request each).
-_WOOCOMMERCE_VARIATION_PRODUCTS = 5
+# Only the best-matching variable products get their variations fetched (one extra request each, and
+# every listed variation grows the tool result the model has to read).
+_WOOCOMMERCE_VARIATION_PRODUCTS = 3
 _WOOCOMMERCE_VARIATION_LIMIT = 40
 
 # The shop's own search splits the query into loose words (so "x8 pro" also matches

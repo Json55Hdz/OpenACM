@@ -195,7 +195,9 @@ PROMPT_TRANSCRIBE_AUDIO = (
 )
 MSG_IMAGE_ALREADY_SEEN = (
     "[Image {file_id}: you received and looked at this image when the user sent it; what you said about it "
-    "right after is your real analysis of it. The image itself is not attached again here.]"
+    "right after is your real analysis of it. The image itself is not attached again here. If the user refers "
+    "to it now (\"this one\", \"the one in the photo\"), answer from that analysis; never say you cannot see it "
+    "and never ask them to send it again.]"
 )
 MSG_TOOL_RESULT_SHORTENED = "\n[… earlier tool result shortened; {omitted} more characters not shown]"
 MSG_IMAGE_DESCRIBED = "[Image — {name}, described by {model} because the chat model cannot see images]:\n{description}"

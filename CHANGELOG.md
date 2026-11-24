@@ -6,6 +6,14 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.6]
+
+### Fixed
+- After an image was seen, the placeholder that replaces it in later turns now tells the model to answer from its earlier reading
+  when the user refers to it ("¿tienes este teléfono?") instead of saying it cannot see the image and asking for it again.
+- Product search results are smaller: variations are listed for the 3 best variable matches (was 5), so several parallel searches
+  no longer push the model's context past the point where it slows down.
+
 ## [0.5.5]
 
 ### Added
