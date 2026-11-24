@@ -12,6 +12,8 @@ docs/superpowers/specs/2026-07-05-agent-node-flows-design.md and
 docs/superpowers/specs/2026-08-22-flow-loop-node-design.md for the full
 design rationale.
 """
+import asyncio
+import html
 import json as _json
 import re
 import unicodedata
@@ -19,6 +21,9 @@ import uuid
 from typing import Any, Callable, Coroutine
 
 import httpx
+import structlog
+
+log = structlog.get_logger()
 
 # Group 1: the base name (a param or an output/node id). Group 2: the rest
 # of the path, verbatim (e.g. ".current_condition[0].temp_C") — walked one
@@ -99,6 +104,9 @@ def detect_cycle(graph: dict) -> list[str] | None:
 # has the user's actual request in its conversation context, so it (not
 # this node) is what narrows this down to the few that actually fit.
 _WOOCOMMERCE_CANDIDATE_LIMIT = 10
+# Only the best-matching variable products get their variations fetched (one extra request each).
+_WOOCOMMERCE_VARIATION_PRODUCTS = 5
+_WOOCOMMERCE_VARIATION_LIMIT = 40
 
 # The shop's own search splits the query into loose words (so "x8 pro" also matches
 # cameras and "Pro" phones) and returns the newest first — the exact model we were asked
@@ -111,6 +119,61 @@ _WOOCOMMERCE_FETCH_LIMIT = 30
 def _name_tokens(text: str) -> set[str]:
     folded = unicodedata.normalize("NFKD", text.lower())
     return set(re.findall(r"[a-z0-9]+", "".join(c for c in folded if not unicodedata.combining(c))))
+
+
+def _stock_label(item: dict) -> str:
+    """Availability of a product or variation: never 'in stock' for something with no price."""
+    if not item.get("price"):
+        return "Out of stock"
+    status = item.get("stock_status")
+    if status == "outofstock":
+        return "Out of stock"
+    if status == "onbackorder":
+        return "On backorder"
+    return "In stock"
+
+
+def _attribute_options_line(product: dict) -> str:
+    """'Color: Negro, Plateado | Capacidad: 256 GB, 512 GB' from the product's visible attributes."""
+    parts = []
+    for attr in product.get("attributes") or []:
+        options = [str(o) for o in (attr.get("options") or []) if o]
+        if attr.get("name") and options and attr.get("visible", True):
+            parts.append(f"{attr['name']}: {', '.join(options)}")
+    return " | ".join(parts)
+
+
+def _options_from_variations(variations: list[dict]) -> str:
+    """Options a customer can really buy: only what the published variations carry, in order."""
+    seen: dict[str, list[str]] = {}
+    for v in variations:
+        for a in v.get("attributes") or []:
+            name, option = a.get("name"), a.get("option")
+            if name and option and option not in seen.setdefault(name, []):
+                seen[name].append(option)
+    return " | ".join(f"{name}: {', '.join(opts)}" for name, opts in seen.items())
+
+
+def _variation_line(variation: dict) -> str:
+    combo = " / ".join(
+        (a.get("option") or "any") for a in (variation.get("attributes") or [])
+    ) or f"#{variation.get('id')}"
+    price = f"${variation['price']}" if variation.get("price") else "no price"
+    return f"    - {combo}: {price} — {_stock_label(variation)}"
+
+
+async def _fetch_variations(client: "httpx.AsyncClient", woo_url: str, auth: tuple, product_id: int) -> list[dict]:
+    """Published variations of one variable product; [] if the shop refuses (never fails the search)."""
+    try:
+        resp = await client.get(
+            f"{woo_url}/{product_id}/variations",
+            params={"per_page": _WOOCOMMERCE_VARIATION_LIMIT}, auth=auth,
+        )
+        resp.raise_for_status()
+        return [v for v in resp.json() if v.get("status", "publish") == "publish"]
+    except Exception as exc:
+        log.warning("WooCommerce variations fetch failed", product_id=product_id, error=str(exc))
+        return []
 
 
 def _rank_by_name_match(products: list[dict], search_term: str) -> list[dict]:
@@ -571,15 +634,27 @@ class FlowExecutor:
             response.raise_for_status()
             products = response.json()
 
+            candidates = _rank_by_name_match(products, search_term)[:_WOOCOMMERCE_CANDIDATE_LIMIT] if products else []
+            # A variable product's own price/stock only describe its cheapest option: the colors,
+            # capacities and per-option prices live in its variations.
+            variable = [p for p in candidates[:_WOOCOMMERCE_VARIATION_PRODUCTS] if p.get("type") == "variable"]
+            fetched = await asyncio.gather(*(
+                _fetch_variations(client, woo_url, (conn_config["consumer_key"], conn_config["consumer_secret"]), p["id"])
+                for p in variable
+            ))
+            variations_by_id = {p["id"]: v for p, v in zip(variable, fetched)}
+
         if not products:
             return {"result": f"No products found for query: '{search_term}'.", "count": 0}
 
-        candidates = _rank_by_name_match(products, search_term)[:_WOOCOMMERCE_CANDIDATE_LIMIT]
         output = [
             f"Search results for '{search_term}' ({len(candidates)} candidates found). "
             "These are ALL matches for the search term, not a curated shortlist — "
             "select and mention only the ones that actually fit what the user asked "
-            "for; do not just relay the entire list."
+            "for; do not just relay the entire list. Where a product lists Variations, each line is a real "
+            "combination (e.g. color / capacity) with its own price and stock: use them to answer about colors, "
+            "capacities, and the price or availability of a specific option; a combination that is not listed "
+            "does not exist."
         ]
         for p in candidates:
             stock = p.get("stock_quantity")
@@ -590,12 +665,21 @@ class FlowExecutor:
                 stock_text = "Out of stock"
 
             raw_desc = p.get("short_description") or p.get("description", "")
-            clean_desc = re.sub(r"<[^>]+>", " ", raw_desc).strip()
+            clean_desc = html.unescape(re.sub(r"<[^>]+>", " ", raw_desc)).strip()
             clean_desc = re.sub(r"\s+", " ", clean_desc)
 
             output.append(f"- Product: {p.get('name')}")
             output.append(f"  Price: ${p.get('price')}")
             output.append(f"  Stock: {stock_text}")
+            variations = variations_by_id.get(p.get("id")) or []
+            # A variable product's own attributes also list options that only exist in unpublished
+            # variations (not for sale), so for those the options come from the published variations.
+            options = _options_from_variations(variations) if p.get("type") == "variable" else _attribute_options_line(p)
+            if options:
+                output.append(f"  Options: {options}")
+            if variations:
+                output.append("  Variations (each with its own price and stock):")
+                output.extend(_variation_line(v) for v in variations)
             if clean_desc:
                 shortened = clean_desc[:300] + "..." if len(clean_desc) > 300 else clean_desc
                 output.append(f"  Description: {shortened}")

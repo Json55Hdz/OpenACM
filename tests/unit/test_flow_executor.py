@@ -637,6 +637,80 @@ class TestWooCommerceNode:
         assert "Comodos y bonitos" in result  # HTML stripped
         assert "https://tienda.example.com/zapatos-rojos" in result
 
+    async def test_variable_product_lists_options_and_each_variation(self):
+        """Colors/capacities and per-option price+stock reach the agent (it used to answer 'I can't know')."""
+        iphone = {
+            "id": 34733, "type": "variable", "name": "iPhone 18 Pro Max", "price": "5384900",
+            "stock_status": "instock", "manage_stock": False, "short_description": "El PRO va por más",
+            "permalink": "https://tienda.example.com/iphone-18-pro-max",
+            "attributes": [
+                {"name": "Color", "visible": True, "variation": True, "options": ["Negro", "Rojo Borgoña"]},
+                {"name": "Capacidad", "visible": True, "variation": True, "options": ["256 GB", "512 GB"]},
+            ],
+        }
+        variations = [
+            {"id": 1, "status": "publish", "price": "5444900", "stock_status": "instock",
+             "attributes": [{"name": "Color", "option": "Rojo Borgoña"}, {"name": "Capacidad", "option": "256 GB"}]},
+            {"id": 2, "status": "publish", "price": "5499900", "stock_status": "outofstock",
+             "attributes": [{"name": "Color", "option": "Negro"}, {"name": "Capacidad", "option": "256 GB"}]},
+            {"id": 3, "status": "private", "price": "1", "stock_status": "instock",
+             "attributes": [{"name": "Color", "option": "Oculto"}, {"name": "Capacidad", "option": "1 TB"}]},
+        ]
+
+        def _resp(payload):
+            r = MagicMock()
+            r.json.return_value = payload
+            r.raise_for_status = MagicMock()
+            return r
+
+        async def fake_get(url, **kwargs):
+            return _resp(variations if url.endswith("/34733/variations") else [iphone])
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = fake_get
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            result, _ = await FlowExecutor(get_connection=get_connection).run(
+                _woo_graph(), params={"producto": "iphone 18 pro max"})
+
+        # options come from the PUBLISHED variations: the parent attributes also list "Negro" and "512 GB",
+        # which only exist in an unpublished variation, so they must not be offered
+        assert "Options: Color: Rojo Borgoña, Negro | Capacidad: 256 GB" in result
+        assert "512 GB" not in result
+        assert "Rojo Borgoña / 256 GB: $5444900 — In stock" in result
+        assert "Negro / 256 GB: $5499900 — Out of stock" in result
+        assert "Oculto" not in result  # unpublished variations never reach a customer
+
+    async def test_variations_failure_does_not_break_the_search(self):
+        product = {"id": 7, "type": "variable", "name": "Moto G", "price": "100", "stock_status": "instock",
+                   "attributes": [], "short_description": "", "permalink": "https://t/x"}
+
+        async def fake_get(url, **kwargs):
+            if "/variations" in url:
+                raise RuntimeError("shop down")
+            r = MagicMock()
+            r.json.return_value = [product]
+            r.raise_for_status = MagicMock()
+            return r
+
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = fake_get
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            result, _ = await FlowExecutor(get_connection=get_connection).run(_woo_graph(), params={"producto": "moto"})
+
+        assert "Moto G" in result and "Variations (each" not in result
+
     async def test_no_products_found_message(self):
         mock_response = MagicMock()
         mock_response.json.return_value = []

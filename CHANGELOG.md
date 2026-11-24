@@ -6,6 +6,14 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.5]
+
+### Added
+- The WooCommerce product search now returns each variable product's options (colors, capacities…) and its variations with their
+  own price and stock, so agents can answer "does it come in burgundy?" or "how much is the 512 GB?" instead of saying they
+  cannot know. Only published variations are listed (what the shop really sells), the first 5 variable matches are expanded, and
+  a failing variations request never breaks the search. Descriptions also get their HTML entities decoded.
+
 ## [0.5.4]
 
 ### Fixed
