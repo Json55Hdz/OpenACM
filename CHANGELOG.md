@@ -6,6 +6,12 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.3]
+
+### Fixed
+- Product search no longer fails: 0.5.1/0.5.2 sent `orderby=relevance`, which the WooCommerce products API rejects with a 400,
+  so every search errored. The name-match ranking does the ordering now.
+
 ## [0.5.2]
 
 ### Fixed

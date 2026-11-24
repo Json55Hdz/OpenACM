@@ -837,7 +837,8 @@ class TestWooCommerceStructuredOutput:
         # Fetches a wide pool (the shop's own search is unreliable at ranking), then
         # the node itself narrows it down to the 10 best name matches.
         assert call_kwargs["params"]["per_page"] == 30
-        assert call_kwargs["params"]["orderby"] == "relevance"
+        # the WooCommerce products API answers 400 to orderby=relevance (verified against the live shop)
+        assert "orderby" not in call_kwargs["params"]
 
     async def test_name_matches_come_first_even_when_the_shop_returns_them_late(self):
         # WooCommerce splits "x8 pro" into words, so an unrelated camera and a Poco X8

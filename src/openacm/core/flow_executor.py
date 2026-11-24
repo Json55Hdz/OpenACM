@@ -101,9 +101,10 @@ def detect_cycle(graph: dict) -> list[str] | None:
 _WOOCOMMERCE_CANDIDATE_LIMIT = 10
 
 # The shop's own search splits the query into loose words (so "x8 pro" also matches
-# cameras and "Pro" phones) and, without a relevance order, returns the newest first —
-# the exact model we were asked for could fall outside the first 10. So we ask for a
-# wider pool and rank it by product name ourselves before cutting to the candidate limit.
+# cameras and "Pro" phones) and returns the newest first — the exact model we were asked
+# for could fall outside the first 10. So we ask for a wider pool and rank it by product
+# name ourselves before cutting to the candidate limit. (Don't send orderby=relevance:
+# the WooCommerce products API rejects it with a 400.)
 _WOOCOMMERCE_FETCH_LIMIT = 30
 
 
@@ -564,7 +565,7 @@ class FlowExecutor:
                 # as the candidate list the calling agent reasons over.
                 # status=publish: a private/draft product isn't customer-facing
                 # yet — never let it leak into what the bot recites to a customer.
-                params={"search": search_term, "per_page": _WOOCOMMERCE_FETCH_LIMIT, "orderby": "relevance", "status": "publish"},
+                params={"search": search_term, "per_page": _WOOCOMMERCE_FETCH_LIMIT, "status": "publish"},
                 auth=(conn_config["consumer_key"], conn_config["consumer_secret"]),
             )
             response.raise_for_status()

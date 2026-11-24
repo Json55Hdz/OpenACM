@@ -48,4 +48,7 @@ class TestExtraSystemContext:
         with patch("openacm.core.brain.Brain", _FakeBrain):
             await runner.run(agent=AGENT, message="hi")
 
-        assert captured["system_prompt"] == "Base agent prompt."
+        # nothing but the base prompt and today's date line
+        assert captured["system_prompt"].startswith("Base agent prompt.")
+        assert "Fecha y hora actuales" in captured["system_prompt"]
+        assert captured["system_prompt"].count("\n\n") == 1
