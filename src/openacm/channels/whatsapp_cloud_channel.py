@@ -24,6 +24,11 @@ from openacm.channels.base import BaseChannel
 from openacm.core.brain import Brain
 from openacm.core.config import WhatsAppConfig
 from openacm.core.events import EventBus, EVENT_CHANNEL_CONNECTED, EVENT_CHANNEL_DISCONNECTED
+from openacm.core.messages import (
+    MSG_WHATSAPP_AUDIO_DEFAULT,
+    MSG_WHATSAPP_DOCUMENT_DEFAULT,
+    MSG_WHATSAPP_IMAGE_DEFAULT,
+)
 from openacm.utils.text import chunk_text, extract_and_strip_thinking, split_message_parts
 
 log = structlog.get_logger()
@@ -33,6 +38,20 @@ WHATSAPP_MESSAGE_LIMIT = 4096
 
 _MEDIA_CAPTION_LIMIT = 1024  # WhatsApp Cloud API max caption length for documents/images
 _MESSAGE_GAP_SECONDS = 0.7  # pause between the parts of a split reply
+
+# Inbound media we download and hand to the agent (like the Telegram channel does).
+_INBOUND_MEDIA_TYPES = ("image", "audio", "document")
+_DEFAULT_MEDIA_TEXT = {
+    "image": MSG_WHATSAPP_IMAGE_DEFAULT,
+    "audio": MSG_WHATSAPP_AUDIO_DEFAULT,
+    "document": MSG_WHATSAPP_DOCUMENT_DEFAULT,
+}
+_MAX_INBOUND_MEDIA_BYTES = 20 * 1024 * 1024
+_MIME_EXTENSIONS = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a", "audio/amr": ".amr", "audio/aac": ".aac",
+    "application/pdf": ".pdf",
+}
 
 # Set by start() so the webhook route can dispatch incoming messages to us.
 _active_channel: "WhatsAppCloudChannel | None" = None
@@ -226,6 +245,7 @@ class WhatsAppCloudChannel(BaseChannel):
             # `from` is omitted for username users without a visible phone number
             sender = msg.get("from") or msg.get("from_user_id", "")
             mtype = msg.get("type", "")
+            attachments: list[str] = []
             if mtype == "text":
                 content = msg.get("text", {}).get("body", "")
             elif mtype in ("button", "interactive"):
@@ -235,6 +255,19 @@ class WhatsAppCloudChannel(BaseChannel):
                     or msg.get("interactive", {}).get("list_reply", {}).get("title")
                     or ""
                 )
+            elif mtype in _INBOUND_MEDIA_TYPES:
+                media = msg.get(mtype) or {}
+                caption = media.get("caption") or ""
+                file_id = None
+                try:
+                    file_id = await self._download_media(media.get("id", ""))
+                except Exception as exc:
+                    log.warning("WhatsApp media download failed", msg_id=msg_id, mtype=mtype, error=str(exc))
+                if file_id:
+                    attachments.append(file_id)
+                    content = caption or _DEFAULT_MEDIA_TEXT[mtype]
+                else:
+                    content = f"{caption}\n[{mtype} recibido, no se pudo descargar]".strip()
             else:
                 content = f"[{mtype} recibido]"
 
@@ -255,9 +288,44 @@ class WhatsAppCloudChannel(BaseChannel):
                         log.warning("WhatsApp contact name save failed", error=str(exc))
 
             try:
-                await self._respond(sender, content)
+                await self._respond(sender, content, attachments or None)
             except Exception as exc:
                 log.error("WhatsApp message processing error", error=str(exc))
+
+    async def _download_media(self, media_id: str) -> str | None:
+        """Fetch an inbound image/audio/document from Meta and save it like Telegram does.
+
+        Meta sends only a media id: a first call returns a short-lived URL, a second (with the
+        access token) returns the bytes. Returns the saved file id, or None when there is nothing
+        usable (no id, too big, unsupported).
+        """
+        if not media_id:
+            return None
+        meta = await self._http.get(f"/{media_id}")
+        meta.raise_for_status()
+        info = meta.json()
+        url = info.get("url")
+        if not url:
+            return None
+        mime = (info.get("mime_type") or "").split(";")[0].strip().lower()
+        size = int(info.get("file_size") or 0)
+        if size > _MAX_INBOUND_MEDIA_BYTES:
+            log.warning("WhatsApp media too big, skipped", media_id=media_id, size=size)
+            return None
+        blob = await self._http.get(url)
+        blob.raise_for_status()
+        if len(blob.content) > _MAX_INBOUND_MEDIA_BYTES:
+            return None
+        ext = _MIME_EXTENSIONS.get(mime) or mimetypes.guess_extension(mime) or ".bin"
+
+        import secrets
+        from openacm.security.crypto import get_media_dir
+
+        file_id = f"{secrets.token_hex(12)}{ext}"
+        dest = get_media_dir() / file_id
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(blob.content)
+        return file_id
 
     async def _remember_contact_name(self, sender: str, name: str):
         """Hook: persist a display name for a sender. No-op for the Brain channel."""
@@ -295,13 +363,14 @@ class WhatsAppCloudChannel(BaseChannel):
             await asyncio.sleep(_MESSAGE_GAP_SECONDS)  # keep WhatsApp delivery order
             await self.send_message(sender, part)
 
-    async def _respond(self, sender: str, content: str):
+    async def _respond(self, sender: str, content: str, attachments: list[str] | None = None):
         """Run the brain and deliver the reply."""
         response = await self.brain.process_message(
             content=content,
             user_id=sender,
             channel_id=sender,
             channel_type="whatsapp",
+            attachments=attachments,
             debounce=True,
         )
         if response:  # "" = folded into an earlier message of the same burst

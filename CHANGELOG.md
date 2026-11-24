@@ -6,6 +6,14 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.4]
+
+### Fixed
+- WhatsApp Cloud channels now receive customers' images, audios and documents. Before, anything that was not text reached the
+  agent as the placeholder `[image recibido]` (the file was never downloaded, the caption was lost) and the bot answered that it
+  could not see it. The file is now downloaded from Meta, saved and handed over as an attachment — the same way the Telegram
+  channel does it — with the caption as the message.
+
 ## [0.5.3]
 
 ### Fixed

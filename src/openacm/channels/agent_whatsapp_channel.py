@@ -110,7 +110,7 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             return
         await db.set_customer_name(scoped_uid, sender, name)
 
-    async def _respond(self, sender: str, content: str):
+    async def _respond(self, sender: str, content: str, attachments: list[str] | None = None):
         """Route to AgentRunner with scoped user_id for memory isolation."""
         scoped_uid = f"a{self.agent['id']}_wa_{sender}"
         response = await self.agent_runner.run(
@@ -119,6 +119,7 @@ class AgentWhatsAppChannel(WhatsAppCloudChannel):
             user_id=scoped_uid,
             channel_id=sender,
             channel_type=f"whatsapp_a{self.agent['id']}",
+            attachments=attachments,
             debounce=True,
         )
         if response:  # "" = this message was folded into an earlier one of the same burst

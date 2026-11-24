@@ -92,6 +92,11 @@ MSG_AGENT_CURRENT_DATE = (
     "(vigencia de garantías, plazos de entrega, si hoy es día hábil o festivo); no asumas otra fecha."
 )
 
+# Text handed to the agent when a customer sends WhatsApp media without a caption.
+MSG_WHATSAPP_IMAGE_DEFAULT = "El cliente envió una imagen. Mírala y responde según lo que muestra."
+MSG_WHATSAPP_AUDIO_DEFAULT = "El cliente envió un audio. Transcríbelo y responde a lo que dice."
+MSG_WHATSAPP_DOCUMENT_DEFAULT = "El cliente envió un archivo. Revísalo y responde según su contenido."
+
 # ── Commands (/reset, /compact, …) ───────────────────────────────────────────
 
 MSG_CMD_RESET = (
