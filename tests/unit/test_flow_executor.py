@@ -834,7 +834,36 @@ class TestWooCommerceStructuredOutput:
             await executor.run(_woo_graph(), params={"producto": "zapatos"})
 
         _, call_kwargs = mock_client.get.call_args
-        assert call_kwargs["params"]["per_page"] == 10
+        # Fetches a wide pool (the shop's own search is unreliable at ranking), then
+        # the node itself narrows it down to the 10 best name matches.
+        assert call_kwargs["params"]["per_page"] == 30
+        assert call_kwargs["params"]["orderby"] == "relevance"
+
+    async def test_name_matches_come_first_even_when_the_shop_returns_them_late(self):
+        # WooCommerce splits "x8 pro" into words, so an unrelated camera and a Poco X8
+        # came back before the real "Poco X8 Pro". The exact model must not be cut off.
+        def p(name):
+            return {"name": name, "price": "1", "stock_quantity": 1, "manage_stock": True,
+                    "short_description": "", "permalink": f"https://x/{name}"}
+        products = [p(f"Otro {i} Pro") for i in range(12)] + [p("Poco X8"), p("Poco X8 Pro"), p("Poco X8 Pro Max")]
+        mock_response = MagicMock()
+        mock_response.json.return_value = products
+        mock_response.raise_for_status = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = False
+
+        async def get_connection(conn_id):
+            return _connection_row()
+
+        with patch("openacm.core.flow_executor.httpx.AsyncClient", return_value=mock_client):
+            executor = FlowExecutor(get_connection=get_connection)
+            result, _ = await executor.run(_woo_graph(), params={"producto": "x8 pro"})
+
+        names = [line[len("- Product: "):] for line in result.splitlines() if line.startswith("- Product: ")]
+        assert names[:2] == ["Poco X8 Pro", "Poco X8 Pro Max"]
+        assert len(names) == 10
 
     async def test_result_text_tells_the_agent_to_select_relevant_ones(self):
         products = [

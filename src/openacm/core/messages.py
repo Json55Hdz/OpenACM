@@ -85,6 +85,13 @@ MSG_FAST_MEDIA = "Let's go! Opening music..."
 MSG_SKILL_CONTEXT_HEADER = "\n# Specialized Context (for this query only):"
 MSG_SKILL_CONTEXT_FOOTER = "\n[Use this context only if relevant to answering]"
 
+# ── Agents ───────────────────────────────────────────────────────────────────
+
+MSG_AGENT_CURRENT_DATE = (
+    "Fecha y hora actuales (Colombia): {weekday} {date}, {time}. Úsala para todo cálculo de fechas "
+    "(vigencia de garantías, plazos de entrega, si hoy es día hábil o festivo); no asumas otra fecha."
+)
+
 # ── Commands (/reset, /compact, …) ───────────────────────────────────────────
 
 MSG_CMD_RESET = (

@@ -8,6 +8,7 @@ have its own tool restrictions.
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -16,6 +17,7 @@ from openacm.tools.base import ToolDefinition
 from openacm.tools.knowledge_tools import parse_collections
 from openacm.utils.text import join_message_parts, sanitize_customer_name
 from openacm.core.messages import (
+    MSG_AGENT_CURRENT_DATE,
     MSG_AGENT_PROCESSING_ERROR,
     MSG_SKILL_CONTEXT_FOOTER,
     MSG_SKILL_CONTEXT_HEADER,
@@ -24,6 +26,10 @@ from openacm.core.messages import (
 log = structlog.get_logger()
 
 _KNOWLEDGE_CHAR_LIMIT = 40_000
+
+# Colombia has no daylight saving time, so a fixed UTC-5 offset is exact and needs no tz database.
+_COLOMBIA_TZ = timezone(timedelta(hours=-5))
+_WEEKDAYS_ES = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
 
 # Tool-call rounds an agent may take for one customer message before it must answer.
 AGENT_MAX_TOOL_ITERATIONS = 10
@@ -172,6 +178,15 @@ class AgentRunner:
         return f"{block}\n\n{base_prompt}"
 
     @staticmethod
+    def _apply_current_date(system_prompt: str, now: datetime | None = None) -> str:
+        """Append today's date (Colombia time) so the agent can compute warranty windows etc."""
+        local = (now or datetime.now(timezone.utc)).astimezone(_COLOMBIA_TZ)
+        line = MSG_AGENT_CURRENT_DATE.format(
+            weekday=_WEEKDAYS_ES[local.weekday()], date=local.strftime("%Y-%m-%d"), time=local.strftime("%H:%M"),
+        )
+        return f"{system_prompt}\n\n{line}"
+
+    @staticmethod
     def _apply_customer_name(system_prompt: str, customer_name: str | None) -> str:
         """Append the saved customer name to the system prompt, if any.
 
@@ -265,6 +280,7 @@ class AgentRunner:
                 log.warning("AgentRunner: failed to fetch knowledge", agent_id=agent["id"], error=str(exc))
 
         system_prompt = self._build_system_prompt(agent["system_prompt"], knowledge_items)
+        system_prompt = self._apply_current_date(system_prompt)
 
         allowed = agent.get("allowed_tools", "all")
 

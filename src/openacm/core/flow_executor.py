@@ -14,6 +14,7 @@ design rationale.
 """
 import json as _json
 import re
+import unicodedata
 import uuid
 from typing import Any, Callable, Coroutine
 
@@ -98,6 +99,32 @@ def detect_cycle(graph: dict) -> list[str] | None:
 # has the user's actual request in its conversation context, so it (not
 # this node) is what narrows this down to the few that actually fit.
 _WOOCOMMERCE_CANDIDATE_LIMIT = 10
+
+# The shop's own search splits the query into loose words (so "x8 pro" also matches
+# cameras and "Pro" phones) and, without a relevance order, returns the newest first —
+# the exact model we were asked for could fall outside the first 10. So we ask for a
+# wider pool and rank it by product name ourselves before cutting to the candidate limit.
+_WOOCOMMERCE_FETCH_LIMIT = 30
+
+
+def _name_tokens(text: str) -> set[str]:
+    folded = unicodedata.normalize("NFKD", text.lower())
+    return set(re.findall(r"[a-z0-9]+", "".join(c for c in folded if not unicodedata.combining(c))))
+
+
+def _rank_by_name_match(products: list[dict], search_term: str) -> list[dict]:
+    """Products whose name contains every word of the search first, then by how many
+    words they contain. Ties keep the shop's own order."""
+    wanted = _name_tokens(search_term)
+    if not wanted:
+        return products
+
+    def key(item: tuple[int, dict]) -> tuple[int, int, int]:
+        index, product = item
+        hits = len(wanted & _name_tokens(str(product.get("name") or "")))
+        return (hits != len(wanted), -hits, index)
+
+    return [product for _, product in sorted(enumerate(products), key=key)]
 
 # Mirrors classifyPin() in frontend/components/flow-editor/node-types.tsx —
 # keep both in sync when either changes. Target = a node's flow-in/data-in
@@ -533,12 +560,11 @@ class FlowExecutor:
             response = await client.get(
                 woo_url,
                 # Explicit per_page rather than relying on WooCommerce's own
-                # default (also 10, but implicit) — this is the actual
-                # candidate pool the calling agent reasons over, so make it
-                # a number, not an assumption.
+                # default — we re-rank this pool by name and keep the best 10
+                # as the candidate list the calling agent reasons over.
                 # status=publish: a private/draft product isn't customer-facing
                 # yet — never let it leak into what the bot recites to a customer.
-                params={"search": search_term, "per_page": _WOOCOMMERCE_CANDIDATE_LIMIT, "status": "publish"},
+                params={"search": search_term, "per_page": _WOOCOMMERCE_FETCH_LIMIT, "orderby": "relevance", "status": "publish"},
                 auth=(conn_config["consumer_key"], conn_config["consumer_secret"]),
             )
             response.raise_for_status()
@@ -547,7 +573,7 @@ class FlowExecutor:
         if not products:
             return {"result": f"No products found for query: '{search_term}'.", "count": 0}
 
-        candidates = products[:_WOOCOMMERCE_CANDIDATE_LIMIT]
+        candidates = _rank_by_name_match(products, search_term)[:_WOOCOMMERCE_CANDIDATE_LIMIT]
         output = [
             f"Search results for '{search_term}' ({len(candidates)} candidates found). "
             "These are ALL matches for the search term, not a curated shortlist — "

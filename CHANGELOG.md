@@ -6,6 +6,15 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.1]
+
+### Fixed
+- WooCommerce search no longer loses the exact product: it asks for 30 results ordered by relevance and ranks them by name match
+  before handing the best 10 to the agent (a search for "x8 pro" used to return a camera and other unrelated items and cut off
+  the Poco X8 Pro, so the bot said it did not exist).
+- Agents now receive today's date and weekday (Colombia time), so warranty windows, "are you open today" and delivery promises
+  are computed against the real date instead of a guess.
+
 ## [0.5.0]
 
 ### Added
@@ -24,10 +33,14 @@ All notable changes to OpenACM are documented here. Format follows
 ### Fixed
 - Compaction no longer leaves orphan tool results.
 
-### Added
-- Agents can split one reply into several WhatsApp messages by writing `<<MSG>>`
-  where it should be cut (e.g. legal notice first, then the greeting). Other
-  channels turn the marker into a blank line.
+### Added
+
+- Agents can split one reply into several WhatsApp messages by writing `<<MSG>>`
+
+  where it should be cut (e.g. legal notice first, then the greeting). Other
+
+  channels turn the marker into a blank line.
+
 - `send_file_to_chat` accepts an optional `display_name`; WhatsApp delivers the
   document with that name instead of `upload_<hex>.ext`.
 
