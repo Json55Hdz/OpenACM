@@ -19,7 +19,7 @@ jobs:
       - name: Build
         working-directory: frontend
         run: |
-          npm ci
+          npm ci --onnxruntime-node-install-cuda=skip
           npm run build
       - name: Package
         run: tar -czf dashboard.tar.gz -C frontend/dist .

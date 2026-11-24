@@ -2,7 +2,9 @@
 FROM node:20-slim AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+# onnxruntime-node's install script tries to download a GPU binary that no longer exists upstream (404) and
+# aborts the whole install; the dashboard never uses CUDA, so skip it.
+RUN npm ci --onnxruntime-node-install-cuda=skip
 COPY frontend/ ./
 RUN npm run build
 

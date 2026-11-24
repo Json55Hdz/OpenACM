@@ -6,6 +6,12 @@ All notable changes to OpenACM are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.2]
+
+### Fixed
+- Docker image and dashboard release builds no longer fail on `npm ci`: onnxruntime-node tried to download a GPU binary that is
+  gone upstream (404); the install now skips the CUDA download. Includes everything in 0.5.1 (its image never built).
+
 ## [0.5.1]
 
 ### Fixed
